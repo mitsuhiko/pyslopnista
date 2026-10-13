@@ -26,6 +26,28 @@ function hostShim(): Plugin {
             return;
           }
         }
+        if (url.startsWith("/pypi/simple/")) {
+          // Same contract as the iOS host: Simple JSON API with file URLs pointing back here.
+          const project = url.slice("/pypi/simple/".length).replace(/\/$/, "");
+          fetch(`https://pypi.org/simple/${project}/`, { headers: { Accept: "application/vnd.pypi.simple.v1+json" } })
+            .then(async (r) => {
+              const body = (await r.text()).replaceAll("https://files.pythonhosted.org/", "/pypi-files/");
+              res.statusCode = r.status;
+              res.setHeader("Content-Type", "application/vnd.pypi.simple.v1+json");
+              res.end(body);
+            })
+            .catch((e) => { res.statusCode = 502; res.end(String(e)); });
+          return;
+        }
+        if (url.startsWith("/pypi-files/")) {
+          fetch(`https://files.pythonhosted.org/${url.slice("/pypi-files/".length)}`)
+            .then(async (r) => {
+              res.statusCode = r.status;
+              res.end(Buffer.from(await r.arrayBuffer()));
+            })
+            .catch((e) => { res.statusCode = 502; res.end(String(e)); });
+          return;
+        }
         next();
       });
     },

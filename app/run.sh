@@ -24,6 +24,7 @@ done
 BUNDLE_ID=eu.ronacher.Pyslopnista
 mkdir -p build
 ./scripts/fetch-pyodide.sh
+./scripts/build-ty.sh   # no-op when vendor/ty_wasm matches the pinned revision
 (cd web && { [ -d node_modules ] || npm install --silent; } && npm run build --silent > ../build/vite.log 2>&1) \
   || { cat build/vite.log; exit 1; }
 

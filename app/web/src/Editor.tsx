@@ -1,9 +1,11 @@
 // CodeMirror 6 editor (P1) tuned for touch: one view, one cached EditorState per
 // file (keeps undo history and selection when switching files).
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
+import { analysisCompletions, analysisLinter } from "./analysis/codemirror";
 import { defaultKeymap, history, historyKeymap, indentLess, indentMore, indentWithTab, redo, toggleComment, undo } from "@codemirror/commands";
 import { python } from "@codemirror/lang-python";
 import { bracketMatching, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { openLintPanel } from "@codemirror/lint";
 import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { EditorState, type Extension, RangeSetBuilder } from "@codemirror/state";
 import {
@@ -22,13 +24,15 @@ export interface EditorHandle {
   view(): EditorView | null;
 }
 
-export type EditorCommand = "undo" | "redo" | "indent" | "dedent" | "comment" | "left" | "right" | "up" | "down" | "search";
+export type EditorCommand = "undo" | "redo" | "indent" | "dedent" | "comment" | "left" | "right" | "up" | "down" | "search" | "problems";
 
 interface Props {
   path: string | null;
   text: string;
   onChange: (path: string, text: string) => void;
   onFocusChange: (focused: boolean) => void;
+  /** Called (at most once per frame) after any editor update, e.g. for the problem bar. */
+  onViewUpdate?: (view: EditorView) => void;
 }
 
 const highlight = HighlightStyle.define([
@@ -56,6 +60,10 @@ const theme = EditorView.theme({
   ".cm-tooltip": { border: "none", borderRadius: "10px", overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,.2)", background: "var(--cell-bg)" },
   ".cm-tooltip-autocomplete > ul > li": { padding: "6px 10px !important", fontFamily: "var(--mono)" },
   ".cm-panels": { background: "var(--grouped-bg)", color: "var(--label)" },
+  ".cm-lintRange-error": { backgroundImage: "none", textDecoration: "underline wavy var(--red)", textDecorationSkipInk: "none", textUnderlineOffset: "3px" },
+  ".cm-lintRange-warning": { backgroundImage: "none", textDecoration: "underline wavy #ff9500", textDecorationSkipInk: "none", textUnderlineOffset: "3px" },
+  ".cm-lintRange-info": { backgroundImage: "none", textDecoration: "underline dotted var(--secondary)", textUnderlineOffset: "3px" },
+  ".cm-panel.cm-panel-lint ul": { maxHeight: "30vh", fontFamily: "-apple-system, system-ui", fontSize: "14px" },
 });
 
 // Wrapped lines continue under the line's own indentation (+ 4 columns),
@@ -85,7 +93,12 @@ const hangingIndent = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
-function extensions(onChange: (text: string) => void, onFocus: (focused: boolean) => void): Extension[] {
+function extensions(
+  onChange: (text: string) => void,
+  onFocus: (focused: boolean) => void,
+  onUpdate: (view: EditorView) => void,
+  getPath: () => string | null,
+): Extension[] {
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -95,7 +108,8 @@ function extensions(onChange: (text: string) => void, onFocus: (focused: boolean
     indentOnInput(),
     bracketMatching(),
     closeBrackets(),
-    autocompletion({ activateOnTyping: true, icons: false }),
+    autocompletion({ activateOnTyping: true, icons: false, override: [analysisCompletions(getPath)] }),
+    analysisLinter(getPath),
     highlightActiveLine(),
     highlightSelectionMatches(),
     search({ top: true }),
@@ -111,6 +125,7 @@ function extensions(onChange: (text: string) => void, onFocus: (focused: boolean
     EditorView.updateListener.of((u) => {
       if (u.docChanged) onChange(u.state.doc.toString());
       if (u.focusChanged) onFocus(u.view.hasFocus);
+      onUpdate(u.view);
     }),
   ];
 }
@@ -127,15 +142,18 @@ const cursorMove = (view: EditorView, dir: "left" | "right" | "up" | "down") => 
   view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
 };
 
-export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, text, onChange, onFocusChange }, ref) {
+export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, text, onChange, onFocusChange, onViewUpdate }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const states = useRef(new Map<string, EditorState>());
   const pathRef = useRef(path);
   const changeRef = useRef(onChange);
   const focusRef = useRef(onFocusChange);
+  const updateRef = useRef(onViewUpdate);
+  const frame = useRef(0);
   changeRef.current = onChange;
   focusRef.current = onFocusChange;
+  updateRef.current = onViewUpdate;
 
   const makeState = (doc: string) =>
     EditorState.create({
@@ -143,6 +161,11 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, te
       extensions: extensions(
         (t) => pathRef.current && changeRef.current(pathRef.current, t),
         (f) => focusRef.current(f),
+        (view) => {
+          cancelAnimationFrame(frame.current);
+          frame.current = requestAnimationFrame(() => updateRef.current?.(view));
+        },
+        () => pathRef.current,
       ),
     });
 
@@ -186,7 +209,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, te
     command(name) {
       const view = viewRef.current;
       if (!view) return;
-      const commands = { undo, redo, indent: indentMore, dedent: indentLess, comment: toggleComment, search: openSearchPanel };
+      const commands = { undo, redo, indent: indentMore, dedent: indentLess, comment: toggleComment, search: openSearchPanel, problems: openLintPanel };
       if (name in commands) commands[name as keyof typeof commands](view);
       else cursorMove(view, name as "left" | "right" | "up" | "down");
     },

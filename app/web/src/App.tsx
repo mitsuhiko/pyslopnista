@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { Console } from "./Console";
 import { Editor, type EditorHandle } from "./Editor";
 import { FileBrowser } from "./FileBrowser";
-import { PlayIcon, StopIcon } from "./Icons";
+import { MoreIcon, PlayIcon, StopIcon } from "./Icons";
+import { formatDocument } from "./analysis/codemirror";
+import { analysis } from "./analysis/client";
+import { ProblemBar, type ProblemSummary, summarizeProblems } from "./ProblemBar";
 import { basename, dirname, fs, haptic } from "./host";
 import { KeyBar } from "./KeyBar";
 import { session } from "./session";
@@ -31,6 +34,8 @@ export interface AppController {
   editor(): EditorHandle | null;
   save(): Promise<void>;
   showPane(pane: Pane): void;
+  format(): Promise<void>;
+  problems(): ProblemSummary;
 }
 
 export function App({ onReady }: { onReady?: (c: AppController) => void }) {
@@ -46,6 +51,19 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const pending = useRef<{ path: string; text: string } | null>(null);
   const explicitlyOpened = useRef(false);
+  const [problems, setProblems] = useState<ProblemSummary>({ errors: 0, warnings: 0, current: null });
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Start ruff + ty in the background; the first check would do it anyway.
+  useEffect(() => {
+    void analysis.init().catch(() => {});
+  }, []);
+
+  const format = useCallback(async () => {
+    setMenuOpen(false);
+    const view = editor.current?.view();
+    if (view) await formatDocument(view).catch((e) => alert(`Formatting failed: ${e.message}`));
+  }, []);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flush = useCallback(async () => {
@@ -113,7 +131,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
 
   // A stable controller (for the self-test) that always calls the latest closures.
   const api = useRef<AppController>(null!);
-  api.current = { openFile, currentFile: () => file, run, editor: () => editor.current, save: flush, showPane: setPane };
+  api.current = { openFile, currentFile: () => file, run, editor: () => editor.current, save: flush, showPane: setPane, format, problems: () => problems };
   useEffect(() => {
     onReady?.({
       openFile: (p) => api.current.openFile(p),
@@ -122,6 +140,8 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       editor: () => api.current.editor(),
       save: () => api.current.save(),
       showPane: (p) => api.current.showPane(p),
+      format: () => api.current.format(),
+      problems: () => api.current.problems(),
     });
   }, [onReady]);
 
@@ -182,6 +202,23 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
                 </button>
               </div>
             )}
+            {(problems.errors > 0 || problems.warnings > 0) && (
+              <button className={`problem-count ${problems.errors ? "error" : "warning"}`} onClick={() => editor.current?.command("problems")}>
+                {problems.errors + problems.warnings}
+              </button>
+            )}
+            <div className="menu-anchor">
+              <button className="nav-button icon" onClick={() => setMenuOpen((o) => !o)} disabled={!file} aria-label="More">
+                <MoreIcon />
+              </button>
+              {menuOpen && (
+                <div className="row-menu toolbar-menu">
+                  <button onClick={() => void format()}>Format Code</button>
+                  <button onClick={() => { setMenuOpen(false); editor.current?.command("problems"); }}>Show Problems</button>
+                  <button onClick={() => { setMenuOpen(false); editor.current?.command("search"); }}>Find</button>
+                </div>
+              )}
+            </div>
             {running ? (
               <button className="run-button stop" onClick={() => session.stop()} aria-label="Stop"><StopIcon /></button>
             ) : (
@@ -190,7 +227,14 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
           </header>
           <div className="panes">
             <div className="editor-pane" hidden={!showEditor}>
-              <Editor ref={editor} path={file} text={fileText} onChange={onChange} onFocusChange={setEditorFocused} />
+              <Editor
+                ref={editor}
+                path={file}
+                text={fileText}
+                onChange={onChange}
+                onFocusChange={setEditorFocused}
+                onViewUpdate={(view) => setProblems(summarizeProblems(view))}
+              />
               {!file && <div className="editor-empty">Open a file from the browser or create a new one.</div>}
             </div>
             {showConsole && (
@@ -203,6 +247,9 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
               </div>
             )}
           </div>
+          {showEditor && file && (
+            <ProblemBar summary={problems} view={editor.current?.view() ?? null} onShowAll={() => editor.current?.command("problems")} />
+          )}
           {(editorFocused || location.hash.includes("keybar")) && showEditor && <KeyBar editor={editor} onDismiss={() => editor.current?.blur()} />}
         </main>
       )}

@@ -185,10 +185,13 @@ export class Session {
 /** Drop Pyodide's own frames from a traceback. */
 export function cleanTraceback(text: string): string {
   const lines = text.replace(/\n+$/, "").split("\n");
+  // Dependency problems are user errors, not program crashes: show just the message.
+  const dep = /_pyslop\.DependencyError: ([\s\S]*)$/.exec(text.trim());
+  if (dep) return `Dependency error: ${dep[1]}`;
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line.startsWith('  File "') && (line.includes("/_pyodide/") || line.includes("_pyslop.py"))) {
+    if (line.startsWith('  File "') && (line.includes("/_pyodide/") || line.includes("_pyslop.py") || line.includes('"<dependencies>"'))) {
       while (i + 1 < lines.length && lines[i + 1].startsWith("    ")) i++;
       continue;
     }

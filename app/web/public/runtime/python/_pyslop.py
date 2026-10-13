@@ -77,3 +77,106 @@ async def repl(source):
         if value is not None:
             namespace["_"] = value
             print(repr(value))
+
+
+# -- dependencies (PEP 723 inline script metadata, pyproject.toml) ----------------
+
+import os
+import re
+
+_SCRIPT_BLOCK = re.compile(
+    r"(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$"
+)
+
+
+def read_script_metadata(source):
+    """Return the parsed ``# /// script`` block (PEP 723 reference algorithm) or None."""
+    import tomllib
+
+    matches = [m for m in _SCRIPT_BLOCK.finditer(source) if m.group("type") == "script"]
+    if len(matches) > 1:
+        raise ValueError("multiple '# /// script' blocks found")
+    if not matches:
+        return None
+    content = "".join(
+        line[2:] if line.startswith("# ") else line[1:]
+        for line in matches[0].group("content").splitlines(keepends=True)
+    )
+    return tomllib.loads(content)
+
+
+def _project_metadata(cwd):
+    import tomllib
+
+    path = os.path.join(cwd, "pyproject.toml")
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        project = tomllib.load(f).get("project", {})
+    return {"dependencies": project.get("dependencies", []), "requires-python": project.get("requires-python")}
+
+
+class DependencyError(Exception):
+    pass
+
+
+async def prepare_environment(source, cwd, index_url):
+    """Install the dependencies declared by the script (or pyproject.toml)."""
+    try:
+        meta = read_script_metadata(source)
+        origin = "script metadata"
+        if meta is None:
+            meta = _project_metadata(cwd)
+            origin = "pyproject.toml"
+    except Exception as e:
+        raise DependencyError(f"could not read the dependency metadata: {e}") from None
+    if not meta:
+        return
+
+    import pyodide_js
+
+    # packaging is needed for the requires-python check (micropip vendors its own copy).
+    await pyodide_js.loadPackage(["micropip", "packaging"])
+    _allow_app_scheme()
+
+    requires = meta.get("requires-python")
+    if requires:
+        from packaging.specifiers import SpecifierSet
+
+        here = ".".join(map(str, sys.version_info[:3]))
+        if here not in SpecifierSet(requires):
+            raise DependencyError(f"this program requires Python {requires} ({origin}), but this is Python {here}")
+
+    deps = [d for d in meta.get("dependencies", []) if d.strip()]
+    if not deps:
+        return
+
+    import micropip
+
+    before = {name: pkg.version for name, pkg in micropip.list().items()}
+    _pyslophost.status(f"Installing {', '.join(deps)} …")
+    try:
+        await micropip.install(deps, keep_going=True, index_urls=[index_url])
+    except Exception as e:
+        raise DependencyError(f"could not install dependencies ({origin}):\n{e}") from None
+    after = micropip.list()
+    added = sorted(f"{name} {pkg.version}" for name, pkg in after.items() if name not in before)
+    if added:
+        _pyslophost.status(f"Installed {', '.join(added)}")
+
+
+def _allow_app_scheme():
+    """micropip only downloads http(s)/file URLs; our cached index serves app:// URLs."""
+    from micropip import wheelinfo
+
+    if getattr(wheelinfo.WheelInfo, "_pyslop_patched", False):
+        return
+    original = wheelinfo.WheelInfo._fetch_bytes
+
+    async def _fetch_bytes(self, url, fetch_kwargs, compat_layer):
+        if self.parsed_url.scheme == "app":
+            return await compat_layer.fetch_bytes(url, fetch_kwargs)
+        return await original(self, url, fetch_kwargs, compat_layer)
+
+    wheelinfo.WheelInfo._fetch_bytes = _fetch_bytes
+    wheelinfo.WheelInfo._pyslop_patched = True

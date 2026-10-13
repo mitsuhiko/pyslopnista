@@ -80,6 +80,7 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   });
   py.registerJsModule("_pyslophost", {
     image: (b64) => postMessage({ type: "output", stream: "image", text: b64 }),
+    status: (text) => postMessage({ type: "output", stream: "system", text: text + "\n" }),
   });
   py.registerJsModule("_uihost", {
     render: (json) => postMessage({ type: "ui-render", tree: json }),
@@ -141,7 +142,7 @@ function changedFiles(cwd) {
   return out;
 }
 
-async function run({ code, filename, cwd, files, repl }) {
+async function run({ code, filename, cwd, files, repl, indexURL }) {
   const t0 = performance.now();
   try {
     if (files && cwd) syncIn(cwd, files);
@@ -149,6 +150,14 @@ async function run({ code, filename, cwd, files, repl }) {
       py.FS.mkdirTree(cwd);
       py.FS.chdir(cwd);
       py.runPython(`import sys\nif ${JSON.stringify(cwd)} not in sys.path: sys.path.insert(0, ${JSON.stringify(cwd)})\nsys.argv = [${JSON.stringify(filename ?? "")}]`);
+    }
+    if (!repl) {
+      // Declared dependencies (PEP 723 or pyproject.toml) first, then
+      // Pyodide packages that are imported but not declared.
+      py.globals.set("__pyslop_src", code);
+      py.globals.set("__pyslop_cwd", cwd ?? "/home/pyodide");
+      py.globals.set("__pyslop_index", indexURL ?? new URL("/pypi/simple", location.href).href);
+      await py.runPythonAsync("import _pyslop\nawait _pyslop.prepare_environment(__pyslop_src, __pyslop_cwd, __pyslop_index)\ndel __pyslop_src, __pyslop_cwd, __pyslop_index", { filename: "<dependencies>" });
     }
     await py.loadPackagesFromImports(code, {
       messageCallback: (m) => m.startsWith("Loading ") && postMessage({ type: "output", stream: "system", text: m.replace(/^Loading /, "Loading packages: ") + "\n" }),

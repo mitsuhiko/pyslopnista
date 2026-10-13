@@ -1,6 +1,8 @@
 // End-to-end checks for the app (run with #selftest): edit, run, input, plots,
 // file write-back, console, UI apps, crash recovery. Reports via the bridge.
 import type { AppController } from "./App";
+import { forEachDiagnostic } from "@codemirror/lint";
+import { analysis } from "./analysis/client";
 import { call, fs } from "./host";
 import { session } from "./session";
 
@@ -147,6 +149,101 @@ export async function selftest(app: AppController) {
     await runFile("Tests/edit.py", "print('alive again')\n");
     await until(idle);
     if (!consoleText().includes("alive again")) throw new Error(consoleText());
+  });
+
+  // -- code intelligence and dependencies -------------------------------------------
+
+  const diagnostics = () => {
+    const out: { source: string; message: string; actions: string[] }[] = [];
+    const view = app.editor()?.view();
+    if (view) forEachDiagnostic(view.state, (d) => out.push({ source: d.source ?? "", message: d.message, actions: (d.actions ?? []).map((a) => a.name) }));
+    return out;
+  };
+
+  async function openWith(path: string, code: string) {
+    await fs.writeText(path, code);
+    await app.openFile(path);
+    await until(() => app.currentFile() === path && app.editor()?.view());
+    const view = app.editor()!.view()!;
+    if (view.state.doc.toString() !== code) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
+    return view;
+  }
+
+  await step("analysis_ready", async () => {
+    const info = await analysis.init();
+    return { ruff: info.ruff, ruffInitMs: Math.round(info.ruffMs), tyInitMs: Math.round(info.tyMs) };
+  });
+
+  await step("lint_and_types", async () => {
+    await openWith("Tests/lint.py", 'import os\n\n\ndef add(a: int, b: int) -> int:\n    return a + b\n\n\nadd(1, "two")\nprint(undefined_name)\n');
+    const t0 = performance.now();
+    const ds = await until(() => { const d = diagnostics(); return d.length >= 3 && d; }, 20000);
+    const sources = ds.map((d) => d.source.replace(" ", ":"));
+    for (const w of ["ruff:F401", "ty:invalid-argument-type", "ty:unresolved-reference"]) if (!sources.includes(w)) throw new Error(`missing ${w}: ${sources}`);
+    const f401Actions = ds.find((d) => d.source === "ruff F401")!.actions;
+    return { firstCheckMs: Math.round(performance.now() - t0), sources, f401Actions };
+  });
+
+  await step("pyodide_imports_not_flagged", async () => {
+    await openWith("Tests/np.py", "import numpy as np\nimport matplotlib.pyplot as plt\nprint(np.pi, plt)\n");
+    await sleep(1500);
+    const unresolved = diagnostics().filter((d) => d.source.includes("unresolved-import"));
+    if (unresolved.length) throw new Error(JSON.stringify(unresolved));
+  });
+
+  await step("completions", async () => {
+    const t0 = performance.now();
+    const items = await analysis.complete("Tests/c.py", "import math\nmath.sq", 2, 8);
+    const names = items.map((i) => i.name);
+    if (!names.includes("sqrt")) throw new Error(names.slice(0, 20).join(","));
+    return { ms: Math.round(performance.now() - t0), first: names.slice(0, 5) };
+  });
+
+  await step("format", async () => {
+    const view = await openWith("Tests/fmt.py", "x=[1,2,\n3]\ndef f( a ):\n  return a\n");
+    await app.format();
+    const out = view.state.doc.toString();
+    if (out !== "x = [1, 2, 3]\n\n\ndef f(a):\n    return a\n") throw new Error(JSON.stringify(out));
+  });
+
+  await step("add_dependency_quickfix_and_run", async () => {
+    const view = await openWith("Tests/cow.py", 'import cowsay\n\ncowsay.cow("moo from PyPI")\n');
+    const d = await until(() => diagnostics().find((x) => x.source.includes("unresolved-import")), 20000);
+    let applied = false;
+    forEachDiagnostic(view.state, (diag, from, to) => {
+      const action = diag.actions?.find((a) => a.name.includes("cowsay"));
+      if (action && !applied) {
+        action.apply(view, from, to);
+        applied = true;
+      }
+    });
+    const text = view.state.doc.toString();
+    if (!text.startsWith('# /// script\n# dependencies = [\n#     "cowsay",\n# ]\n# ///')) throw new Error(text);
+    session.clear();
+    const t0 = performance.now();
+    await app.run();
+    await until(idle, 60000);
+    const out = consoleText();
+    if (!out.includes("moo from PyPI")) throw new Error(out);
+    return { action: d.actions, installRunMs: Math.round(performance.now() - t0), status: out.split("\n").filter((l) => l.startsWith("Install")) };
+  });
+
+  await step("dependencies_cached_rerun", async () => {
+    session.clear();
+    const t0 = performance.now();
+    await app.run();
+    await until(idle, 60000);
+    if (!consoleText().includes("moo from PyPI")) throw new Error(consoleText());
+    return { rerunMs: Math.round(performance.now() - t0) };
+  });
+
+  await step("requires_python", async () => {
+    await openWith("Tests/old.py", '# /// script\n# requires-python = "<3.10"\n# ///\nprint("should not run")\n');
+    session.clear();
+    await app.run();
+    await until(idle);
+    const out = consoleText();
+    if (!out.includes("requires Python <3.10") || out.includes("should not run")) throw new Error(out);
   });
 
   await fs.remove("Tests").catch(() => {});

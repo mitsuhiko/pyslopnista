@@ -235,6 +235,37 @@ plain files in the app's Documents folder (shown in the Files app). Running a
 file copies its folder into the interpreter as the working directory and
 writes new or changed files back afterwards.
 
+## D21: ruff and ty run as WebAssembly in an analysis worker
+
+2026-10-13 - Accepted
+
+ruff comes from npm (`@astral-sh/ruff-wasm-web`, 11 MB wasm). ty has no npm
+wasm package, so `app/scripts/build-ty.sh` builds `crates/ty_wasm` from a
+pinned astral-sh/ruff commit (19.6 MB wasm including typeshed), the same way the
+ty playground does. Both run in one module worker. ruff runs its CLI default
+rules plus bugbear, plus formatting. ty provides type checking and completions
+(hover, go-to-definition and inlay hints are available for later). Undefined
+names come only from ty (ruff F821 is dropped), and `unresolved-import` is
+suppressed for modules Pyodide can install itself or that are already declared.
+
+## D22: Dependencies are declared with PEP 723 and installed with micropip
+
+2026-10-13 - Accepted
+
+Scripts declare dependencies in a `# /// script` block (PEP 723, as `uv run`
+does); otherwise `pyproject.toml` in the folder is used. Before each run the
+worker installs them with micropip (patched to accept `app://` URLs) against
+the host's PyPI proxy: Simple JSON API cached for 10 minutes with an offline
+fallback, files cached forever. Pyodide's own packages still come from
+`/pkgs/`. `requires-python` is enforced.
+
+uv is not used inside the app: it cannot run in the browser sandbox without a
+large port (tokio, rayon, real file system), and its Pyodide targets stop at
+3.13 (`wasm32-pyodide2025`) while we run 3.14 (`pyemscripten_2026_0`). We keep
+the formats uv understands (PEP 723 now, possibly `pylock.toml` later), so the
+same scripts run with `uv run` on a desktop. Resolution or locking with uv
+(natively in the host or as a service) stays open (Q16).
+
 ## Proposed (not yet decided)
 
 (none)
@@ -250,4 +281,7 @@ writes new or changed files back afterwards.
 - **Q10:** Model access for learners: hosted gateway, billing, in-app purchase rules.
 - **Q13:** File the upstream reports listed in `spikes/jspi-repro/README.md` (CPython UA check, Pyodide lost `SuspendError`, WebKit `Suspending` callable).
 - **Q14:** Make CPython raise `RecursionError` before the worker's native stack overflows, e.g. by lowering `c_stack_soft_limit` to match the measured native capacity, or report it to Pyodide/CPython (`spikes/device-perf/`).
+- **Q16:** Lock files / reproducible installs: write a lock (e.g. PEP 751 `pylock.toml` or micropip's freeze) per script, and decide whether uv resolves it (linked into the iOS host, or as a service), which needs a 3.14 Pyodide target in uv.
+- **Q17:** Type information for third-party packages in ty: feed installed packages (or their stubs) into ty's in-memory file system as `extra-paths`.
+- **Q18:** ty in a WebKit worker on larger files: watch for native stack overflows (D16); fall back to running ty on the main thread if needed.
 - **Q15:** Memory: iOS kills WebContent at about 1.9 GB (iPhone 14 Pro) without a `MemoryError`. Cap the wasm heap below the jetsam limit, and have the host recover from WebContent termination (recreate the web view, report "out of memory").
