@@ -8,6 +8,11 @@ app, a thin Swift host and a pi-durable coding agent. Early research phase.
 - `app/`: the real app (see `app/README.md`). Build and test with `app/run.sh`
   (`--selftest`, `--device`). Keep `./run.sh --selftest` passing.
 
+- `uikit/`: the `ui` module (P1, Solid-style signals), built in isolation from `app/`:
+  `python/ui.py`, `web/renderer.js`, `web/ui.css`, examples and a playground. Test
+  with `uikit/run.sh --selftest` (host pytest + headless Chrome). Integration steps
+  are in `uikit/README.md`.
+
 - `GOALS.md`: the feature set, tagged [core]/[later]/[maybe]. Update it when scope changes.
 - `DECISIONS.md`: decisions D<n> (append-only), proposals P<n>, open questions Q<n>.
   When a spike answers a question, add a decision or note that cites the spike,

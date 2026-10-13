@@ -355,7 +355,34 @@ UI, aimed at staying out of the way:
 
 ## Proposed (not yet decided)
 
-(none)
+### P1: Replace D14's re-render model with Solid-style fine-grained reactivity
+
+2026-10-13 · Proposed (built in isolation in `uikit/`, not in the app yet)
+
+Components are plain functions that run once. State lives in signals,
+computed values and deep reactive stores. Any function passed as a prop or
+child is a live binding that updates one DOM property. Python keeps the
+element tree and sends batched ops (`mount`/`move`/`unmount`/`set`); `For`
+reconciles keyed lists with minimal moves. Nothing is re-rendered or diffed,
+so text fields keep focus and one change sends one op. It uses the worker's
+existing `_uihost.render`/`set_dispatcher` and the renderer keeps the
+`UIRenderer(root, sendEvent)` interface, so adopting it means swapping
+`ui.py`, `uiRenderer.js` and `ui-toolkit.css`. A new renderer asks for a full
+snapshot (`resync`), so the app view can attach late or be re-created (D23).
+The API is much larger than D14's: navigation stacks, tabs, sheets, dialogs,
+every common input with two-way binding, canvas with a frame loop, async
+resources, and raw HTML via `h()`.
+
+Why not keep D14: re-running `view()` resends and re-diffs the whole tree on
+every change (23-26 ms for 1,000 rows). Positional callback ids are fragile.
+Controlled inputs need care to keep the caret. Signals are also easier to
+explain: "the lambda is what updates".
+
+Evidence, `uikit/` (desktop Chrome and Playwright WebKit on macOS, not iOS):
+0.1-0.23 ms per tap, 10-11 ms in Python for 1,000 rows, one op and about 1 ms
+to toggle one row of 1,000, 87 host tests plus 11 browser checks. To accept:
+run it in the app (WKWebView, simulator and device) and follow the
+integration steps in `uikit/README.md`.
 
 ## Open questions
 

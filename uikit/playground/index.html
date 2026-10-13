@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ui.py playground</title>
+  <link rel="stylesheet" href="../web/ui.css">
+  <style>
+    body { margin: 0; font: 14px -apple-system, system-ui, sans-serif; background: #e9e9ee; color: #111; height: 100vh; display: grid; grid-template-columns: 180px 1fr 390px; }
+    @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } textarea, #console { background: #1c1c1e !important; color: #eee !important; } }
+    #examples { padding: 12px; overflow-y: auto; border-right: 1px solid #0002; }
+    #examples button { display: block; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px; background: none; font: inherit; color: inherit; cursor: pointer; }
+    #examples button.active { background: #007aff; color: #fff; }
+    #editor { display: flex; flex-direction: column; min-width: 0; }
+    #toolbar { display: flex; gap: 8px; align-items: center; padding: 8px; }
+    #toolbar button { padding: 6px 14px; border-radius: 8px; border: 0; background: #007aff; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    #status { color: #888; }
+    textarea { flex: 1; font: 13px/1.45 ui-monospace, Menlo, monospace; padding: 12px; border: 0; resize: none; outline: none; tab-size: 4; background: #fff; }
+    #console { height: 28%; overflow: auto; margin: 0; padding: 8px 12px; font: 12px/1.4 ui-monospace, Menlo, monospace; background: #fafafa; border-top: 1px solid #0002; white-space: pre-wrap; }
+    #console .stderr { color: #d70015; }
+    #phone { position: relative; margin: 16px; border-radius: 40px; overflow: hidden; box-shadow: 0 0 0 10px #111, 0 20px 60px #0005; height: 844px; max-height: calc(100vh - 32px); }
+    body > #phone { align-self: center; }
+    #app { position: absolute; inset: 0; }
+    @media (max-width: 800px) {
+      body { display: block; }
+      #examples, #editor { display: none; }
+      body > #phone { position: fixed; inset: 0; margin: 0; border-radius: 0; box-shadow: none; height: auto; max-height: none; align-self: auto; }
+    }
+  </style>
+</head>
+<body>
+  <nav id="examples"></nav>
+  <section id="editor">
+    <div id="toolbar"><button id="run">Run ▶</button><span id="status">booting…</span></div>
+    <textarea id="code" spellcheck="false"></textarea>
+    <pre id="console"></pre>
+  </section>
+  <div id="phone"><div id="app"></div></div>
+  <script type="module" src="playground.js"></script>
+</body>
+</html>

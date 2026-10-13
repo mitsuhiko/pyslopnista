@@ -7,3 +7,5 @@ spikes/*/out/
 spikes/*/dist/
 spikes/device-perf/build/
 app/web/dist/
+.pytest_cache/
+__pycache__/
