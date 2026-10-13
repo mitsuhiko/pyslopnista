@@ -63,7 +63,7 @@ inside the component that created them, so `ui.navigation()` works there.
 See `examples/`: Counter, Todos (store, For, filters, swipe to delete,
 confirm), Todo App (the complete Reminders-style app shipped in the app:
 smart lists, search, sorting, due dates, priorities, notes, autosave to
-`todos.json`), Navigation (push, sheet, prompt, toast, `bind`), Settings (every
+an SQLite database, `todos.db`), Navigation (push, sheet, prompt, toast, `bind`), Settings (every
 input), Tabs (tabs, a stack per tab, badge, a stopwatch whose interval belongs
 to an effect), Paint (pointer events), Bounce (game loop), Escape Hatches
 (`h`, `css`, `resource`, SVG), Plot (live matplotlib).
@@ -143,12 +143,14 @@ edit them here. The app side:
 - `UIAppView` gives the renderer a full-size root. It sets
   `--ui-host-inset-right` so nav bar buttons stay clear of the Done button.
 - The session no longer replays messages, because each renderer resyncs.
-- Files written after the script returned are synced back on Done and when
-  the app goes to the background (`sync` message, D26).
+- Files the app writes are written back while it idles (within about a
+  second, D27), and on Done and when the app goes to the background (`sync`
+  message, D26).
 - `examples.ts` updates seeded examples the user hasn't edited (by hash).
 - App selftests: `ui_app` (Counter App) and `ui_todo` (Todo App: open the
-  Inbox, type a to-do, go back, Done, check `todos.json` in Documents). Both
-  pass in WKWebView in the iPhone 17 simulator.
+  Inbox, type a to-do, go back, find it in `todos.db` in Documents while the
+  app still runs (D27), Done, run again and read it back). Both pass in
+  WKWebView in the iPhone 17 simulator.
 
 ## Not covered yet
 

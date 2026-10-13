@@ -2,7 +2,7 @@
 // results grouped by file; tap one to open it at that line. ⌘⇧F.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { base64ToBytes, basename, fs, join } from "./host";
+import { base64ToBytes, basename, displayName, fs, join } from "./host";
 import { Search } from "./Icons";
 
 const TEXT_FILE = /\.(py|pyi|txt|md|json|toml|csv|tsv|html?|css|js|ts|ya?ml|cfg|ini|xml|svg|sql|sh|rst)$/i;
@@ -96,7 +96,7 @@ export function FindPanel({ dir, beforeSearch, onOpen, onClose }: Props) {
         <div className="modal-header">
           <div className="grabber" />
           <div className="modal-title-row">
-            <span className="modal-title">Find in {dir ? basename(dir) : "Files"}</span>
+            <span className="modal-title">Find in {dir ? displayName(dir) : "Files"}</span>
             <button className="text-button" onClick={onClose}>Done</button>
           </div>
           <div className="find-row">

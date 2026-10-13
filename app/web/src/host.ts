@@ -36,6 +36,7 @@ export const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 export const fs = {
   list: (path: string) => call<Entry[]>("fs.list", { path }),
   readText: (path: string) => call<string>("fs.read", { path, encoding: "utf8" }),
+  readBase64: (path: string) => call<string>("fs.read", { path, encoding: "base64" }),
   writeText: (path: string, data: string) => call<void>("fs.write", { path, data, encoding: "utf8" }),
   writeBase64: (path: string, data: string) => call<void>("fs.write", { path, data, encoding: "base64" }),
   mkdir: (path: string) => call<void>("fs.mkdir", { path }),
@@ -44,6 +45,30 @@ export const fs = {
   exists: (path: string) => call<boolean>("fs.exists", { path }),
   tree: (path: string) => call<TreeFile[]>("fs.tree", { path }),
 };
+
+/**
+ * Folders outside the app the user linked (iCloud Drive, other apps' folders,
+ * file providers). Their files are addressed as `@<name>/...` with the same
+ * `fs` calls as the ones in Documents.
+ */
+export interface Location {
+  name: string;
+  path: string; // "@<name>"
+  available: boolean;
+}
+
+export const locations = {
+  list: () => call<Location[]>("locations.list"),
+  /** Shows the folder picker; null if the user cancelled. */
+  add: () => call<Location | null>("locations.add"),
+  /** Forgets the folder; its files stay where they are. */
+  remove: (path: string) => call<void>("locations.remove", { path }),
+};
+
+export const isLocationRoot = (path: string) => /^@[^/]+$/.test(path);
+
+/** The name to show for a path (a linked folder without its "@"). */
+export const displayName = (path: string) => (isLocationRoot(path) ? path.slice(1) : basename(path));
 
 export const haptic = () => call("haptic").catch(() => {});
 
@@ -95,6 +120,7 @@ function mock(op: string, value: any): unknown {
   switch (op) {
     case "fs.list":
       return children(value.path)
+        .filter((p) => !isLocationRoot(p))
         .map((p) => {
           const n = nodes[p];
           return { name: basename(p), path: p, dir: n.dir, size: n.dir ? 0 : atob(n.data).length, mtime: n.mtime };
@@ -132,8 +158,28 @@ function mock(op: string, value: any): unknown {
       return value.path === "" || value.path in nodes;
     case "fs.tree":
       return Object.entries(nodes)
-        .filter(([p, n]) => !n.dir && (value.path === "" || p.startsWith(value.path + "/")))
+        .filter(([p, n]) => !n.dir && (value.path === "" ? !p.startsWith("@") : p.startsWith(value.path + "/")))
         .map(([p, n]) => ({ path: value.path ? p.slice(value.path.length + 1) : p, data: (n as { data: string }).data }));
+    case "locations.list":
+      return Object.keys(nodes)
+        .filter((p) => isLocationRoot(p))
+        .map((p) => ({ name: p.slice(1), path: p, available: true }));
+    case "locations.add": {
+      // The browser has no folder picker: make a folder that acts as a linked one.
+      const name = prompt("Name of the linked folder (browser mock)", "iCloud Drive");
+      if (!name?.trim()) return null;
+      nodes[`@${name.trim()}`] = { dir: true, mtime: now };
+      saveMock(nodes);
+      return { name: name.trim(), path: `@${name.trim()}`, available: true };
+    }
+    case "locations.remove":
+      for (const p of Object.keys(nodes)) if (p === value.path || p.startsWith(value.path + "/")) delete nodes[p];
+      saveMock(nodes);
+      return null;
+    case "test.link":
+      nodes[`@${value.name}`] = { dir: true, mtime: now };
+      saveMock(nodes);
+      return { name: value.name, path: `@${value.name}`, available: true };
     case "haptic":
     case "log":
     case "result":

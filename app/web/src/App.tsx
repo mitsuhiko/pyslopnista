@@ -12,7 +12,7 @@ import { FindPanel } from "./FindPanel";
 import { InfoPopover } from "./InfoPopover";
 import { JumpPanel } from "./JumpPanel";
 import { SettingsSheet } from "./SettingsSheet";
-import { base64ToBytes, basename, call, dirname, fs, haptic, isNative, join } from "./host";
+import { base64ToBytes, basename, call, dirname, displayName, fs, haptic, isNative, join } from "./host";
 import {
   ChevronDown, ChevronLeft, Close, DocPlus, Duplicate, Ellipsis, FileIcon, Gear, Info, JumpTo, ListBullet, Pencil, Play, Search, Sidebar, SplitView,
   Stop, Terminal, Trash, Wand, Warning,
@@ -190,7 +190,12 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   const [dir, setDir] = useState("");
   const [page, setPage] = useState<Page>("files");
   const [editorFocused, setEditorFocused] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0); // the browser lists the folder again
+  const [analysisKey, setAnalysisKey] = useState(0); // ty reads the folder again
+  const refreshFiles = () => {
+    setRefreshKey((k) => k + 1);
+    setAnalysisKey((k) => k + 1);
+  };
   const [problems, setProblems] = useState<ProblemSummary>({ errors: 0, warnings: 0, current: null });
   const [menu, setMenu] = useState<{ anchor: DOMRect; sections: MenuSection[]; align?: "start" | "end" } | null>(null);
   const [inspect, setInspect] = useState<{ expr: string; anchor: DOMRect } | null>(null);
@@ -582,19 +587,21 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     return () => {
       live = false;
     };
-  }, [rootDir, refreshKey]);
+  }, [rootDir, analysisKey]);
   rootSyncedRef = rootSynced;
 
   // Files written by a program show up in the browser and in open tabs.
   useEffect(() => {
     session.onFilesChanged = (paths) => {
       setRefreshKey((k) => k + 1);
+      // A UI app saving its data every second should not make ty re-read the folder.
+      if (paths.some((p) => /\.pyi?$/.test(p))) setAnalysisKey((k) => k + 1);
       for (const path of paths) {
         if (!panes.some((p) => p.tabs.includes(path))) continue;
         void fs.readText(path).then((text) => {
           setDocs((d) => ({ ...d, [path]: text }));
           editors.current.forEach((ed) => ed?.replaceText(path, text));
-        });
+        }, () => {});
       }
     };
   }, [panes]);
@@ -662,7 +669,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     await flush();
     await fs.rename(file, to);
     onRenamed(file, to);
-    setRefreshKey((k) => k + 1);
+    refreshFiles();
   };
   const duplicateOpen = async () => {
     if (!file || fileIsExternal) return;
@@ -675,7 +682,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     while (await fs.exists(join(dirname(file), `${stem} ${n}${ext}`))) n++;
     const copy = join(dirname(file), `${stem} ${n}${ext}`);
     await fs.writeText(copy, textIn(focusedEditor.current, file) ?? (await fs.readText(file)));
-    setRefreshKey((k) => k + 1);
+    refreshFiles();
     await openFile(copy);
     toast(`Duplicated as “${basename(copy)}”`);
   };
@@ -684,7 +691,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     pending.current.delete(file);
     await fs.remove(file);
     onDeleted(file);
-    setRefreshKey((k) => k + 1);
+    refreshFiles();
     if (!wide) setPage("files");
   };
 
@@ -699,7 +706,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
         ],
         [
           { label: "Find", icon: <Search size={19} />, onSelect: () => focusedEditor.current?.command("search") },
-          { label: `Find in ${dir ? basename(dir) : "Files"}…`, icon: <Search size={19} />, onSelect: () => setFindOpen(true) },
+          { label: `Find in ${dir ? displayName(dir) : "Files"}…`, icon: <Search size={19} />, onSelect: () => setFindOpen(true) },
           { label: "Format Code", icon: <Wand size={19} />, onSelect: () => void format(), disabled: fileIsExternal },
           { label: "Show Problems", icon: <Warning size={19} />, onSelect: () => setProblemsOpen(true), disabled: !problems.errors && !problems.warnings },
         ],
@@ -781,6 +788,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       onOpenFile={(p) => void openFile(p)}
       onRenamed={onRenamed}
       onDeleted={onDeleted}
+      onSave={flush}
       onFind={() => setFindOpen(true)}
       onSettings={() => setSettingsOpen(true)}
     />
@@ -795,7 +803,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       ? runSummary(lastRun, state.awaitingInput)
       : fileIsExternal
         ? "Read only"
-        : wide && file && dirname(file) ? basename(dirname(file)) : "";
+        : wide && file && dirname(file) ? displayName(dirname(file)) : "";
 
   const editorNav = (
     <header className="nav-bar editor-nav">
@@ -807,7 +815,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
         ) : (
           <button className="nav-back" onClick={() => { void flush(); setProblemsOpen(false); setPage("files"); }} aria-label="Back to files">
             <ChevronLeft size={22} />
-            <span className="nav-back-label">{dir ? basename(dir) : "Files"}</span>
+            <span className="nav-back-label">{dir ? displayName(dir) : "Files"}</span>
           </button>
         )}
       </div>
@@ -865,7 +873,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
           if (!name?.trim()) return;
           const path = join(dir, name.includes(".") ? name.trim() : `${name.trim()}.py`);
           await fs.writeText(path, "");
-          setRefreshKey((k) => k + 1);
+          refreshFiles();
           await openFile(path);
         }}>
           <DocPlus size={18} /> New File

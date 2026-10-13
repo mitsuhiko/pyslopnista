@@ -87,9 +87,9 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 ## Data and plotting
 
 - [core] matplotlib renders inline and inside apps
+- [core] SQLite access to project files (`sqlite3`), saved while the program runs
 - [core] numpy and pandas ready to use
 - [later] Interactive charts (Plotly, Bokeh, or our own)
-- [later] SQLite access to project files (`sqlite3`)
 
 ## Device features (Python API)
 

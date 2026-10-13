@@ -1,7 +1,8 @@
-// File browser over the app's Documents folder (also visible in the Files app):
-// large title, search, swipe actions, long-press context menu.
+// File browser over the app's Documents folder (also visible in the Files app)
+// and linked folders (iCloud Drive, other apps; listed under Locations at the
+// top level): large title, search, swipe actions, long-press context menu.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { basename, dirname, type Entry, fs, haptic, join } from "./host";
+import { basename, dirname, displayName, type Entry, fs, haptic, join, type Location, locations } from "./host";
 import { ChevronLeft, ChevronRight, DocPlus, Duplicate, Ellipsis, FileIcon, FolderIcon, FolderPlus, Gear, Pencil, Search, Sort, Trash } from "./Icons";
 import { Menu, type MenuSection } from "./ui/Menu";
 
@@ -13,6 +14,8 @@ interface Props {
   onOpenFile: (path: string) => void;
   onRenamed: (from: string, to: string) => void;
   onDeleted: (path: string) => void;
+  /** Saves pending edits (before a linked folder goes away). */
+  onSave: () => Promise<void>;
   onFind: () => void;
   onSettings: () => void;
 }
@@ -43,6 +46,8 @@ const ACTIONS_WIDTH = 148;
 
 function Row(props: {
   entry: Entry;
+  /** A linked folder: one swipe action, "Remove" (from Locations). */
+  location?: boolean;
   selected: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -52,11 +57,12 @@ function Row(props: {
   onContextMenu: (at: { x: number; y: number }) => void;
 }) {
   const { entry, selected, open } = props;
+  const actionsWidth = props.location ? ACTIONS_WIDTH / 2 : ACTIONS_WIDTH;
   const content = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; y: number; dx: number; axis: "x" | "y" | null; timer: ReturnType<typeof setTimeout> | null; longPressed: boolean } | null>(null);
   const [dragX, setDragX] = useState<number | null>(null);
 
-  const offset = dragX ?? (open ? -ACTIONS_WIDTH : 0);
+  const offset = dragX ?? (open ? -actionsWidth : 0);
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -82,8 +88,8 @@ function Row(props: {
     }
     if (g.axis === "x") {
       g.dx = dx;
-      const base = open ? -ACTIONS_WIDTH : 0;
-      setDragX(Math.min(0, Math.max(-ACTIONS_WIDTH - 40, base + dx)));
+      const base = open ? -actionsWidth : 0;
+      setDragX(Math.min(0, Math.max(-actionsWidth - 40, base + dx)));
     }
   };
   const onPointerUp = () => {
@@ -92,8 +98,8 @@ function Row(props: {
     if (!g) return;
     if (g.timer) clearTimeout(g.timer);
     if (g.axis === "x") {
-      const final = (open ? -ACTIONS_WIDTH : 0) + g.dx;
-      props.onOpenChange(final < -ACTIONS_WIDTH / 2);
+      const final = (open ? -actionsWidth : 0) + g.dx;
+      props.onOpenChange(final < -actionsWidth / 2);
       setDragX(null);
       return;
     }
@@ -105,14 +111,16 @@ function Row(props: {
 
   return (
     <div className={`file-row ${selected ? "selected" : ""}`}>
-      <div className="file-row-actions" aria-hidden={!open}>
-        <button className="swipe-action rename" onClick={props.onRename}>
-          <Pencil size={20} />
-          <span>Rename</span>
-        </button>
+      <div className="file-row-actions" aria-hidden={!open} style={{ width: actionsWidth }}>
+        {!props.location && (
+          <button className="swipe-action rename" onClick={props.onRename}>
+            <Pencil size={20} />
+            <span>Rename</span>
+          </button>
+        )}
         <button className="swipe-action delete" onClick={props.onDelete}>
           <Trash size={20} />
-          <span>Delete</span>
+          <span>{props.location ? "Remove" : "Delete"}</span>
         </button>
       </div>
       <div
@@ -134,7 +142,9 @@ function Row(props: {
         <span className="file-icon">{entry.dir ? <FolderIcon size={30} /> : <FileIcon name={entry.name} size={30} />}</span>
         <span className="file-text">
           <span className="file-name">{entry.name}</span>
-          <span className="file-meta">{entry.dir ? formatDate(entry.mtime) : `${formatDate(entry.mtime)} · ${formatSize(entry.size)}`}</span>
+          <span className="file-meta">
+            {props.location ? (entry.size ? "Linked folder" : "Not available") : entry.dir ? formatDate(entry.mtime) : `${formatDate(entry.mtime)} · ${formatSize(entry.size)}`}
+          </span>
         </span>
         {entry.dir && <ChevronRight size={15} className="chevron" />}
       </div>
@@ -147,6 +157,7 @@ function Row(props: {
 export function FileBrowser(props: Props) {
   const { dir, currentFile, refreshKey, onOpenDir, onOpenFile, onRenamed, onDeleted } = props;
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [linked, setLinked] = useState<Location[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [openRow, setOpenRow] = useState<string | null>(null);
@@ -157,6 +168,7 @@ export function FileBrowser(props: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
+    if (!dir) void locations.list().then(setLinked, () => setLinked([]));
     try {
       setEntries(await fs.list(dir));
       setError(null);
@@ -184,6 +196,34 @@ export function FileBrowser(props: Props) {
     io.observe(el);
     return () => io.disconnect();
   }, []);
+
+  // Linked folders show up as rows at the top level (size 1 marks them available).
+  const linkedRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return dir ? [] : linked
+      .filter((l) => !q || l.name.toLowerCase().includes(q))
+      .map((l): Entry => ({ name: l.name, path: l.path, dir: true, size: l.available ? 1 : 0, mtime: 0 }));
+  }, [dir, linked, query]);
+
+  const linkFolder = async () => {
+    try {
+      const added = await locations.add();
+      if (!added) return;
+      await load();
+      onOpenDir(added.path);
+    } catch (e) {
+      alert(`Could not open the folder: ${(e as Error).message ?? e}`);
+    }
+  };
+
+  const unlink = async (entry: Entry) => {
+    setOpenRow(null);
+    if (!confirm(`Remove “${entry.name}” from Locations? Its files stay where they are.`)) return;
+    await props.onSave();
+    await locations.remove(entry.path);
+    onDeleted(entry.path);
+    await load();
+  };
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -255,19 +295,20 @@ export function FileBrowser(props: Props) {
         [
           { label: "New File", icon: <DocPlus size={19} />, onSelect: () => void newFile() },
           { label: "New Folder", icon: <FolderPlus size={19} />, onSelect: () => void newFolder() },
+          { label: "Open Folder…", icon: <FolderIcon size={19} />, onSelect: () => void linkFolder() },
         ],
         [
           { label: `Sort by Name${sort === "name" ? " ✓" : ""}`, icon: <Sort size={19} />, onSelect: () => { setSort("name"); localStorage.setItem(SORT_KEY, "name"); } },
           { label: `Sort by Date${sort === "date" ? " ✓" : ""}`, icon: <Sort size={19} />, onSelect: () => { setSort("date"); localStorage.setItem(SORT_KEY, "date"); } },
         ],
         [
-          { label: `Find in ${dir ? basename(dir) : "Files"}…`, icon: <Search size={19} />, onSelect: props.onFind },
+          { label: `Find in ${dir ? displayName(dir) : "Files"}…`, icon: <Search size={19} />, onSelect: props.onFind },
           { label: "Settings…", icon: <Gear size={19} />, onSelect: props.onSettings },
         ],
       ],
     });
 
-  const title = dir ? basename(dir) : "Files";
+  const title = dir ? displayName(dir) : "Files";
 
   return (
     <div className="screen browser">
@@ -276,7 +317,7 @@ export function FileBrowser(props: Props) {
           {dir && (
             <button className="nav-back" onClick={() => onOpenDir(dirname(dir))}>
               <ChevronLeft size={22} />
-              <span>{dirname(dir) ? basename(dirname(dir)) : "Files"}</span>
+              <span>{dirname(dir) ? displayName(dirname(dir)) : "Files"}</span>
             </button>
           )}
         </div>
@@ -336,6 +377,36 @@ export function FileBrowser(props: Props) {
         )}
         {entries && visible.length > 0 && (
           <p className="list-footer">{visible.length === 1 ? "1 item" : `${visible.length} items`}</p>
+        )}
+        {!dir && (linkedRows.length > 0 || !query) && (
+          <>
+            <h2 className="list-header">Locations</h2>
+            <div className="grouped-list">
+              {linkedRows.map((e) => (
+                <Row
+                  key={e.path}
+                  entry={e}
+                  location
+                  selected={false}
+                  open={openRow === e.path}
+                  onOpenChange={(o) => setOpenRow(o ? e.path : null)}
+                  onActivate={() => (e.size ? onOpenDir(e.path) : alert(`“${e.name}” is not available. Remove it and open the folder again.`))}
+                  onRename={() => {}}
+                  onDelete={() => void unlink(e)}
+                  onContextMenu={(at) => setMenu({ anchor: at, sections: [[{ label: "Remove from Locations", icon: <Trash size={19} />, destructive: true, onSelect: () => void unlink(e) }]] })}
+                />
+              ))}
+              {!query && (
+                <button className="file-row-content link-folder" onClick={() => void linkFolder()}>
+                  <span className="file-icon"><FolderPlus size={24} /></span>
+                  <span className="file-text">
+                    <span className="file-name">Open Folder…</span>
+                    <span className="file-meta">iCloud Drive, other apps, file providers</span>
+                  </span>
+                </button>
+              )}
+            </div>
+          </>
         )}
       </div>
       {menu && <Menu anchor={menu.anchor} sections={menu.sections} onClose={() => setMenu(null)} align={"width" in menu.anchor ? "end" : "start"} />}

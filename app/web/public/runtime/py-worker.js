@@ -77,7 +77,9 @@ let syncChannel; // Int32Array view: [state, length], payload from byte 8
 let nextCallId = 0;
 const pendingCalls = new Map();
 let uiDispatcher = null;
-let manifest = new Map(); // path -> mtime of files synced into the project dir
+let manifest = new Map(); // path -> version (mtime and size) of files synced into the project dir
+let written = new Set(); // paths this program wrote back (their deletion is written back too)
+let flushTimer = null;
 let plumbing; // a private namespace for our own Python, so the program's globals stay clean
 
 /** Run our own setup code without touching the program's namespace (__main__). */
@@ -195,38 +197,82 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   });
 }
 
+// mtimes are in milliseconds; the size catches a second write in the same one.
+const version = (stat) => `${stat.mtime.getTime()}:${stat.size}`;
+
 /** Write the project's files into cwd and remember their mtimes. */
 function syncIn(cwd, files) {
   py.FS.mkdirTree(cwd);
   manifest = new Map();
+  written = new Set();
   for (const { path, data } of files) {
     const full = `${cwd}/${path}`;
     py.FS.mkdirTree(full.slice(0, full.lastIndexOf("/")));
     py.FS.writeFile(full, data);
-    manifest.set(path, py.FS.stat(full).mtime.getTime());
+    manifest.set(path, version(py.FS.stat(full)));
   }
 }
 
-/** Files under cwd that are new or modified since syncIn. */
+/**
+ * Files under cwd that are new or modified since the last call (data), and
+ * files this program wrote back earlier and has deleted since (data: null).
+ *
+ * The order is SQLite's: rollback journals first, then the other files, then
+ * deletions. A database is then never newer on disk than its journal, and a
+ * journal deleted at commit does not stay behind as a "hot" one that would
+ * roll the database back when it is next opened.
+ */
 function changedFiles(cwd) {
   const out = [];
+  const seen = new Set();
   const walk = (dir, rel) => {
     for (const name of py.FS.readdir(dir)) {
       if (name === "." || name === ".." || name === "__pycache__") continue;
       const full = `${dir}/${name}`;
       const path = rel ? `${rel}/${name}` : name;
       const stat = py.FS.stat(full);
-      if (py.FS.isDir(stat.mode)) walk(full, path);
-      else if (manifest.get(path) !== stat.mtime.getTime()) out.push({ path, data: py.FS.readFile(full) });
+      if (py.FS.isDir(stat.mode)) {
+        walk(full, path);
+        continue;
+      }
+      seen.add(path);
+      const v = version(stat);
+      if (manifest.get(path) !== v) {
+        out.push({ path, data: py.FS.readFile(full) });
+        manifest.set(path, v);
+        written.add(path);
+      }
     }
   };
   try {
-    walk(cwd, "");
+    py.FS.stat(cwd);
   } catch {
-    // cwd may have been removed by the script
+    return []; // cwd was removed by the script: write nothing back, delete nothing
   }
-  for (const f of out) manifest.set(f.path, Date.now());
+  walk(cwd, "");
+  const journal = (p) => /-(journal|wal)$/.test(p);
+  out.sort((a, b) => Number(journal(b.path)) - Number(journal(a.path)));
+  for (const path of written) {
+    if (seen.has(path)) continue;
+    out.push({ path, data: null });
+    written.delete(path);
+    manifest.delete(path);
+  }
   return out;
+}
+
+/**
+ * Hand changed files to the page while the program idles (the timer only fires
+ * between Python's tasks), so a UI app's data reaches the disk within a
+ * second, not only when it closes. A killed app or a crash loses at most that.
+ */
+function startFlushing() {
+  if (flushTimer) return;
+  flushTimer = setInterval(() => {
+    if (!runCwd) return;
+    const changed = changedFiles(runCwd);
+    if (changed.length) postMessage({ type: "files", changed });
+  }, 500);
 }
 
 /**
@@ -248,7 +294,10 @@ async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) 
   const t0 = performance.now();
   try {
     if (files && cwd) syncIn(cwd, files);
-    if (cwd && !repl) runCwd = cwd;
+    if (cwd && !repl) {
+      runCwd = cwd;
+      startFlushing();
+    }
     if (cwd) {
       py.FS.mkdirTree(cwd);
       py.FS.chdir(cwd);

@@ -424,6 +424,72 @@ one op and about 1 ms to toggle one row of 1,000). The `ui_app` and
 `ui_todo` app selftests pass in WKWebView in the iPhone 17 simulator. Not yet
 tried on a device.
 
+## D27: Program files are written back while the program idles, deletions included
+
+2026-10-13 - Accepted (extends D20, D26)
+
+A program still works on a copy of its folder in the interpreter (D20), but
+the copy no longer waits for the run to end:
+- While the program idles (a 500 ms timer in the worker, which only fires
+  between Python's tasks), the worker posts the files that changed. The page
+  writes them back in order, one write-back after the other. A UI app's saved
+  data reaches the disk within about a second, so a killed app, a crash or
+  jetsam loses at most that. The end of a run, Done and going to the
+  background still sync too.
+- A change is a different mtime or size (mtimes are in milliseconds).
+- A file the program wrote back and then deletes is deleted in the project
+  too. Files the program did not write are never deleted, and if the program
+  removes its working directory nothing is deleted at all.
+- The order follows SQLite's: rollback journals (`-journal`, `-wal`) first,
+  then the other files, then deletions. A database on disk is never newer than
+  its journal, and the journal deleted at commit never stays behind as a "hot"
+  journal that would roll the database back on the next open.
+
+With that, `sqlite3` (in Pyodide's standard library here, SQLite 3.39) works
+on project files like any other file: `Examples/Todo App.py` keeps its data
+in `todos.db` and imports an old `todos.json` once. The whole database file is
+copied on every change, which is fine for app-sized data (a few MB) but not
+for big databases; a VFS that writes pages through the host would be the next
+step if that matters.
+
+Evidence: the `ui_todo` selftest adds a to-do and finds it in `todos.db` on
+disk while the app is still open (0.7-0.9 s later), then reads it back in a
+second run, with no journal left behind (iPhone 17 simulator, WKWebView).
+Not yet tried on a device.
+
+## D28: Linked folders (iCloud Drive, other apps) through security-scoped bookmarks
+
+2026-10-13 - Accepted
+
+"Open Folder…" in the file browser shows the system folder picker
+(`UIDocumentPickerViewController` for `.folder`). The picked folder is kept as
+a bookmark in the user defaults, opened with
+`startAccessingSecurityScopedResource` at launch, and listed under Locations
+at the top of the file browser. This covers iCloud Drive, other apps' folders
+(Working Copy, ...), file providers (Dropbox, ...) and external drives, and
+needs no entitlement.
+
+- The web app addresses a linked folder as `@<name>/...` with the same `fs.*`
+  bridge calls as Documents, so the editor, Run, write-back (D27), Find in
+  Folder and ty work unchanged. Top-level names starting with `@` are reserved
+  (hidden in Documents).
+- Files in linked folders are read and written through `NSFileCoordinator`.
+  Files that are only in iCloud are downloaded first (coordinated read, plus
+  `startDownloadingUbiquitousItem` for `.name.icloud` placeholders).
+- All file operations now run on one serial queue off the main thread, since
+  a coordinated read may wait for a download.
+- The root of a linked folder cannot be deleted or renamed from the app;
+  "Remove" only forgets the bookmark.
+
+The app's own iCloud container ("iCloud sync between devices" in GOALS) needs
+the iCloud entitlement, which personal teams cannot use (Q20).
+
+Evidence: the `linked_folder` selftest links a folder outside Documents
+through the same bookmark code (the picker itself cannot be driven), lists,
+writes, runs a script with a sibling import and file write-back, and removes
+the link (iPhone 17 simulator). Not yet tried with iCloud Drive or a file
+provider on a device.
+
 ## Proposed (not yet decided)
 
 (none)
@@ -446,4 +512,5 @@ tried on a device.
   a device. Pause cannot interrupt a program that is suspended in JavaScript
   (JSPI `await`); it stops when Python resumes. Conditional breakpoints and
   hardware-keyboard shortcuts (⌘. / F6-F8) are not built yet.
+- **Q20:** iCloud sync between devices: the app's own iCloud Drive container needs the iCloud entitlement (paid developer account). Until then, linked folders (D28) reach iCloud Drive.
 - **Q15:** Memory: iOS kills WebContent at about 1.9 GB (iPhone 14 Pro) without a `MemoryError`. Cap the wasm heap below the jetsam limit, and have the host recover from WebContent termination (recreate the web view, report "out of memory").

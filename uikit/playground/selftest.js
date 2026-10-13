@@ -156,9 +156,15 @@ export async function selftest(pg, params) {
     qa(".ui-row").find((r) => r.textContent.includes("Learning")).querySelector(".ui-row-delete").click();
     (await until(() => byText(".ui-alert-button", "Delete"), "confirm")).click();
     await until(() => !qa(".ui-row").some((r) => r.textContent.includes("Learning")), "list deleted");
-    // Saved after a quiet half second.
+    // Saved into todos.db (SQLite) after a quiet half second; read it with a
+    // separate connection, like the next run of the app would.
     await sleep(800);
-    const saved = JSON.parse(await pg.py.eval("open('todos.json').read()"));
+    const saved = JSON.parse(await pg.py.eval([
+      "import json, sqlite3",
+      "_db = sqlite3.connect('todos.db')",
+      "_db.row_factory = sqlite3.Row",
+      "json.dumps({t: [dict(r) for r in _db.execute(f'SELECT * FROM {t}')] for t in ('lists', 'todos')})",
+    ].join("\n")));
     assert(saved.lists.length === 2 && saved.todos.some((t) => t.title === "Sourdough bread" && t.priority === 3 && t.list === 1), "saved");
     return { todos: saved.todos.length };
   });

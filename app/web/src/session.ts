@@ -118,6 +118,7 @@ export class Session {
   private debugResult: ((message: any) => void) | null = null;
   private debugQueue: Promise<unknown> = Promise.resolve();
   private stopCounter = 0;
+  private writeBacks: Promise<void> = Promise.resolve();
 
   constructor() {
     this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
@@ -260,6 +261,7 @@ export class Session {
       this.set({ uiOpen: true });
       this.uiListener?.(json);
     };
+    worker.onFiles = (changed) => void this.writeBack(changed, dir);
     worker.onCrash = (error) => this.append("stderr", `Python crashed: ${error}\n`);
     worker.onDebug = (message) => this.onDebugMessage(worker, message);
     return worker;
@@ -400,7 +402,7 @@ export class Session {
   }
 
   private async finishRun(
-    result: { ok: boolean; error?: string; killed?: boolean; changed?: { path: string; data: Uint8Array }[] },
+    result: { ok: boolean; error?: string; killed?: boolean; changed?: ChangedFile[] },
     fromConsole = false,
   ) {
     this.inputResolver = null;
@@ -430,16 +432,26 @@ export class Session {
     await this.writeBack(result.changed ?? [], this.workerDir);
   }
 
-  /** Write files the program created or changed back into the project. */
-  private async writeBack(changed: ChangedFile[], dir: string) {
-    if (!changed.length) return;
-    const written: string[] = [];
-    for (const f of changed) {
-      const target = join(dir, f.path);
-      await fs.writeBase64(target, bytesToBase64(f.data));
-      written.push(target);
-    }
-    this.onFilesChanged(written);
+  /** Write files the program created, changed or deleted back into the
+   * project, in the order the worker gives (journals first, deletions last).
+   * Write-backs queue up, so an older one never lands after a newer one. */
+  private writeBack(changed: ChangedFile[], dir: string) {
+    if (!changed.length) return this.writeBacks;
+    this.writeBacks = this.writeBacks.then(async () => {
+      const touched: string[] = [];
+      for (const f of changed) {
+        const target = join(dir, f.path);
+        try {
+          if (f.data) await fs.writeBase64(target, bytesToBase64(f.data));
+          else if (await fs.exists(target)) await fs.remove(target);
+          touched.push(target);
+        } catch (e) {
+          this.append("stderr", `Could not save ${f.path}: ${(e as Error).message ?? e}\n`);
+        }
+      }
+      this.onFilesChanged(touched);
+    });
+    return this.writeBacks;
   }
 
   /** Pyodide prints the KeyboardInterrupt traceback when input() is interrupted; a stop is not an error. */

@@ -3,7 +3,7 @@
 import type { AppController } from "./App";
 import { forEachDiagnostic } from "@codemirror/lint";
 import { analysis } from "./analysis/client";
-import { call, fs, isNative } from "./host";
+import { base64ToBytes, call, fs, isNative, locations } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import { session } from "./session";
 
@@ -153,9 +153,9 @@ export async function selftest(app: AppController) {
   });
 
   await step("ui_todo", async () => {
-    // The full example: navigation, a text field, and saving after the script
-    // returned (written back when the app view closes).
-    if (await fs.exists("Examples/todos.json")) await fs.remove("Examples/todos.json");
+    // The full example: navigation, a text field, and saving into SQLite
+    // while the app keeps running (the worker flushes files when idle).
+    for (const f of ["todos.db", "todos.db-journal", "todos.json"]) if (await fs.exists(`Examples/${f}`)) await fs.remove(`Examples/${f}`);
     await runFile("Examples/Todo App.py");
     const q = (sel: string) => [...document.querySelectorAll<HTMLElement>(sel)];
     const inbox = await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox")));
@@ -169,16 +169,57 @@ export async function selftest(app: AppController) {
     await until(() => [...top().querySelectorAll(".ui-row")].some((r) => r.textContent?.includes("Selftest to-do")));
     top().querySelector<HTMLElement>(".ui-navbar-back")!.click();
     await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox"))?.querySelector(".ui-row-detail")?.textContent === "2");
-    await sleep(700); // the app saves after half a second of quiet
+    // SQLite stores short text as is, so the title shows up in the file's bytes.
+    const saved = async () =>
+      (await fs.exists("Examples/todos.db")) &&
+      new TextDecoder("latin1").decode(base64ToBytes(await fs.readBase64("Examples/todos.db"))).includes("Selftest to-do");
+    // On disk while the app is still open: 0.5 s of quiet, then the next flush.
+    const t0 = performance.now();
+    for (let i = 0; i < 40 && !(await saved()); i++) await sleep(100);
+    if (!(await saved())) throw new Error("todos.db not written back while the app runs");
+    const savedMs = Math.round(performance.now() - t0);
+    if (!session.getSnapshot().uiOpen) throw new Error("the app closed");
     (document.querySelector(".ui-app-close") as HTMLButtonElement).click();
     await until(() => !session.getSnapshot().uiOpen);
-    let saved: { todos: { title: string }[] } | null = null;
-    for (let i = 0; i < 50 && !saved; i++) {
-      if (await fs.exists("Examples/todos.json")) saved = JSON.parse(await fs.readText("Examples/todos.json"));
-      else await sleep(100);
+    await sleep(300);
+    if (await fs.exists("Examples/todos.db-journal")) throw new Error("a journal was left behind");
+    // A second run reads the database back.
+    await runFile("Examples/Todo App.py");
+    await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox"))?.querySelector(".ui-row-detail")?.textContent === "2");
+    (document.querySelector(".ui-app-close") as HTMLButtonElement).click();
+    await until(() => !session.getSnapshot().uiOpen);
+    await sleep(300);
+    await fs.remove("Examples/todos.db");
+    return { savedMs };
+  });
+
+  await step("linked_folder", async () => {
+    // A folder outside Documents, linked like one picked from iCloud Drive
+    // (the picker itself cannot be driven from here): browse, edit, run, write back.
+    const loc = await call<{ name: string; path: string }>("test.link", { name: "Selftest Cloud" });
+    const dir = `${loc.path}/app`;
+    try {
+      const listed = await locations.list();
+      if (!listed.some((l) => l.path === loc.path && l.available)) throw new Error(`not listed: ${JSON.stringify(listed)}`);
+      if ((await fs.list("")).some((e) => e.path === loc.path)) throw new Error("linked folder listed in Documents");
+      await fs.writeText(`${dir}/helper.py`, "NAME = 'linked'\n");
+      await fs.writeText(`${dir}/main.py`, "");
+      await runFile(`${dir}/main.py`, "from helper import NAME\nopen('out.txt', 'w').write(NAME)\nprint('hello from', NAME)\n");
+      await until(idle);
+      if (!consoleText().includes("hello from linked")) throw new Error(consoleText());
+      for (let i = 0; i < 30 && !(await fs.exists(`${dir}/out.txt`)); i++) await sleep(100);
+      const out = await fs.readText(`${dir}/out.txt`);
+      if (out !== "linked") throw new Error(`out.txt: ${out}`);
+      if (!(await fs.list(loc.path)).some((e) => e.name === "app" && e.dir)) throw new Error("app folder not listed");
+      let refused = false;
+      await fs.remove(loc.path).catch(() => (refused = true));
+      if (!refused) throw new Error("deleting a linked folder's root was allowed");
+      await fs.remove(dir);
+    } finally {
+      await locations.remove(loc.path);
     }
-    if (!saved?.todos.some((t) => t.title === "Selftest to-do")) throw new Error(`not saved: ${JSON.stringify(saved)?.slice(0, 200)}`);
-    await fs.remove("Examples/todos.json");
+    if (await fs.exists(`${dir}/main.py`)) throw new Error("still reachable after removing the location");
+    if ((await locations.list()).some((l) => l.path === loc.path)) throw new Error("still listed");
   });
 
   await step("crash_recovery", async () => {

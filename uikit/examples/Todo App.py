@@ -1,16 +1,18 @@
 # A complete to-do app in the style of Reminders: lists, smart lists (Today,
 # Overdue, All, Done), search, filters, sorting, due dates, priorities and
-# notes. Everything is saved to todos.json next to this file.
+# notes. Everything is saved in an SQLite database, todos.db, next to this file.
 #
 # How it works: all data lives in one ui.store. Screens are plain functions
 # that run once; the lambdas in them are what update when the data changes.
+# An effect writes the store into the database whenever it changed.
 import datetime
 import json
 import os
+import sqlite3
 
 import ui
 
-SAVE_FILE = "todos.json"
+DB_FILE = "todos.db"
 COLORS = ["#007aff", "#ff9500", "#34c759", "#ff2d55", "#af52de", "#5ac8fa", "#ffcc00"]
 PRIORITIES = {0: "None", 1: "Low", 2: "Medium", 3: "High"}
 
@@ -45,27 +47,67 @@ def initial_data():
     }
 
 
+db = sqlite3.connect(DB_FILE)
+db.row_factory = sqlite3.Row
+db.executescript("""
+    CREATE TABLE IF NOT EXISTS lists (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL,
+        icon TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS todos (
+        id INTEGER PRIMARY KEY,
+        list INTEGER NOT NULL REFERENCES lists (id),
+        title TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        done INTEGER NOT NULL DEFAULT 0,
+        due TEXT,  -- an ISO date (YYYY-MM-DD) or NULL
+        priority INTEGER NOT NULL DEFAULT 0
+    );
+""")
+
+
 def load():
-    if os.path.exists(SAVE_FILE):
-        try:
-            with open(SAVE_FILE) as f:
+    lists = [dict(row) for row in db.execute("SELECT * FROM lists ORDER BY id")]
+    if not lists:
+        # A new database: start with the to-dos an older version of this app
+        # saved in todos.json, or with a few examples.
+        if os.path.exists("todos.json"):
+            with open("todos.json") as f:
                 return json.load(f)
-        except (OSError, ValueError) as e:
-            print(f"Could not read {SAVE_FILE}: {e}")
-    return initial_data()
+        return initial_data()
+    todos = [dict(row, done=bool(row["done"])) for row in db.execute("SELECT * FROM todos ORDER BY id")]
+    next_id = db.execute("SELECT max(id) FROM (SELECT id FROM lists UNION SELECT id FROM todos)").fetchone()[0]
+    return {"next_id": next_id + 1, "lists": lists, "todos": todos}
 
 
 data = ui.store(load())
 
 
 def save(snapshot):
-    with open(SAVE_FILE, "w") as f:
-        json.dump(snapshot, f, indent=1)
+    # One transaction (`with db`): either all of it is saved or nothing. Rows
+    # are upserted and the ones that are gone deleted, which is plenty fast
+    # for a few thousand to-dos.
+    with db:
+        db.executemany(
+            "INSERT OR REPLACE INTO lists (id, name, color, icon) VALUES (:id, :name, :color, :icon)",
+            snapshot["lists"],
+        )
+        db.executemany(
+            "INSERT OR REPLACE INTO todos (id, list, title, notes, done, due, priority)"
+            " VALUES (:id, :list, :title, :notes, :done, :due, :priority)",
+            snapshot["todos"],
+        )
+        for table in ("lists", "todos"):
+            ids = [row["id"] for row in snapshot[table]]
+            db.execute(f"DELETE FROM {table} WHERE id NOT IN ({', '.join('?' * len(ids))})", ids)
 
 
 # ui.unwrap reads everything, so this effect runs after any change. The
 # timeout belongs to the effect: a newer change cancels it, so saving waits
-# until things are quiet for half a second.
+# until things are quiet for half a second. The app writes todos.db back into
+# your files within a second after that, even while it keeps running.
 @ui.effect
 def autosave():
     snapshot = ui.unwrap(data)

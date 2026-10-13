@@ -7,7 +7,10 @@ const SEEDED_KEY = "pyslop.examples"; // name -> sha256 of the version we wrote
 // edited, so it may be replaced, e.g. the D14 ui examples after P1.
 const PREVIOUS: Record<string, string[]> = {
   "Counter App.py": ["31315c9546a3972c997cfe2a6e69cb1ff78a916fab5f040582c451f58ca1192f"],
-  "Todo App.py": ["8d60cead56a4abf497c78ff36302fbd7c57bee1bbb456843ef896c35e7e6397e"],
+  "Todo App.py": [
+    "8d60cead56a4abf497c78ff36302fbd7c57bee1bbb456843ef896c35e7e6397e",
+    "e6e142c03f5bd0ce78fb2a1c3dbe53530be422c17e37a870e735e3caa9936e83", // saved to todos.json
+  ],
 };
 
 async function sha256(text: string) {

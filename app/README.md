@@ -9,6 +9,11 @@ iPad. Swift host + web app (D4), Python in Pyodide workers (D2, D6).
   in the Files app ("On My iPhone"). Create, rename, duplicate and delete files
   and folders (native dialogs). Examples are copied into `Examples/` on first
   launch.
+- **Linked folders** (D28): "Open Folder…" (⋯ menu, or under Locations at the
+  top level) adds a folder from iCloud Drive, another app (e.g. Working Copy),
+  a file provider or a drive. It works like a folder in Documents: edit, run,
+  write back. Files that are only in iCloud are downloaded when opened.
+  Swipe a location to remove it (its files stay).
 - **Editor**: CodeMirror 6 with Python highlighting, autocompletion, auto-indent,
   bracket closing, search, undo history per file, soft wrapping with hanging
   indent, light/dark themes. Saves automatically. A row of extra keys sits above
@@ -71,8 +76,9 @@ iPad. Swift host + web app (D4), Python in Pyodide workers (D2, D6).
   makes them with `URLSession`; a custom `User-Agent` works too. Example:
   `Web Requests.py`.
 - **Run / Stop**: the file's folder is copied into the interpreter as the
-  working directory, so `open()` and imports of sibling modules work. Files the
-  program creates or changes are written back. Stop raises `KeyboardInterrupt`
+  working directory, so `open()`, `sqlite3` and imports of sibling modules
+  work. Files the program creates, changes or deletes are written back while
+  it idles (within about a second) and when it ends (D27). Stop raises `KeyboardInterrupt`
   and kills the program after 1.5 s (D11).
 - **Console**: streaming output, `input()`, tracebacks without Pyodide's
   internal frames whose `File "x.py", line N` entries open that line, inline matplotlib plots (`plt.show()`), and a `>>>` prompt
@@ -97,8 +103,9 @@ iPad. Swift host + web app (D4), Python in Pyodide workers (D2, D6).
   signals and lambdas update exactly what changed. It includes navigation,
   tabs, sheets, dialogs, lists, all common inputs and a canvas (see
   `uikit/README.md`). Files the app writes while it runs (e.g. saved data)
-  are written back when it closes. `Examples/Todo App.py` is a complete
-  Reminders-style app that saves to `todos.json`.
+  reach the disk within about a second (D27). `Examples/Todo App.py` is a
+  complete Reminders-style app that keeps its data in an SQLite database
+  (`todos.db`).
 - **Crashes**: a native stack overflow ends the run with "Python crashed" and
   the next run gets a fresh interpreter (D16).
 - **Layouts**: on iPhone, Files → Code/Console; on iPad, a sidebar with the
@@ -115,7 +122,8 @@ app/
   ios/                    Swift host: Pyslopnista.xcodeproj (hand-written, D19)
     Sources/App.swift          WKWebView, bridge, native dialogs
     Sources/AppSchemeHandler.swift  app:// with COOP/COEP, package cache (D9, D12)
-    Sources/FileStore.swift    Documents-backed file operations
+    Sources/FileStore.swift    file operations on Documents and linked folders (D28)
+    Sources/Locations.swift    linked folders: bookmarks from the folder picker
     copy-web.sh                build phase: web/dist + Pyodide into the bundle
   web/                    React + Vite + TypeScript (D18)
     public/runtime/       py-worker.js, sab-polyfill.js, python/_pyslop.py, python/ui.py (from uikit/),
@@ -144,12 +152,15 @@ cd web && npm run dev                     # desktop browser; files in localStora
 
 ## Status (2026-10-13)
 
-`./run.sh --selftest` passes all 33 checks in the iPhone 17 and iPad Pro 11
-simulators (2026-10-13). An earlier set of 19 also passed on the iPhone 14 Pro
+`./run.sh --selftest` passes all 35 checks in the iPhone 17 simulator
+(2026-10-13). In the iPad Pro 11 simulator, 34 pass; `stop` fails only
+because that simulator's `Examples/Countdown.py` was edited to raise. The
+33 checks before D27/D28 passed in both. An earlier set of 19 also passed on the iPhone 14 Pro
 (`--device`). The checks are: examples seeded, edit → autosave → run,
 `input()`, traceback cleanup, `>>>` console, file write-back, sibling
 imports, inline plot, Stop, UI app, todo app (navigation, typing, saving
-after the script returned), crash recovery, ruff/ty startup,
+into `todos.db` while the app runs, reading it back), linked folder (bookmark,
+list, run, write-back, remove), crash recovery, ruff/ty startup,
 diagnostics (F401, invalid-argument-type, unresolved-reference), completions,
 formatting, Pyodide imports not flagged, add-dependency quick fix + install
 from PyPI, cached rerun, requires-python, debugger (breakpoint → evaluate →

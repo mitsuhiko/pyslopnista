@@ -569,3 +569,6 @@ button.nav-subtitle.problems { display: inline-flex; align-items: center; gap: 3
 .switch:checked { background: var(--green); }
 .switch:checked::after { transform: translateX(20px); }
 .settings-preview { margin: 18px 16px 0; padding: 12px 14px; border-radius: 14px; background: var(--editor-bg); font-family: var(--mono); letter-spacing: 0; overflow-x: auto; color: var(--label); box-shadow: 0 0 0 0.5px var(--separator); }
+.list-header { margin: 26px 32px 7px; font-size: 13px; font-weight: 400; color: var(--secondary); text-transform: uppercase; letter-spacing: -0.08px; }
+.link-folder { width: 100%; height: 62px; text-align: left; color: var(--tint); font: inherit; }
+.file-row + .link-folder::before { content: ""; position: absolute; top: 0; left: 62px; right: 0; border-top: 0.5px solid var(--separator); }

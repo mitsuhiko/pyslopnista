@@ -27,7 +27,8 @@ export interface RunResult {
   changed?: ChangedFile[];
 }
 
-export type ChangedFile = { path: string; data: Uint8Array };
+/** A file the program wrote (data) or deleted (null). */
+export type ChangedFile = { path: string; data: Uint8Array | null };
 
 export interface WorkerInfo {
   bootMs: number;
@@ -58,6 +59,8 @@ export class PyWorker {
   onOutput: (stream: Stream, text: string) => void = () => {};
   onInput: () => Promise<string | null> = async () => null;
   onUIRender: (json: string) => void = () => {};
+  /** Files the program changed while it idles (see startFlushing in the worker). */
+  onFiles: (changed: ChangedFile[]) => void = () => {};
   onCrash: (error: string) => void = () => {};
   /** A debugger message; the returned promise is the next command (D23). */
   onDebug: (message: any) => Promise<unknown> = async () => ({ op: "continue" });
@@ -109,6 +112,9 @@ export class PyWorker {
         break;
       case "done":
         this.finish(msg);
+        break;
+      case "files":
+        this.onFiles(msg.changed);
         break;
       case "synced":
         this.syncs.get(msg.id)?.(msg.changed);
