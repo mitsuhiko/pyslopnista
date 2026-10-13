@@ -9,6 +9,19 @@ A demo of a Pythonista-style Python IDE for iPhone and iPad, built on
 > Pythonista or its author. Expect rough edges: it was written largely with
 > coding agents (hence the "slop" in the name).
 
+<p>
+  <img src="docs/screenshots/iphone-plot.png" width="24%" alt="Editor and console with an inline matplotlib plot">
+  <img src="docs/screenshots/iphone-debug.png" width="24%" alt="The debugger paused at a breakpoint, showing locals">
+  <img src="docs/screenshots/iphone-todo.png" width="24%" alt="A Reminders-style todo app built with the ui module">
+  <img src="docs/screenshots/iphone-turtle.png" width="24%" alt="Turtle graphics drawn in the console">
+</p>
+<p>
+  <img src="docs/screenshots/ipad-debug.png" width="49%" alt="iPad: file sidebar, split view and the debugger">
+  <img src="docs/screenshots/ipad-split.png" width="49%" alt="iPad: split view with a turtle drawing in the console">
+</p>
+
+<sub>iPhone 17 and iPad Pro 13" simulators (iOS 27).</sub>
+
 ## What's in it
 
 - **A Python IDE** (`app/`): files in the app's Documents folder (also visible
