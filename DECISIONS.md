@@ -1,0 +1,186 @@
+# Decisions
+
+Append-only. Never rewrite a decision: add a new one that supersedes it and mark
+the old one `Superseded by D<n>`.
+
+## D1: Product scope: learn, build, publish, with an agent
+
+2026-10-13 · Accepted
+
+The app exists so people can learn Python, build apps with it, and publish them.
+A coding agent based on pi-durable ships with it. Every other decision follows
+from these three goals.
+
+## D2: Python runs on Pyodide (CPython compiled to wasm) inside WebKit
+
+2026-10-13 · Accepted
+
+Do not embed native CPython (`Python.xcframework`).
+
+Why:
+- iOS forbids loading native code at runtime. Native CPython can only use
+  compiled packages that were signed into the app bundle at build time.
+- Pyodide loads compiled extensions (wasm side modules) at runtime, so
+  numpy, pandas and similar packages can be installed on demand.
+- WebKit is the only place on iOS where JIT is allowed, and its WebContent
+  process gives us crash and memory isolation for free.
+- The same runtime runs in any browser, which makes publishing possible (D5).
+
+Costs we accept: no threads (pthreads build pending), no raw sockets (needs a
+shim), a filesystem bridge, startup and speed costs of wasm, WebKit suspending
+work in the background, and Python versions lagging behind CPython releases.
+
+Evidence: `spikes/webkit-probe/` (iOS 27 Safari, simulator).
+
+## D3: Rejected: native CPython with wasm extension modules
+
+2026-10-13 · Rejected
+
+Idea: run the interpreter natively and run extension modules as wasm inside
+WebKit, with calls passed between the two.
+
+Rejected because the CPython C API needs the extension and the interpreter in
+one address space: extensions read object fields and buffers directly through
+raw pointers and macros. Separating them needs a cpyext-style proxy layer (as in
+PyPy) plus a process round trip for every C API call, which is orders of
+magnitude too slow. Running a wasm interpreter inside the app process instead
+is too slow without JIT.
+
+## D4: Web stack for the whole app; Swift is only a thin host
+
+2026-10-13 · Accepted
+
+The IDE, the agent and the runtime are a TypeScript web app inside a WKWebView.
+The Swift host only provides:
+- `app://` file serving (with the COOP/COEP isolation headers)
+- a package cache
+- a network proxy (no CORS problems)
+- the native bridge: Keychain, files, SQLite, share sheet, App Intents, OAuth
+
+Why: one codebase for iOS and the browser, reuse of pi-durable/pi-mobile
+(TypeScript, React), and published apps that match what runs in the IDE.
+
+## D5: Publishing means static web apps
+
+2026-10-13 · Accepted
+
+A published project is static files: the user's code, a pinned Pyodide version
+and its packages. It is hosted at a URL and installable as a PWA. Published
+apps use only web capabilities. The native bridge is a bonus for the user's own
+code inside our app; this keeps the App Store risk under guideline 4.7 low.
+
+Consequence: device APIs exposed to Python have two implementations, the
+native bridge and browser APIs (or graceful degradation).
+
+## D6: Python runs in Web Workers, one interpreter per run
+
+2026-10-13 · Accepted
+
+Each run gets its own worker (from a warm pool). Reset means `worker.terminate()`.
+Interrupts use Pyodide's interrupt buffer (a SharedArrayBuffer). Blocking-style
+calls use JSPI, or Atomics on a SharedArrayBuffer as the fallback.
+
+## D7: The agent is pi-durable running in the web app
+
+2026-10-13 · Accepted
+
+- `ExecutionEnv.FileSystem` is implemented over the project filesystem.
+- `Shell` is replaced by `python` and `pip` tools that run in Pyodide workers.
+- Storage goes through the `SqliteDatabase` adapter: native SQLite through the
+  bridge on iOS, SQLite compiled to wasm on OPFS in the browser.
+- Provider HTTP goes through the native host on iOS.
+
+Moving the agent loop to the cloud (Durable Objects) stays open (see Q4).
+
+## D8: The pi-durable agent is built last
+
+2026-10-13 · Accepted
+
+The coding agent is the last phase in every plan. It is built on top of the
+runtime, project files, packages, UI toolkit and publishing, and only after
+those are validated on a device. Its tools (`python`, `pip`, the filesystem)
+wrap features that must already work for people writing code by hand.
+
+## D9: Serve the web app from `app://` and polyfill `SharedArrayBuffer`
+
+2026-10-13 - Accepted
+
+A `WKURLSchemeHandler` serves the app's web files from `app://app/` with the
+COOP/COEP/CORP isolation headers. On the simulator this gives a secure,
+cross-origin-isolated context with JSPI and shared wasm memory. WKWebView hides
+the global `SharedArrayBuffer` constructor, but the one from shared wasm memory
+works, so the page and every worker install it as a polyfill before any
+Pyodide code runs. Evidence: `spikes/ios-host/`.
+
+## D10: Blocking Python uses Atomics, not JSPI
+
+2026-10-13 - Superseded by D13
+
+WebKit exposes JSPI, but Pyodide's `run_sync` (and therefore its JSPI-based
+`time.sleep`) hangs in it. Workers hide `WebAssembly.Suspending` and
+`WebAssembly.promising` before `loadPyodide`. Everything that has to look
+blocking to Python goes through a SharedArrayBuffer channel with
+`Atomics.wait`: `input()`, synchronous host/device calls (`host.call_sync`,
+about 0.14 ms per round trip on the simulator) and `time.sleep` (which waits on
+the interrupt buffer, so Stop wakes it). Async code can still use `await`.
+Revisit when WebKit's JSPI works with Pyodide. Evidence:
+`spikes/pyodide-worker/`.
+
+## D11: Stop escalates from KeyboardInterrupt to killing the worker
+
+2026-10-13 - Accepted
+
+Stop sets Pyodide's interrupt buffer, re-asserts it every 50 ms, and wakes any
+blocked stdin, sleep or host call. If the run hasn't ended after 1.5 s, the
+worker is terminated and the next run takes a fresh one from the pool.
+
+## D12: Packages go through a native, on-disk cache
+
+2026-10-13 - Accepted
+
+Pyodide's `packageBaseUrl` points at `app://app/pkgs/`. The Swift scheme
+handler serves wheels from Application Support and downloads misses from the
+CDN of the pinned Pyodide version. PyPI installs (micropip) should be routed
+through the same mechanism (not done yet).
+
+## D13: Use the wasm-GC call trampoline and enable JSPI; keep Atomics for our own blocking calls
+
+2026-10-13 - Accepted (pending device check, Q12)
+
+The JSPI "hang" was not a WebKit bug. CPython's Emscripten build sniffs the
+iOS user agent and falls back to a JavaScript call trampoline (gh-130418, for
+WebKit bug 293113, which was fixed in 2025). That puts a JS frame on every C
+function-pointer call, so suspension is impossible. Pyodide then loses the
+resulting `SuspendError` and hangs.
+
+The Python worker hides the iOS user agent before `loadPyodide`, which selects
+the wasm-GC trampoline. JSPI then works in WKWebView: `run_sync`,
+`run_sync(asyncio.sleep())`, `can_run_sync() == True`. So:
+- the worker keeps JSPI enabled (no more deleting `WebAssembly.Suspending`);
+- stdin, synchronous host calls and `time.sleep` stay on the Atomics channel
+  (D10's mechanism), because it is interruptible and doesn't depend on JSPI;
+- if the device check (Q12) fails, fall back to D10 (JS trampoline, JSPI hidden).
+
+Evidence: `spikes/jspi-repro/`.
+
+## Proposed (not yet decided)
+
+- **P1:** The editor is CodeMirror 6. (Implied by D4; confirm after testing it on a device.)
+- **P2:** The user UI toolkit is a Pythonic declarative tree built in the worker,
+  diffed and rendered by a JavaScript renderer with iOS-styled components.
+- **P3:** The web UI is built with React and Vite, like pi-mobile.
+- **P4:** The Xcode project is generated with XcodeGen.
+
+## Open questions
+
+- **Q2:** Can WebKit evict `app://` web storage? It survives relaunch and reinstall, but `persist()` is denied (`spikes/ios-host/`).
+- **Q3:** Blocking-style worker → Swift call cost on a real device. Simulator: about 0.1 ms for all paths (`spikes/ios-host/`).
+- **Q4:** Should the agent run locally, in the cloud, or both, given background suspension?
+- **Q5:** Pyodide on a real phone: cold and warm start, memory ceiling, speed compared to native CPython. Simulator: boot about 770 ms, 1 GB allocation OK, 1.4-3x slower than native CPython (`spikes/pyodide-worker/`).
+- **Q12:** Is WebKit bug 293113 (wasm-GC `ref.cast` failing in hot functions, device only) fixed on iOS 27 devices? Run a heavy workload with the wasm-GC trampoline (`gc=1`) on a real iPhone. This decides D13 vs. D10.
+- **Q13:** File the upstream reports listed in `spikes/jspi-repro/README.md` (CPython UA check, Pyodide lost `SuspendError`, WebKit `Suspending` callable).
+- **Q6:** Can Python run when triggered from App Intents / Shortcuts while the app is in the background?
+- **Q7:** Do Pyodide's packages cover typical teaching material? Does PyPI accept Emscripten wheels? (Pyodide's version numbers now follow CPython: 314.x is 3.14, 315 is in alpha; 357 packages; wheels tagged `pyemscripten_2026_0_wasm32`.)
+- **Q8:** JSPI support in Chrome and Firefox (matters for published apps).
+- **Q9:** App Review: guideline 2.5.2 (learning-to-code exception), 4.7 (gallery of user apps), 1.2 (user-generated content).
+- **Q10:** Model access for learners: hosted gateway, billing, in-app purchase rules.

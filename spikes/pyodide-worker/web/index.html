@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Pyodide spike</title>
+<style>
+  :root { color-scheme: light dark; font: 14px -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: env(safe-area-inset-top) 10px 10px; display: flex; flex-direction: column; height: 100dvh; box-sizing: border-box; gap: 8px; }
+  textarea, pre, input { font: 13px ui-monospace, monospace; }
+  textarea { height: 35%; resize: none; padding: 8px; border-radius: 8px; border: 1px solid #8884; }
+  .bar { display: flex; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 0; background: #0a84ff; color: white; }
+  button.secondary { background: #8884; color: inherit; }
+  #status { margin-left: auto; opacity: 0.6; font-size: 12px; }
+  pre { flex: 1; overflow: auto; margin: 0; padding: 8px; border-radius: 8px; background: #8881; white-space: pre-wrap; }
+  .stderr { color: #ff453a; } .system { opacity: 0.5; } .input { color: #30d158; }
+  #stdin { display: none; padding: 6px; border-radius: 8px; border: 1px solid #8884; }
+</style>
+<script src="sab-polyfill.js"></script>
+<textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off">import sys
+print("Python", sys.version.split()[0])
+name = input("What's your name? ")
+print(f"Hello, {name}!")
+
+import numpy as np
+print(np.arange(10).reshape(2, 5) * 2)
+
+import host
+host.call_sync("haptic", None)
+</textarea>
+<div class="bar">
+  <button id="run">Run</button>
+  <button id="stop" class="secondary">Stop</button>
+  <button id="clear" class="secondary">Clear</button>
+  <span id="status">booting...</span>
+</div>
+<input id="stdin" placeholder="input()" autocapitalize="off" autocorrect="off">
+<pre id="out"></pre>
+<script type="module" src="app.js"></script>

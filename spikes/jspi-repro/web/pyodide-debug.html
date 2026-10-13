@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pyodide JSPI debug</title>
+<style>body { font: 11px ui-monospace, monospace; padding: env(safe-area-inset-top) 10px; }</style>
+<pre id="out"></pre>
+<script type="module">
+const out = document.getElementById("out");
+const bridge = window.webkit?.messageHandlers?.bridge
+  ? (op, value) => window.webkit.messageHandlers.bridge.postMessage({ op, value })
+  : (op, value) => fetch("/__bridge", { method: "POST", body: JSON.stringify({ op, value }) });
+const t0 = performance.now();
+const log = (m) => {
+  const text = `${(performance.now() - t0).toFixed(0).padStart(6)} ${m}`;
+  out.textContent += text + "\n";
+  bridge("log", text);
+};
+const params = new URLSearchParams(location.search);
+const cases = (params.get("cases") ?? "run_sync_resolved").split(",");
+for (const name of cases) {
+  log(`=== ${name}`);
+  await new Promise((resolve) => {
+    const w = new Worker("pyodide-debug-worker.js", { type: "module" });
+    let lastTick = performance.now(), ticks = 0;
+    const watchdog = setInterval(() => {
+      const silent = performance.now() - lastTick;
+      if (silent > 4000) {
+        log(`worker silent for ${silent.toFixed(0)} ms after ${ticks} ticks -> SPINNING (blocked event loop)`);
+        clearInterval(watchdog); w.terminate(); resolve();
+      }
+    }, 500);
+    const deadline = setTimeout(() => {
+      log(`no result after 8 s but heartbeat alive -> PROMISE NEVER SETTLED`);
+      clearInterval(watchdog); w.terminate(); resolve();
+    }, 8000);
+    w.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "tick") { lastTick = performance.now(); ticks++; return; }
+      if (m.type === "log") { log(`  [w] ${m.text}`); return; }
+      if (m.type === "done") { log(`  DONE ${m.text}`); clearInterval(watchdog); clearTimeout(deadline); w.terminate(); resolve(); }
+    };
+    w.postMessage({ name, debugJspi: params.get("instrument") !== "0", patch: params.get("patch"), spoofUA: params.get("ua") === "mac" });
+  });
+}
+await bridge("result", "done");
+</script>

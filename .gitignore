@@ -1,0 +1,6 @@
+build/
+.DS_Store
+spikes/*/result.json
+node_modules/
+vendor/
+spikes/*/out/

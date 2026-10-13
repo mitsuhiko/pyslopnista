@@ -1,0 +1,24 @@
+<!doctype html><meta charset="utf-8"><pre id="o">jspi test (main thread)</pre>
+<script type="module">
+import { loadPyodide } from "./pyodide/pyodide.mjs";
+import { bridge } from "./runtime.js";
+const o = document.getElementById("o");
+const log = (m) => { o.textContent += "\n" + m; bridge("log", m); };
+const py = await loadPyodide({ indexURL: "/pyodide/" });
+log("loaded " + py.version);
+const tests = {
+  can_run_sync: "from pyodide.ffi import can_run_sync\ncan_run_sync()",
+  run_sync_resolved: "from pyodide.ffi import run_sync\nfrom js import Promise\nrun_sync(Promise.resolve(42))",
+  run_sync_microtask: "from pyodide.ffi import run_sync\nfrom js import Promise, queueMicrotask\nrun_sync(Promise.new(lambda res, rej: queueMicrotask(lambda: res(7))))",
+  run_sync_timer: "from pyodide.ffi import run_sync\nfrom js import Promise, setTimeout\nrun_sync(Promise.new(lambda res, rej: setTimeout(lambda: res(9), 50)))",
+};
+for (const [name, code] of Object.entries(tests)) {
+  log("start " + name);
+  const result = await Promise.race([
+    py.runPythonAsync(code).then((v) => "ok " + v, (e) => "error " + e.message.split("\n").slice(-2).join(" ")),
+    new Promise((r) => setTimeout(() => r("TIMEOUT"), 3000)),
+  ]);
+  log(name + ": " + result);
+}
+await bridge("result", "done");
+</script>

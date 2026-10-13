@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JSPI repro</title>
+<style>body { font: 12px ui-monospace, monospace; padding: env(safe-area-inset-top) 10px; } .FAIL { color: #d00; }</style>
+<pre id="out">JSPI repro
+</pre>
+<script type="module">
+import { tests, runTest } from "./tests.js";
+
+const out = document.getElementById("out");
+const bridge = window.webkit?.messageHandlers?.bridge
+  ? (op, value) => window.webkit.messageHandlers.bridge.postMessage({ op, value })
+  : (op, value) => fetch("/__bridge", { method: "POST", body: JSON.stringify({ op, value }) });
+const results = { ua: navigator.userAgent, href: location.href, worker: {}, main: {} };
+const line = (where, r) => {
+  const text = `${r.ok ? "PASS" : "FAIL"} ${where.padEnd(6)} ${r.name.padEnd(26)} ${r.value} ${r.ms ?? ""}ms`;
+  out.insertAdjacentHTML("beforeend", `<span class="${r.ok ? "PASS" : "FAIL"}"></span>`);
+  out.lastChild.textContent = text + "\n";
+  bridge("log", text);
+};
+
+function inWorker(name, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    const w = new Worker("worker.js", { type: "module" });
+    const timer = setTimeout(() => { w.terminate(); resolve({ name, ok: false, value: "HANG (worker terminated)" }); }, timeoutMs);
+    w.onmessage = (e) => { clearTimeout(timer); w.terminate(); resolve(e.data); };
+    w.onerror = (e) => { clearTimeout(timer); w.terminate(); resolve({ name, ok: false, value: `worker error ${e.message}` }); };
+    w.postMessage(name);
+  });
+}
+
+const only = new URLSearchParams(location.search).get("only")?.split(",");
+const names = Object.keys(tests).filter((n) => !only || only.includes(n));
+
+for (const name of names) {
+  const r = await inWorker(name);
+  results.worker[name] = r;
+  line("worker", r);
+}
+
+// Main thread last: a hang here can block the page (and the timeout) entirely.
+if (new URLSearchParams(location.search).get("main") !== "0") {
+  for (const name of names) {
+    bridge("log", `main: starting ${name}`);
+    const r = await Promise.race([
+      runTest(name),
+      new Promise((res) => setTimeout(() => res({ name, ok: false, value: "TIMEOUT" }), 3000)),
+    ]);
+    results.main[name] = r;
+    line("main", r);
+  }
+}
+await bridge("result", JSON.stringify(results, null, 2));
+</script>

@@ -1,0 +1,24 @@
+<!doctype html><meta charset=utf-8><pre id=o>running</pre><script>
+const r = {ua: navigator.userAgent};
+const t = (k, f) => { try { r[k] = f(); } catch (e) { r[k] = "ERR " + e.message; } };
+t("wasm", () => typeof WebAssembly);
+t("jspi_Suspending", () => typeof WebAssembly.Suspending);
+t("jspi_promising", () => typeof WebAssembly.promising);
+t("exnref_JSTag", () => typeof WebAssembly.JSTag);
+t("wasm_Tag", () => typeof WebAssembly.Tag);
+t("memory64", () => { new WebAssembly.Memory({initial: 1, index: "i64"}); return "constructed"; });
+t("crossOriginIsolated", () => self.crossOriginIsolated);
+t("SharedArrayBuffer", () => typeof SharedArrayBuffer);
+t("Atomics_waitAsync", () => typeof Atomics.waitAsync);
+t("shared_memory", () => { new WebAssembly.Memory({initial:1, maximum:2, shared:true}); return "ok"; });
+for (const mb of [1024, 2048, 3072, 4095]) t("mem_initial_" + mb + "MB", () => { const m = new WebAssembly.Memory({initial: mb*16}); return m.buffer.byteLength/2**20; });
+t("deviceMemory", () => navigator.deviceMemory);
+t("hardwareConcurrency", () => navigator.hardwareConcurrency);
+const w = new Worker("worker.js");
+w.onmessage = async (e) => {
+  r.worker = e.data;
+  document.getElementById("o").textContent = JSON.stringify(r, null, 2);
+  await fetch("/result", {method: "POST", body: JSON.stringify(r, null, 2)});
+};
+setTimeout(() => fetch("/result", {method:"POST", body: JSON.stringify({...r, worker:"TIMEOUT"}, null, 2)}), 8000);
+</script>

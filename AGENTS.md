@@ -1,0 +1,38 @@
+# AGENTS.md
+
+A Pythonista replacement for iOS: Pyodide in a WKWebView, a TypeScript web
+app, a thin Swift host and a pi-durable coding agent. Early research phase.
+
+## Where things live
+
+- `GOALS.md`: the feature set, tagged [core]/[later]/[maybe]. Update it when scope changes.
+- `DECISIONS.md`: decisions D<n> (append-only), proposals P<n>, open questions Q<n>.
+  When a spike answers a question, add a decision or note that cites the spike,
+  and remove the question.
+- `spikes/<name>/`: throwaway experiments. Each one has a `README.md` with the
+  question, how to run it, the results and the date. Spikes are never production code.
+
+## Current work
+
+Spike queue (update the status here). The pi-durable agent always comes last
+(D8); never start agent work before the spikes ahead of it are done.
+
+1. [x] `ios-host`: Swift host, WKWebView, `app://` scheme handler; probe inside it (Q1 answered: D9; Q2/Q3 narrowed)
+2. [x] `pyodide-worker`: bundled Pyodide in a worker: console, `input()`, interrupt, restart, package cache (D10-D12; open: PyPI offline cache, Q11)
+3. [ ] `ui-toolkit`: declarative Python UI (counter and list app) in the app, also exported as a static site (P2, D5)
+4. [ ] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, App Intents, wasm-GC trampoline check (Q3, Q5, Q6, Q12)
+5. [ ] `agent` (last): pi-durable in the web view, with a SQLite bridge adapter, `python` tool and proxied providers (D7, Q4)
+
+Done:
+- [x] `jspi-repro`: JSPI "hang" root-caused to CPython's iOS JS-trampoline fallback (D13)
+- [x] `webkit-probe`: wasm and threading features of iOS 27 Safari (simulator)
+
+## Conventions
+
+- Environment: Xcode 27, iOS 27 simulator, macOS 26.
+- Python tooling on the host goes through `uv`.
+- Write dates as YYYY-MM-DD.
+- Spikes with a web part have `run.sh --selftest [steps]`, which prints JSON from
+  the simulator. Prefer the app over Safari for automated runs; driving Safari
+  with `simctl openurl` reuses tabs and is unreliable.
+- Never claim a result from the simulator or Safari applies to a real device or to WKWebView; say which one was tested.
