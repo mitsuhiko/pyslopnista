@@ -2,6 +2,7 @@
 // fixes, plus problem counts that open the full list.
 import { type Diagnostic, forEachDiagnostic } from "@codemirror/lint";
 import type { EditorView } from "@codemirror/view";
+import { Error as ErrorIcon, Warning } from "./Icons";
 
 export interface ProblemSummary {
   errors: number;
@@ -31,20 +32,24 @@ export function ProblemBar({ summary, view, onShowAll }: { summary: ProblemSumma
   return (
     <div className={`problem-bar ${d.severity}`}>
       <div className="problem-text">
-        <span className="problem-message">{d.message}</span>
-        <span className="problem-source">{d.source}</span>
+        {d.severity === "error" ? <ErrorIcon size={18} className="problem-icon" /> : <Warning size={18} className="problem-icon" />}
+        <span className="problem-message">
+          {d.message} <span className="problem-source">{d.source}</span>
+        </span>
       </div>
-      <div className="problem-actions">
-        {d.actions?.map((a) => (
-          <button key={a.name} onPointerDown={(e) => { e.preventDefault(); if (view) a.apply(view, d.from, d.to); }}>
-            {a.name}
-          </button>
-        ))}
-        {summary.errors + summary.warnings > 1 && (
-          <button className="secondary" onPointerDown={(e) => { e.preventDefault(); onShowAll(); }}>
-            All {summary.errors + summary.warnings}
-          </button>
-        )}
+      <div className="problem-footer">
+        <div className="problem-actions">
+          {d.actions?.map((a) => (
+            <button key={a.name} onPointerDown={(e) => { e.preventDefault(); if (view) a.apply(view, d.from, d.to); }}>
+              {a.name}
+            </button>
+          ))}
+          {summary.errors + summary.warnings > 1 && (
+            <button className="secondary" onPointerDown={(e) => { e.preventDefault(); onShowAll(); }}>
+              All {summary.errors + summary.warnings}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -125,7 +125,8 @@ export async function selftest(app: AppController) {
     await until(() => consoleText().includes("9"));
     session.stop();
     await until(idle);
-    if (!consoleText().includes("KeyboardInterrupt")) throw new Error(consoleText());
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    if (run?.status !== "stopped" || consoleText().includes("crashed")) throw new Error(`${run?.status}: ${consoleText()}`);
   });
 
   await step("ui_app", async () => {

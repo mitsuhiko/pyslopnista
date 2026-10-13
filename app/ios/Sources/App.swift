@@ -5,7 +5,10 @@ import WebKit
 struct PyslopnistaApp: App {
     var body: some Scene {
         WindowGroup {
-            WebView().ignoresSafeArea()
+            // Extend under the status bar and home indicator, but not under the
+            // keyboard: SwiftUI shrinks the web view above the keyboard, its
+            // accessory row and the iPad shortcut bar, so nothing is covered.
+            WebView().ignoresSafeArea(.container)
         }
     }
 }
@@ -50,6 +53,7 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.pinchGestureRecognizer?.isEnabled = false
         self.webView = webView
+        KeyboardAccessory.shared.install(on: webView)
 
         var query = ""
         if let i = args.firstIndex(of: "--query"), i + 1 < args.count, !args[i + 1].isEmpty { query = "?" + args[i + 1] }
@@ -90,6 +94,9 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
                 replyHandler(nil, nil)
             case "fs.exists": replyHandler(try files.exists(str("path")), nil)
             case "fs.tree": replyHandler(try files.tree(str("path")), nil)
+            case "keyboard.mode":
+                KeyboardAccessory.shared.setMode(KeyboardAccessory.Mode(rawValue: str("mode")) ?? .plain)
+                replyHandler(nil, nil)
             case "echo": replyHandler(body["value"], nil)
             case "haptic":
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -109,6 +116,11 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     }
 
     // MARK: lifecycle
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // The content view can be replaced on navigation; make sure it has our accessory.
+        KeyboardAccessory.shared.install(on: webView)
+    }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         // Usually memory pressure (D16/Q15). Reload; files are on disk.

@@ -8,6 +8,7 @@ import tyWasmUrl from "ty_wasm/ty_wasm_bg.wasm?url";
 import type { AnalysisRequest, CompletionItem, Problem } from "./protocol";
 
 const ROOT = "/project";
+const STUBS = "/pyslop-stubs";
 let ruff: RuffWorkspace;
 let ty: TyWorkspace;
 const handles = new Map<string, FileHandle>();
@@ -28,6 +29,15 @@ async function init() {
   const t1 = performance.now();
   await initTy({ module_or_path: tyWasmUrl });
   ty = new TyWorkspace(ROOT, PositionEncoding.Utf16, { environment: { "python-version": "3.14" } });
+  // Our runtime modules (ui) become visible to ty through an extra search path;
+  // the directory only exists once a file is in it.
+  try {
+    const ui = await (await fetch("/runtime/python/ui.py")).text();
+    ty.openFile(`${STUBS}/ui.py`, ui);
+    ty.updateOptions({ environment: { "python-version": "3.14", "extra-paths": [STUBS] } });
+  } catch {
+    // without it, `import ui` is simply not type checked
+  }
   return { ruff: RuffWorkspace.version(), ruffMs, tyMs: performance.now() - t1 };
 }
 

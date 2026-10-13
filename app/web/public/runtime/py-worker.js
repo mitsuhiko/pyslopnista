@@ -73,9 +73,12 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   py.registerJsModule("host", {
     call: (op, value) => asyncCall("host", { op, value: value?.toJs?.() ?? value }),
     call_sync: (op, value) => syncCall("host", { op, value: value?.toJs?.() ?? value }),
+    // Sleeps without burning CPU; Stop notifies the interrupt buffer, which
+    // wakes this early. KeyboardInterrupt is then raised by CPython's own signal
+    // check right after we return, not thrown through JavaScript (which WebKit
+    // reports as an uncaught worker error).
     sleep: (seconds) => {
       Atomics.wait(interruptInts, 0, 0, Math.max(0, seconds * 1000));
-      py.checkInterrupt();
     },
   });
   py.registerJsModule("_pyslophost", {
@@ -176,8 +179,17 @@ async function run({ code, filename, cwd, files, repl, indexURL }) {
   }
 }
 
-addEventListener("error", (e) => postMessage({ type: "worker-error", error: String(e.message ?? e) }));
-addEventListener("unhandledrejection", (e) => postMessage({ type: "worker-error", error: String(e.reason?.message ?? e.reason) }));
+// Errors escaping Pyodide are crashes (D16), except KeyboardInterrupt: it is a
+// BaseException, so asyncio re-raises it out of the event loop after Stop.
+function reportEscaped(error) {
+  if (/KeyboardInterrupt\s*$/.test(error.trim())) return;
+  postMessage({ type: "worker-error", error });
+}
+addEventListener("error", (e) => reportEscaped(String(e.message ?? e)));
+addEventListener("unhandledrejection", (e) => {
+  e.preventDefault();
+  reportEscaped(String(e.reason?.message ?? e.reason));
+});
 
 onmessage = async (e) => {
   const msg = e.data;

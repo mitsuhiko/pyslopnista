@@ -11,6 +11,8 @@ function trackViewport() {
     const height = vv ? vv.height : window.innerHeight;
     document.documentElement.style.setProperty("--vvh", `${height}px`);
     document.documentElement.style.setProperty("--vv-top", `${vv ? vv.offsetTop : 0}px`);
+    // A visual viewport much shorter than the layout viewport means the keyboard is up.
+    document.documentElement.classList.toggle("keyboard-open", window.innerHeight - height > 120);
     window.scrollTo(0, 0);
   };
   vv?.addEventListener("resize", update);
@@ -25,6 +27,8 @@ await seedExamples();
 let resolveController: (c: AppController) => void;
 const controller = new Promise<AppController>((r) => (resolveController = r));
 createRoot(document.getElementById("root")!).render(<App onReady={(c) => resolveController(c)} />);
+void controller.then((c) => ((window as any).__app = c)); // debugging / UI testing aid
+void import("./session").then((m) => ((window as any).__session = m.session));
 
 // Launch hooks for screenshots/debugging: #open=<path>[&run][&pane=files|editor|console]
 const hook = new URLSearchParams(location.hash.slice(1));
@@ -36,7 +40,15 @@ if (hook.has("open") || hook.has("pane")) {
     void c.run();
   }
   if (hook.get("pane")) c.showPane(hook.get("pane") as "files" | "editor" | "console");
-  if (hook.has("focus")) setTimeout(() => c.editor()?.focus(), 300);
+  if (hook.has("focus")) {
+    setTimeout(() => {
+      c.editor()?.focus();
+      setTimeout(() => {
+        const a = document.activeElement;
+        void import("./host").then((h) => h.call("log", `[hook] focus -> ${a?.tagName}.${a?.className} vv=${window.visualViewport?.height} ih=${window.innerHeight}`));
+      }, 1500);
+    }, 600);
+  }
 }
 
 if (location.hash.startsWith("#selftest")) {

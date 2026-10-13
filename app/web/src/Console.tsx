@@ -1,42 +1,194 @@
-// Console: program output (stdout/stderr/images), input() and the >>> prompt.
-import { useEffect, useRef, useState } from "react";
-import type { SessionState } from "./session";
+// Console: runs as blocks (header + output), inline input() right where the
+// program asked, ANSI colors, inline images, and the >>> prompt.
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { basename } from "./host";
+import { CheckCircle, Error as ErrorIcon, StopCircle, Terminal, Trash } from "./Icons";
+import type { Line, Run, SessionState } from "./session";
 import { session } from "./session";
 
-export function Console({ state }: { state: SessionState }) {
+// -- ANSI SGR ---------------------------------------------------------------------------
+
+const ANSI_16 = ["#000", "#c91b00", "#00a600", "#c7c400", "#2225c4", "#ca30c7", "#00a6b2", "#bfbfbf",
+  "#686868", "#ff6e67", "#5ffa68", "#fffc67", "#6871ff", "#ff77ff", "#60fdff", "#fff"];
+
+function color256(n: number): string {
+  if (n < 16) return ANSI_16[n];
+  if (n >= 232) {
+    const v = 8 + (n - 232) * 10;
+    return `rgb(${v},${v},${v})`;
+  }
+  const i = n - 16;
+  const c = (x: number) => (x ? 55 + x * 40 : 0);
+  return `rgb(${c(Math.floor(i / 36))},${c(Math.floor(i / 6) % 6)},${c(i % 6)})`;
+}
+
+type Style = { color?: string; background?: string; bold?: boolean; dim?: boolean; italic?: boolean; underline?: boolean };
+
+function renderAnsi(text: string): ReactNode {
+  if (!text.includes("\x1b")) return text;
+  const out: ReactNode[] = [];
+  let style: Style = {};
+  const re = /\x1b\[([0-9;]*)([A-Za-z])/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  const push = (s: string) => {
+    if (!s) return;
+    const css: React.CSSProperties = {
+      color: style.color, background: style.background, fontWeight: style.bold ? 700 : undefined,
+      opacity: style.dim ? 0.6 : undefined, fontStyle: style.italic ? "italic" : undefined,
+      textDecoration: style.underline ? "underline" : undefined,
+    };
+    out.push(Object.values(css).some((v) => v !== undefined) ? <span key={out.length} style={css}>{s}</span> : s);
+  };
+  while ((m = re.exec(text))) {
+    push(text.slice(last, m.index));
+    last = re.lastIndex;
+    if (m[2] !== "m") continue; // cursor movement etc. is dropped
+    const codes = (m[1] || "0").split(";").map(Number);
+    for (let i = 0; i < codes.length; i++) {
+      const c = codes[i];
+      if (c === 0) style = {};
+      else if (c === 1) style = { ...style, bold: true };
+      else if (c === 2) style = { ...style, dim: true };
+      else if (c === 3) style = { ...style, italic: true };
+      else if (c === 4) style = { ...style, underline: true };
+      else if (c === 22) style = { ...style, bold: false, dim: false };
+      else if (c === 23) style = { ...style, italic: false };
+      else if (c === 24) style = { ...style, underline: false };
+      else if (c >= 30 && c <= 37) style = { ...style, color: ANSI_16[c - 30] };
+      else if (c >= 90 && c <= 97) style = { ...style, color: ANSI_16[c - 90 + 8] };
+      else if (c >= 40 && c <= 47) style = { ...style, background: ANSI_16[c - 40] };
+      else if (c >= 100 && c <= 107) style = { ...style, background: ANSI_16[c - 100 + 8] };
+      else if (c === 39) style = { ...style, color: undefined };
+      else if (c === 49) style = { ...style, background: undefined };
+      else if ((c === 38 || c === 48) && codes[i + 1] === 5) {
+        const v = color256(codes[i + 2] ?? 0);
+        style = c === 38 ? { ...style, color: v } : { ...style, background: v };
+        i += 2;
+      } else if ((c === 38 || c === 48) && codes[i + 1] === 2) {
+        const v = `rgb(${codes[i + 2] ?? 0},${codes[i + 3] ?? 0},${codes[i + 4] ?? 0})`;
+        style = c === 38 ? { ...style, color: v } : { ...style, background: v };
+        i += 4;
+      }
+    }
+  }
+  push(text.slice(last));
+  return out;
+}
+
+// -- run headers --------------------------------------------------------------------------
+
+function duration(run: Run) {
+  const ms = (run.endedAt ?? Date.now()) - run.startedAt;
+  return ms < 1000 ? `${ms} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
+}
+
+export function runSummary(run: Run | undefined, awaitingInput: boolean): string {
+  if (!run) return "";
+  switch (run.status) {
+    case "running":
+      return awaitingInput ? "Waiting for input" : "Running…";
+    case "ok":
+      return `Finished in ${duration(run)}`;
+    case "error":
+      return "Exited with an error";
+    case "stopped":
+      return "Stopped";
+    case "crashed":
+      return "Python crashed";
+  }
+}
+
+function RunIcon({ run }: { run: Run }) {
+  if (run.status === "running") return <span className="spinner" aria-label="running" />;
+  if (run.status === "ok") return <CheckCircle size={16} className="run-icon ok" />;
+  if (run.status === "stopped") return <StopCircle size={16} className="run-icon stopped" />;
+  return <ErrorIcon size={16} className="run-icon error" />;
+}
+
+function RunHeader({ run, awaitingInput }: { run: Run; awaitingInput: boolean }) {
+  const time = new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return (
+    <div className={`run-header ${run.status}`}>
+      <RunIcon run={run} />
+      <span className="run-name">{run.file ? basename(run.file) : "Console"}</span>
+      <span className="run-meta">
+        {runSummary(run, awaitingInput)} · {time}
+      </span>
+    </div>
+  );
+}
+
+// -- inline input -------------------------------------------------------------------------
+
+function InlineInput() {
+  const ref = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState("");
+  useEffect(() => {
+    ref.current?.focus({ preventScroll: true });
+  }, []);
+  return (
+    <input
+      ref={ref}
+      className="inline-input"
+      value={value}
+      size={Math.max(1, value.length + 1)}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          session.submitInput(value);
+          setValue("");
+        }
+      }}
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      enterKeyHint="send"
+      aria-label="Input for the program"
+    />
+  );
+}
+
+// -- console -----------------------------------------------------------------------------
+
+function groupByRun(lines: Line[]) {
+  const groups: { runId: number; lines: Line[] }[] = [];
+  for (const line of lines) {
+    const g = groups.at(-1);
+    if (g && g.runId === line.runId) g.lines.push(line);
+    else groups.push({ runId: line.runId, lines: [line] });
+  }
+  return groups;
+}
+
+export function Console({ state, header }: { state: SessionState; header?: ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const stick = useRef(true);
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
 
-  // Stick to the bottom while output streams in.
-  useEffect(() => {
+  // Follow output while the user is at the bottom; leave them alone when they scrolled up.
+  useLayoutEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [state.lines, state.awaitingInput]);
 
-  useEffect(() => {
-    if (state.awaitingInput) inputRef.current?.focus();
-  }, [state.awaitingInput]);
-
   const submit = () => {
-    if (state.awaitingInput) {
-      session.submitInput(value);
-    } else {
-      if (!value.trim()) return;
-      setHistory((h) => [...h, value]);
-      void session.runConsole(value);
-    }
+    if (!value.trim()) return;
+    setHistory((h) => [...h.filter((x) => x !== value), value]);
+    void session.runConsole(value);
     setValue("");
     setHistoryIndex(-1);
+    stick.current = true;
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
       submit();
-    } else if (!state.awaitingInput && (e.key === "ArrowUp" || e.key === "ArrowDown") && history.length) {
+    } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && history.length) {
       e.preventDefault();
       const next = e.key === "ArrowUp" ? (historyIndex < 0 ? history.length - 1 : Math.max(0, historyIndex - 1)) : historyIndex + 1;
       if (next >= history.length || next < 0) {
@@ -49,37 +201,70 @@ export function Console({ state }: { state: SessionState }) {
     }
   };
 
-  const busy = state.status !== "idle" && !state.awaitingInput;
-  const prompt = state.awaitingInput ? "" : ">>>";
+  const busy = state.status !== "idle";
+  const groups = groupByRun(state.lines);
+  const lastRunId = groups.at(-1)?.runId;
 
   return (
     <div className="console">
-      <div className="console-output" ref={scroller}>
-        {state.lines.length === 0 && <div className="console-empty">Output appears here. Type Python below to try things out.</div>}
-        {state.lines.map((line) =>
-          line.kind === "image" ? (
-            <img key={line.id} className="console-image" src={`data:image/png;base64,${line.text}`} alt="plot" />
-          ) : line.kind === "prompt" ? (
-            <pre key={line.id} className="console-line prompt">{`>>> ${line.text}`}</pre>
-          ) : (
-            <pre key={line.id} className={`console-line ${line.kind}`}>{line.text}</pre>
-          ),
+      {header}
+      <div
+        className="console-output"
+        ref={scroller}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+      >
+        {state.lines.length === 0 && (
+          <div className="console-empty">
+            <Terminal size={34} />
+            <p>Output from your programs appears here.</p>
+            <p className="hint">Type Python below to try something out.</p>
+          </div>
         )}
+        {groups.map((g) => {
+          const run = state.runs[g.runId];
+          return (
+            <section className="run" key={g.runId}>
+              {run && <RunHeader run={run} awaitingInput={state.awaitingInput && g.runId === lastRunId} />}
+              <div className="run-body">
+                {g.lines.map((line) => (
+                  <Fragment key={line.id}>
+                    {line.kind === "run" ? null : line.kind === "image" ? (
+                      <img className="console-image" src={`data:image/png;base64,${line.text}`} alt="Figure" />
+                    ) : line.kind === "prompt" ? (
+                      <span className="console-prompt-line">{line.text}{"\n"}</span>
+                    ) : (
+                      <span className={`out ${line.kind}`}>{renderAnsi(line.text)}</span>
+                    )}
+                  </Fragment>
+                ))}
+                {state.awaitingInput && g.runId === lastRunId && <InlineInput key={state.lines.length} />}
+              </div>
+            </section>
+          );
+        })}
       </div>
-      <div className={`console-input ${state.awaitingInput ? "awaiting" : ""}`}>
-        <span className="console-prompt">{prompt}</span>
+      <div className={`repl ${busy ? "busy" : ""}`}>
+        <span className="repl-prompt">&gt;&gt;&gt;</span>
         <input
-          ref={inputRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={state.awaitingInput ? "Input for the program, then Return" : busy ? "Running…" : "Python"}
+          placeholder={busy ? (state.awaitingInput ? "Answer the program above" : "Running…") : "Python"}
           disabled={busy}
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          enterKeyHint={state.awaitingInput ? "send" : "go"}
+          enterKeyHint="go"
+          aria-label="Python console"
         />
+        {state.lines.length > 0 && !busy && (
+          <button className="icon-button small" onClick={() => session.clear()} aria-label="Clear console">
+            <Trash size={18} />
+          </button>
+        )}
       </div>
     </div>
   );

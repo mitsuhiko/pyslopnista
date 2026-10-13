@@ -81,6 +81,9 @@ export async function loadPyodideModules() {
   return pyodideModules;
 }
 
+// Modules the runtime provides that ty cannot see.
+const RUNTIME_MODULES = new Set(["js", "pyodide", "pyodide_js", "micropip", "host", "_pyslop", "_pyslophost", "_uihost"]);
+
 // Import names that differ from the distribution name for common packages.
 const DIST_FOR_IMPORT: Record<string, string> = {
   bs4: "beautifulsoup4", PIL: "pillow", yaml: "pyyaml", sklearn: "scikit-learn", cv2: "opencv-python",
@@ -133,7 +136,7 @@ export function analysisLinter(getPath: () => string | null): Extension {
         const actions: Action[] = [];
         if (p.code === "unresolved-import") {
           const module = /`([\w.]+)`/.exec(p.message)?.[1]?.split(".")[0];
-          if (module && pyodideModules!.has(module)) continue; // Pyodide installs it on import
+          if (module && (pyodideModules!.has(module) || RUNTIME_MODULES.has(module))) continue; // provided at run time
           if (module && declared.has(normalizeName(DIST_FOR_IMPORT[module] ?? module))) continue; // installed on run
           if (module) actions.push(addDependencyAction(module));
         }

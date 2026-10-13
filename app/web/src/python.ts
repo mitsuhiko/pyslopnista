@@ -102,9 +102,16 @@ export class PyWorker {
         this.finish(msg);
         break;
       case "worker-error": {
+        // The interpreter is unusable afterwards; only report it as a crash
+        // while something is running (a late error must not rewrite a run).
         const hint = /call stack/i.test(msg.error) ? " (recursion too deep)" : "";
-        this.onCrash(`${msg.error}${hint}`);
-        this.terminate(`Python crashed: ${msg.error}${hint}`);
+        if (this.current) {
+          this.onCrash(`${msg.error}${hint}`);
+          this.terminate(`Python crashed: ${msg.error}${hint}`);
+        } else {
+          this.dead = true;
+          this.worker.terminate();
+        }
         break;
       }
     }

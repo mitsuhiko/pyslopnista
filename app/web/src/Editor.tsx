@@ -49,6 +49,7 @@ const highlight = HighlightStyle.define([
 
 const theme = EditorView.theme({
   "&": { height: "100%", fontSize: "var(--editor-font-size)", background: "var(--editor-bg)", color: "var(--label)" },
+  "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.5", overscrollBehavior: "contain" },
   ".cm-content": { caretColor: "var(--tint)", paddingBottom: "40vh" },
   ".cm-gutters": { background: "var(--editor-bg)", color: "var(--tertiary)", border: "none" },
@@ -172,7 +173,15 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, te
   useEffect(() => {
     const view = new EditorView({ parent: host.current!, state: makeState("") });
     viewRef.current = view;
-    return () => view.destroy();
+    (window as any).__editorView = view; // debugging aid
+    // Re-measure when our box changes size (sheets, rotation, split panes):
+    // wrapped line heights depend on the width.
+    const ro = new ResizeObserver(() => view.requestMeasure());
+    ro.observe(host.current!);
+    return () => {
+      ro.disconnect();
+      view.destroy();
+    };
   }, []);
 
   // Switch documents: stash the old state, restore or create the new one.
@@ -188,6 +197,11 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, te
     const cached = states.current.get(path);
     if (cached && cached.doc.toString() === text) view.setState(cached);
     else if (view.state.doc.toString() !== text || prev !== path) view.setState(makeState(text));
+    // Wrapped line heights are only right once layout has settled (fonts,
+    // the push transition); measure again so the gutter lines up.
+    requestAnimationFrame(() => view.requestMeasure());
+    const t = setTimeout(() => view.requestMeasure(), 450);
+    return () => clearTimeout(t);
   }, [path, text]);
 
   useImperativeHandle(ref, () => ({
