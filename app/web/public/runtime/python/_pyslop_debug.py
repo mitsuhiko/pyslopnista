@@ -290,7 +290,10 @@ class Debugger(bdb.Bdb):
         if not 0 <= index < len(self.stack):
             return []
         frame = self.stack[index][0]
-        local_vars = [(k, v) for k, v in frame.f_locals.items() if not (k.startswith("__") and k.endswith("__"))]
+        local_vars = [
+            (k, v) for k, v in frame.f_locals.items()
+            if not (k.startswith("__") and k.endswith("__")) and not k.startswith("__pyslop")  # runtime plumbing
+        ]
         if frame.f_globals is frame.f_locals or frame.f_code.co_name == "<module>":
             data = [(k, v) for k, v in local_vars if not isinstance(v, _HIDDEN_GLOBALS)]
             return [{"name": "Variables", "variables": [self._describe(k, v) for k, v in data]}]

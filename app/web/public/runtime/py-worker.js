@@ -78,6 +78,12 @@ let nextCallId = 0;
 const pendingCalls = new Map();
 let uiDispatcher = null;
 let manifest = new Map(); // path -> mtime of files synced into the project dir
+let plumbing; // a private namespace for our own Python, so the program's globals stay clean
+
+/** Run our own setup code without touching the program's namespace (__main__). */
+function runPlumbing(code) {
+  py.runPython(code, { globals: plumbing });
+}
 let runCwd = null; // the program's working directory, for later write-backs
 
 function syncCall(op, value) {
@@ -176,7 +182,8 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
     if (!res.ok) throw new Error(`failed to fetch ${url}: ${res.status}`);
     py.FS.writeFile(`/lib/pyslop/${name}`, new Uint8Array(await res.arrayBuffer()));
   }
-  py.runPython([
+  plumbing = py.runPython("dict()");
+  runPlumbing([
     "import sys",
     "sys.path.append('/lib/pyslop')",
     "import _pyslop, _pyslop_debug",
@@ -222,6 +229,21 @@ function changedFiles(cwd) {
   return out;
 }
 
+/**
+ * Call one of our runtime modules directly (awaiting coroutines), so nothing
+ * passes through the program's namespace (where the debugger and >>> see it).
+ */
+async function callRuntime(module, name, ...args) {
+  const mod = py.pyimport(module);
+  try {
+    const result = mod[name](...args);
+    const value = result && typeof result.then === "function" ? await result : result;
+    value?.destroy?.();
+  } finally {
+    mod.destroy();
+  }
+}
+
 async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) {
   const t0 = performance.now();
   try {
@@ -230,20 +252,17 @@ async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) 
     if (cwd) {
       py.FS.mkdirTree(cwd);
       py.FS.chdir(cwd);
-      py.runPython(`import sys\nif ${JSON.stringify(cwd)} not in sys.path: sys.path.insert(0, ${JSON.stringify(cwd)})\nsys.argv = [${JSON.stringify(filename ?? "")}]`);
+      runPlumbing(`import sys\nif ${JSON.stringify(cwd)} not in sys.path: sys.path.insert(0, ${JSON.stringify(cwd)})\nsys.argv = [${JSON.stringify(filename ?? "")}]`);
     }
     if (!repl) {
       // Declared dependencies (PEP 723 or pyproject.toml) first, then
       // Pyodide packages that are imported but not declared.
-      py.globals.set("__pyslop_src", code);
-      py.globals.set("__pyslop_cwd", cwd ?? "/home/pyodide");
-      py.globals.set("__pyslop_index", indexURL ?? new URL("/pypi/simple", location.href).href);
-      await py.runPythonAsync("import _pyslop\nawait _pyslop.prepare_environment(__pyslop_src, __pyslop_cwd, __pyslop_index)\ndel __pyslop_src, __pyslop_cwd, __pyslop_index", { filename: "<dependencies>" });
+      await callRuntime("_pyslop", "prepare_environment", code, cwd ?? "/home/pyodide", indexURL ?? new URL("/pypi/simple", location.href).href);
     }
     // urllib.request has no Pyodide backend of its own: pyodide-http adds one (sync XHR).
     if (/^\s*(import|from)\s[^\n#]*\burllib\b/m.test(code)) {
       await py.loadPackage("pyodide-http");
-      py.runPython("import pyodide_http\npyodide_http.patch_urllib()");
+      runPlumbing("import pyodide_http\npyodide_http.patch_urllib()");
     }
     await py.loadPackagesFromImports(code, {
       messageCallback: (m) => m.startsWith("Loading ") && postMessage({ type: "output", stream: "system", text: m.replace(/^Loading /, "Loading packages: ") + "\n" }),
@@ -252,19 +271,17 @@ async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) 
     // urllib3 drops User-Agent because browsers forbid setting it; our proxy
     // sets it (the XHR/fetch shim passes it along), so let it through.
     if (/\b(requests|urllib3)\b/.test(code)) {
-      py.runPython("try:\n    import urllib3.contrib.emscripten.fetch as _f\n    _f.HEADERS_TO_IGNORE = ()\n    del _f\nexcept ImportError:\n    pass");
+      runPlumbing("try:\n    import urllib3.contrib.emscripten.fetch as _f\n    _f.HEADERS_TO_IGNORE = ()\nexcept ImportError:\n    pass");
     }
     if (repl) {
-      py.globals.set("__pyslop_src", code);
-      await py.runPythonAsync("import _pyslop\nawait _pyslop.repl(__pyslop_src)", { filename: "<console>" });
+      await callRuntime("_pyslop", "repl", code);
     } else {
-      py.globals.set("__pyslop_bps", JSON.stringify(breakpoints ?? {}));
-      py.runPython("import _pyslop_debug\n_pyslop_debug.start(__pyslop_bps)\ndel __pyslop_bps");
+      await callRuntime("_pyslop_debug", "start", JSON.stringify(breakpoints ?? {}));
       try {
         const result = await py.runPythonAsync(code, { filename: filename ?? "<main>" });
         result?.destroy?.();
       } finally {
-        py.runPython("import _pyslop_debug\n_pyslop_debug.finished()");
+        await callRuntime("_pyslop_debug", "finished");
       }
     }
     postMessage({ type: "done", ok: true, ms: performance.now() - t0, changed: cwd ? changedFiles(cwd) : [] });

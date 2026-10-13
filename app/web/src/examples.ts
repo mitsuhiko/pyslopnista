@@ -22,7 +22,9 @@ export async function seedExamples() {
   if (fresh) await fs.mkdir(EXAMPLES_DIR);
   let seeded: Record<string, string> = {};
   try {
-    seeded = JSON.parse(localStorage.getItem(SEEDED_KEY) ?? "{}");
+    // Without the folder (first launch, or Documents was wiped) nothing we
+    // remember having written is there any more.
+    seeded = fresh ? {} : JSON.parse(localStorage.getItem(SEEDED_KEY) ?? "{}");
   } catch {
     // start over
   }
