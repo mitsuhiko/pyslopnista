@@ -1,0 +1,12 @@
+{
+  "version": "3.14.2",
+  "has_sys_monitoring": true,
+  "bdb_monitoring_backend": true,
+  "bench_ms": {
+    "baseline": 19.0,
+    "settrace_minimal": 121.0,
+    "monitoring_minimal": 21.0,
+    "bdb_settrace": 232.0,
+    "bdb_monitoring": 19.0
+  }
+}

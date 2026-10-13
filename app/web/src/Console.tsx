@@ -2,7 +2,8 @@
 // program asked, ANSI colors, inline images, and the >>> prompt.
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { basename } from "./host";
-import { CheckCircle, Error as ErrorIcon, StopCircle, Terminal, Trash } from "./Icons";
+import { PausedBlock } from "./debug/DebugViews";
+import { CheckCircle, Error as ErrorIcon, Inspect, PauseCircle, StopCircle, Terminal, Trash } from "./Icons";
 import type { Line, Run, SessionState } from "./session";
 import { session } from "./session";
 
@@ -83,11 +84,11 @@ function duration(run: Run) {
   return ms < 1000 ? `${ms} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
 }
 
-export function runSummary(run: Run | undefined, awaitingInput: boolean): string {
+export function runSummary(run: Run | undefined, awaitingInput: boolean, paused = false): string {
   if (!run) return "";
   switch (run.status) {
     case "running":
-      return awaitingInput ? "Waiting for input" : "Running…";
+      return paused ? "Paused" : awaitingInput ? "Waiting for input" : "Running…";
     case "ok":
       return `Finished in ${duration(run)}`;
     case "error":
@@ -99,22 +100,28 @@ export function runSummary(run: Run | undefined, awaitingInput: boolean): string
   }
 }
 
-function RunIcon({ run }: { run: Run }) {
+function RunIcon({ run, paused }: { run: Run; paused: boolean }) {
+  if (run.status === "running" && paused) return <PauseCircle size={16} className="run-icon paused" />;
   if (run.status === "running") return <span className="spinner" aria-label="running" />;
   if (run.status === "ok") return <CheckCircle size={16} className="run-icon ok" />;
   if (run.status === "stopped") return <StopCircle size={16} className="run-icon stopped" />;
   return <ErrorIcon size={16} className="run-icon error" />;
 }
 
-function RunHeader({ run, awaitingInput }: { run: Run; awaitingInput: boolean }) {
+function RunHeader({ run, awaitingInput, paused, inspectable }: { run: Run; awaitingInput: boolean; paused: boolean; inspectable: boolean }) {
   const time = new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
     <div className={`run-header ${run.status}`}>
-      <RunIcon run={run} />
+      <RunIcon run={run} paused={paused} />
       <span className="run-name">{run.file ? basename(run.file) : "Console"}</span>
       <span className="run-meta">
-        {runSummary(run, awaitingInput)} · {time}
+        {runSummary(run, awaitingInput, paused)} · {time}
       </span>
+      {inspectable && (
+        <button className="inspect-button" onClick={() => void session.inspectError()} title="Look at the variables where the error happened">
+          <Inspect size={14} /> Inspect
+        </button>
+      )}
     </div>
   );
 }
@@ -152,6 +159,20 @@ function InlineInput() {
 
 // -- console -----------------------------------------------------------------------------
 
+function renderLine(line: Line) {
+  return (
+    <Fragment key={line.id}>
+      {line.kind === "run" ? null : line.kind === "image" ? (
+        <img className="console-image" src={`data:image/png;base64,${line.text}`} alt="Figure" />
+      ) : line.kind === "prompt" ? (
+        <span className="console-prompt-line">{line.text}{"\n"}</span>
+      ) : (
+        <span className={`out ${line.kind}`}>{renderAnsi(line.text)}</span>
+      )}
+    </Fragment>
+  );
+}
+
 function groupByRun(lines: Line[]) {
   const groups: { runId: number; lines: Line[] }[] = [];
   for (const line of lines) {
@@ -165,20 +186,31 @@ function groupByRun(lines: Line[]) {
 export function Console({ state, header }: { state: SessionState; header?: ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const autoTop = useRef(-1); // where we last scrolled to ourselves
+  const lastStop = useRef<number | null>(null);
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
 
-  // Follow output while the user is at the bottom; leave them alone when they scrolled up.
+  // Follow output while the user is at the bottom; leave them alone when they
+  // scrolled up. A new stop in the debugger always comes into view.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [state.lines, state.awaitingInput]);
+    const stopId = state.debug?.stopId ?? null;
+    if (stopId !== null && stopId !== lastStop.current) stick.current = true;
+    lastStop.current = stopId;
+    if (el && stick.current) {
+      el.scrollTop = el.scrollHeight;
+      autoTop.current = el.scrollTop;
+    }
+  }, [state.lines, state.awaitingInput, state.debug]);
 
+  const paused = state.debug;
   const submit = () => {
     if (!value.trim()) return;
     setHistory((h) => [...h.filter((x) => x !== value), value]);
-    void session.runConsole(value);
+    if (paused) void session.debugConsole(value);
+    else void session.runConsole(value);
     setValue("");
     setHistoryIndex(-1);
     stick.current = true;
@@ -201,9 +233,10 @@ export function Console({ state, header }: { state: SessionState; header?: React
     }
   };
 
-  const busy = state.status !== "idle";
+  const busy = state.status !== "idle" && !paused;
   const groups = groupByRun(state.lines);
   const lastRunId = groups.at(-1)?.runId;
+  const pausedFrame = paused?.frames[paused.selected];
 
   return (
     <div className="console">
@@ -213,6 +246,9 @@ export function Console({ state, header }: { state: SessionState; header?: React
         ref={scroller}
         onScroll={(e) => {
           const el = e.currentTarget;
+          // Scroll events from our own scrolling arrive late, possibly after
+          // more output was added; they must not count as "scrolled up".
+          if (Math.abs(el.scrollTop - autoTop.current) < 2) return;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
         }}
       >
@@ -225,26 +261,31 @@ export function Console({ state, header }: { state: SessionState; header?: React
         )}
         {groups.map((g) => {
           const run = state.runs[g.runId];
+          // While paused, the paused block sits where the program stopped and
+          // >>> evaluations follow it, next to the prompt you type in.
+          const split = paused && g.runId === lastRunId ? paused.firstLineId : Infinity;
+          const before = g.lines.filter((l) => l.id < split);
+          const after = g.lines.filter((l) => l.id >= split);
           return (
             <section className="run" key={g.runId}>
-              {run && <RunHeader run={run} awaitingInput={state.awaitingInput && g.runId === lastRunId} />}
+              {run && (
+                <RunHeader
+                  run={run}
+                  awaitingInput={state.awaitingInput && g.runId === lastRunId}
+                  paused={!!paused && g.runId === lastRunId}
+                  inspectable={run.status === "error" && run.file !== null && g.runId === lastRunId && session.canInspect}
+                />
+              )}
               <div className="run-body">
-                {g.lines.map((line) => (
-                  <Fragment key={line.id}>
-                    {line.kind === "run" ? null : line.kind === "image" ? (
-                      <img className="console-image" src={`data:image/png;base64,${line.text}`} alt="Figure" />
-                    ) : line.kind === "prompt" ? (
-                      <span className="console-prompt-line">{line.text}{"\n"}</span>
-                    ) : (
-                      <span className={`out ${line.kind}`}>{renderAnsi(line.text)}</span>
-                    )}
-                  </Fragment>
-                ))}
+                {before.map(renderLine)}
                 {state.awaitingInput && g.runId === lastRunId && <InlineInput key={state.lines.length} />}
               </div>
+              {split !== Infinity && <PausedBlock debug={paused!} />}
+              {after.length > 0 && <div className="run-body paused-output">{after.map(renderLine)}</div>}
             </section>
           );
         })}
+        {paused && !groups.some((g) => g.runId === lastRunId) && <PausedBlock debug={paused} />}
       </div>
       <div className={`repl ${busy ? "busy" : ""}`}>
         <span className="repl-prompt">&gt;&gt;&gt;</span>
@@ -252,7 +293,10 @@ export function Console({ state, header }: { state: SessionState; header?: React
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={busy ? (state.awaitingInput ? "Answer the program above" : "Running…") : "Python"}
+          placeholder={
+            pausedFrame ? `Python in ${pausedFrame.name === "<module>" ? basename(pausedFrame.file) : pausedFrame.name + "()"}`
+            : busy ? (state.awaitingInput ? "Answer the program above" : "Running…") : "Python"
+          }
           disabled={busy}
           autoCapitalize="off"
           autoCorrect="off"
@@ -260,7 +304,7 @@ export function Console({ state, header }: { state: SessionState; header?: React
           enterKeyHint="go"
           aria-label="Python console"
         />
-        {state.lines.length > 0 && !busy && (
+        {state.lines.length > 0 && !busy && !paused && (
           <button className="icon-button small" onClick={() => session.clear()} aria-label="Clear console">
             <Trash size={18} />
           </button>

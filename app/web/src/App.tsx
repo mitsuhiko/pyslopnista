@@ -3,6 +3,8 @@ import { formatDocument } from "./analysis/codemirror";
 import { analysis } from "./analysis/client";
 import { Console, runSummary } from "./Console";
 import { ConsoleSheet, type Detent } from "./ConsoleSheet";
+import { breakpoints } from "./debug/breakpoints";
+import { ContinueButton, DebugBar, PauseButton, pausedSummary, ValuePopover } from "./debug/DebugViews";
 import { Editor, type EditorCommand, type EditorHandle } from "./Editor";
 import { FileBrowser } from "./FileBrowser";
 import { basename, call, dirname, fs, haptic, isNative, join } from "./host";
@@ -82,6 +84,24 @@ function handleFieldKey(field: HTMLInputElement, action: string) {
   field.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+/** A breakpoint on a blank or comment line moves to the next line of code. */
+function codeLineFrom(text: string, line: number): number {
+  const lines = text.split("\n");
+  for (let i = line - 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t && !t.startsWith("#")) return i + 1;
+  }
+  return line;
+}
+
+function BreakpointIcon({ off }: { off?: boolean }) {
+  return (
+    <svg width="22" height="14" viewBox="0 0 22 14" aria-hidden="true">
+      <path d="M2 1.5h13.5l5 5.5-5 5.5H2a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z" fill={off ? "none" : "var(--bp)"} stroke="var(--bp)" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
 export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const wide = useMedia(WIDE_QUERY);
@@ -95,7 +115,10 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   const [, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
   const [refreshKey, setRefreshKey] = useState(0);
   const [problems, setProblems] = useState<ProblemSummary>({ errors: 0, warnings: 0, current: null });
-  const [menu, setMenu] = useState<{ anchor: DOMRect; sections: MenuSection[] } | null>(null);
+  const [menu, setMenu] = useState<{ anchor: DOMRect; sections: MenuSection[]; align?: "start" | "end" } | null>(null);
+  const [inspect, setInspect] = useState<{ expr: string; anchor: DOMRect } | null>(null);
+  useSyncExternalStore(breakpoints.subscribe, breakpoints.getSnapshot);
+  const fileBreakpoints = breakpoints.get(file);
   const [detent, setDetent] = useState<Detent>("peek");
   const [sidebar, setSidebar] = useState(true);
   const [consoleDocked, setConsoleDocked] = useState(true);
@@ -150,7 +173,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   );
 
   const openFile = useCallback(
-    async (path: string, restoring = false) => {
+    async (path: string, restoring = false, keepConsole = false) => {
       if (!restoring) explicitlyOpened.current = true;
       else if (explicitlyOpened.current) return;
       await flush();
@@ -159,7 +182,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       setFileText(text);
       setDir(dirname(path));
       setPane("editor");
-      if (path !== file) setDetent("peek");
+      if (path !== file && !keepConsole) setDetent("peek");
       setProblemsOpen(false);
       localStorage.setItem(LAST_FILE_KEY, path);
     },
@@ -265,6 +288,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   };
 
   const onRenamed = (from: string, to: string) => {
+    breakpoints.rename(from, to);
     if (file === from || file?.startsWith(from + "/")) {
       const next = to + file.slice(from.length);
       setFile(next);
@@ -273,6 +297,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     }
   };
   const onDeleted = (path: string) => {
+    breakpoints.removeAll(path);
     if (file === path || file?.startsWith(path + "/")) {
       pending.current = null;
       setFile(null);
@@ -290,6 +315,9 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
           { label: "Find", icon: <Search size={19} />, onSelect: () => editor.current?.command("search") },
           { label: "Show Problems", icon: <Warning size={19} />, onSelect: () => setProblemsOpen(true), disabled: !problems.errors && !problems.warnings },
         ],
+        ...(fileBreakpoints.length && file
+          ? [[{ label: fileBreakpoints.length === 1 ? "Remove Breakpoint" : `Remove ${fileBreakpoints.length} Breakpoints`, icon: <BreakpointIcon />, onSelect: () => breakpoints.clear(file) }]]
+          : []),
         [
           { label: "Rename…", icon: <Pencil size={19} />, onSelect: () => void renameOpen() },
           { label: "Duplicate", icon: <Duplicate size={19} />, onSelect: () => void duplicateOpen() },
@@ -297,6 +325,48 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
         [{ label: "Delete", icon: <Trash size={19} />, destructive: true, onSelect: () => void deleteOpen() }],
       ],
     });
+
+  // -- debugger (D23) --------------------------------------------------------------------
+
+  const debug = state.debug;
+  const debugFrame = debug ? debug.frames[debug.selected] : null;
+
+  // Long-press a line number: add a breakpoint, or edit the one that is there.
+  const onGutterLongPress = (line: number, rect: DOMRect) => {
+    if (!file) return;
+    const existing = breakpoints.get(file).find((bp) => bp.line === line);
+    if (!existing) {
+      haptic();
+      breakpoints.add(file, codeLineFrom(editor.current?.getText() ?? "", line));
+      return;
+    }
+    const count = breakpoints.get(file).length;
+    setMenu({
+      anchor: rect,
+      align: "start",
+      sections: [
+        [
+          existing.enabled
+            ? { label: "Disable Breakpoint", icon: <BreakpointIcon off />, onSelect: () => breakpoints.setEnabled(file, line, false) }
+            : { label: "Enable Breakpoint", icon: <BreakpointIcon />, onSelect: () => breakpoints.setEnabled(file, line, true) },
+          { label: "Remove Breakpoint", icon: <Trash size={19} />, destructive: true, onSelect: () => breakpoints.remove(file, line) },
+        ],
+        ...(count > 1 ? [[{ label: `Remove All ${count} in File`, destructive: true, onSelect: () => breakpoints.clear(file) }]] : []),
+      ],
+    });
+  };
+
+  // Follow the paused frame: show the editor and open its file.
+  useEffect(() => {
+    if (!debugFrame) return;
+    if (!wide) setPane("editor");
+    if (debugFrame.file !== file) void openFile(debugFrame.file, false, true).catch(() => {});
+  }, [debug?.stopId, debug?.selected]);
+  // Keep the paused line visible above the sheet; a stale popover goes away.
+  useEffect(() => {
+    if (debug && !wide && detent === "full") setDetent("half");
+  }, [debug?.stopId]);
+  useEffect(() => setInspect(null), [debug?.stopId, debug?.selected, !!debug]);
 
   // -- views -----------------------------------------------------------------------------
 
@@ -319,7 +389,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   // Saving is automatic, so the subtitle only reports a running program
   // (and the folder on iPad, where there is no back button showing it).
   const problemCount = problems.errors + problems.warnings;
-  const subtitle = runningHere ? runSummary(lastRun, state.awaitingInput) : wide && file && dirname(file) ? basename(dirname(file)) : "";
+  const subtitle = debug ? pausedSummary(debug) : runningHere ? runSummary(lastRun, state.awaitingInput) : wide && file && dirname(file) ? basename(dirname(file)) : "";
 
   const editorNav = (
     <header className="nav-bar editor-nav">
@@ -338,7 +408,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       <div className="nav-title">
         <span className="nav-title-main">{file ? basename(file) : "Pyslopnista"}</span>
         {subtitle ? (
-          <span className={`nav-subtitle ${runningHere ? "running" : ""}`}>{subtitle}</span>
+          <span className={`nav-subtitle ${debug ? (debug.postMortem ? "debug-error" : "paused") : runningHere ? "running" : ""}`}>{subtitle}</span>
         ) : problemCount > 0 ? (
           <button className={`nav-subtitle problems ${problems.errors ? "error" : "warning"}`} onClick={() => setProblemsOpen(true)}>
             <Warning size={12} /> {problemCount === 1 ? "1 problem" : `${problemCount} problems`}
@@ -346,6 +416,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
         ) : null}
       </div>
       <div className="nav-right">
+        {wide && debug && <DebugBar debug={debug} compact />}
         {wide && (
           <button className={`glass-button ${consoleDocked ? "active" : ""}`} onClick={() => setConsoleDocked((c) => !c)} aria-label="Toggle console">
             <Terminal size={21} />
@@ -354,7 +425,9 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
         <button className="glass-button" onClick={(e) => editorMenu(e.currentTarget.getBoundingClientRect())} disabled={!file} aria-label="More">
           <Ellipsis size={22} />
         </button>
-        {runningHere || (running && !file) ? (
+        {debug && !debug.postMortem ? (
+          <ContinueButton />
+        ) : runningHere || (running && !file) ? (
           <button className="run-button stop" onClick={() => { haptic(); session.stop(); }} aria-label="Stop">
             <Stop size={18} />
           </button>
@@ -376,6 +449,13 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
         onChange={onChange}
         onFocusChange={setEditorFocused}
         onViewUpdate={(view) => setProblems(summarizeProblems(view))}
+        breakpoints={fileBreakpoints}
+        onBreakpointsChange={(path, list) => breakpoints.set(path, list)}
+        onGutterLongPress={onGutterLongPress}
+        paused={!!debug}
+        onInspect={(expr, anchor) => setInspect({ expr, anchor })}
+        debugLine={debugFrame && debugFrame.file === file ? debugFrame.line : null}
+        visibleFraction={wide ? 0.9 : detent === "peek" ? 0.85 : detent === "half" ? 0.45 : 0.15}
       />
       {!file && (
         <div className="editor-empty">
@@ -400,7 +480,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     </div>
   );
 
-  const problemBar = file && (wide || editorFocused || detent === "peek") && <ProblemBar summary={problems} view={editor.current?.view() ?? null} onShowAll={() => setProblemsOpen(true)} />;
+  const problemBar = file && !debug && (wide || editorFocused || detent === "peek") && <ProblemBar summary={problems} view={editor.current?.view() ?? null} onShowAll={() => setProblemsOpen(true)} />;
   const webKeyBar = !isNative && (editorFocused || location.hash.includes("keybar")) && <KeyBar editor={editor} onDismiss={() => editor.current?.blur()} />;
 
   // Edge swipe from the left goes back to the file list (iPhone).
@@ -430,7 +510,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   if (wide) {
     const consoleSide = landscape ? "right" : "bottom";
     return (
-      <div className={`app wide ${sidebar ? "with-sidebar" : ""}`}>
+      <div className={`app wide ${sidebar ? "with-sidebar" : ""} ${debug?.postMortem ? "inspecting-error" : ""}`}>
         {sidebar && <aside className="sidebar">{browser}</aside>}
         <main className="workspace">
           {editorNav}
@@ -446,8 +526,9 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
                   state={state}
                   header={
                     <div className="dock-header">
-                      <span className={`status-dot ${lastRun?.status ?? "none"} ${state.awaitingInput ? "input" : ""}`} />
-                      <span className="dock-title">Console</span>
+                      <span className={`status-dot ${lastRun?.status ?? "none"} ${state.awaitingInput ? "input" : ""} ${debug ? "paused" : ""}`} />
+                      <span className="dock-title">{debug ? (debug.postMortem ? "Inspecting Error" : "Paused") : "Console"}</span>
+                      {state.status === "running" && !debug && <PauseButton disabled={state.awaitingInput || state.pausing} />}
                     </div>
                   }
                 />
@@ -455,8 +536,9 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
             )}
           </div>
         </main>
-        {state.uiOpen && <UIAppView />}
-        {menu && <Menu anchor={menu.anchor} sections={menu.sections} onClose={() => setMenu(null)} />}
+        {state.uiOpen && !debug && <UIAppView />}
+        {menu && <Menu anchor={menu.anchor} sections={menu.sections} align={menu.align} onClose={() => setMenu(null)} />}
+        {inspect && debug && <ValuePopover expr={inspect.expr} anchor={inspect.anchor} onClose={() => setInspect(null)} />}
         {problemsOpen && editor.current?.view() && <ProblemsSheet view={editor.current.view()!} onClose={() => setProblemsOpen(false)} />}
         <ToastHost />
       </div>
@@ -465,7 +547,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
 
   const editorShown = pane !== "files";
   return (
-    <div className="app narrow">
+    <div className={`app narrow ${debug?.postMortem ? "inspecting-error" : ""}`}>
       {/* Leaving the editor closes editor-only overlays. */}
       <div className={`page files-page ${editorShown ? (edgeDrag !== null ? "behind dragging" : "behind") : "active"}`}
         style={edgeDrag !== null ? { transform: `translateX(${-30 + (edgeDrag / window.innerWidth) * 30}%)` } : undefined}>
@@ -485,8 +567,9 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
           <ConsoleSheet state={state} hidden={editorFocused} detent={detent} onDetent={setDetent} />
         </div>
       </div>
-      {state.uiOpen && <UIAppView />}
-      {menu && <Menu anchor={menu.anchor} sections={menu.sections} onClose={() => setMenu(null)} />}
+      {state.uiOpen && !debug && <UIAppView />}
+      {menu && <Menu anchor={menu.anchor} sections={menu.sections} align={menu.align} onClose={() => setMenu(null)} />}
+      {inspect && debug && <ValuePopover expr={inspect.expr} anchor={inspect.anchor} onClose={() => setInspect(null)} />}
       {problemsOpen && editor.current?.view() && <ProblemsSheet view={editor.current.view()!} onClose={() => setProblemsOpen(false)} />}
       <ToastHost />
     </div>

@@ -13,7 +13,11 @@ export interface RunOptions {
   cwd?: string; // directory inside the interpreter's file system
   files?: { path: string; data: Uint8Array }[]; // synced into cwd before running
   repl?: boolean; // run as console input (shows the value of a final expression)
+  breakpoints?: Record<string, number[]>; // project-relative path -> lines (D23)
 }
+
+/** Signals delivered through the interrupt buffer (see _pyslop_debug.py). */
+export const SIGNAL = { interrupt: 2, pause: 10, breakpoints: 12 } as const;
 
 export interface RunResult {
   ok: boolean;
@@ -41,6 +45,7 @@ function workerOptions() {
     pythonFiles: {
       "_pyslop.py": new URL("/runtime/python/_pyslop.py", location.href).href,
       "ui.py": new URL("/runtime/python/ui.py", location.href).href,
+      "_pyslop_debug.py": new URL("/runtime/python/_pyslop_debug.py", location.href).href,
     },
   };
 }
@@ -52,6 +57,8 @@ export class PyWorker {
   onInput: () => Promise<string | null> = async () => null;
   onUIRender: (json: string) => void = () => {};
   onCrash: (error: string) => void = () => {};
+  /** A debugger message; the returned promise is the next command (D23). */
+  onDebug: (message: any) => Promise<unknown> = async () => ({ op: "continue" });
 
   private worker: Worker;
   private interrupt: Int32Array | null;
@@ -123,6 +130,7 @@ export class PyWorker {
       if (msg.sync) this.syncPending = true;
       let value: unknown;
       if (msg.op === "stdin") value = await this.onInput();
+      else if (msg.op === "debug") value = await this.onDebug(msg.value);
       else if (msg.op === "host") value = await call(msg.value.op, msg.value.value);
       else throw new Error(`unknown call ${msg.op}`);
       reply = { value };
@@ -153,6 +161,14 @@ export class PyWorker {
       this.current = resolve;
       this.worker.postMessage({ type: "run", code, ...options });
     });
+  }
+
+  /** Deliver a signal to the program (Pause, breakpoint updates). */
+  signal(signal: number) {
+    if (!this.interrupt || this.dead) return false;
+    Atomics.store(this.interrupt, 0, signal);
+    Atomics.notify(this.interrupt, 0);
+    return true;
   }
 
   sendUIEvent(id: string, args: string) {

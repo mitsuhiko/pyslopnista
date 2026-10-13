@@ -63,6 +63,36 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
         contentView?.reloadInputViews()
     }
 
+    /// Self-test hook: type like the software keyboard does, one character at
+    /// a time. "keyboard" goes through UIKeyboardImpl (the keyboard's own
+    /// input handling: shift, autocorrection, prediction), "insert" calls
+    /// UIKeyInput.insertText on WKContentView directly.
+    func typeForTesting(_ text: String, via: String) async -> String {
+        guard let content = contentView else { return "no content view" }
+        var notes = [content.isFirstResponder ? "first responder" : "NOT first responder"]
+        if !content.isFirstResponder {
+            // What a tap on the field does: the content view takes the keyboard.
+            notes.append(content.becomeFirstResponder() ? "became first responder" : "could not become first responder")
+            try? await Task.sleep(nanoseconds: 700_000_000)
+        }
+        let impl: NSObject? = {
+            guard via == "keyboard", let cls = NSClassFromString("UIKeyboardImpl") as? NSObject.Type else { return nil }
+            let sel = NSSelectorFromString("activeInstance")
+            guard cls.responds(to: sel) else { return nil }
+            return cls.perform(sel)?.takeUnretainedValue() as? NSObject
+        }()
+        if via == "keyboard" { notes.append(impl == nil ? "no UIKeyboardImpl" : "UIKeyboardImpl") }
+        for ch in text {
+            if let impl, impl.responds(to: NSSelectorFromString("addInputString:")) {
+                impl.perform(NSSelectorFromString("addInputString:"), with: String(ch))
+            } else if let input = content as? UIKeyInput {
+                input.insertText(String(ch))
+            }
+            try? await Task.sleep(nanoseconds: 120_000_000)
+        }
+        return notes.joined(separator: ", ")
+    }
+
     // MARK: installing
 
     private var contentView: UIView? {

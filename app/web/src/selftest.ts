@@ -3,7 +3,8 @@
 import type { AppController } from "./App";
 import { forEachDiagnostic } from "@codemirror/lint";
 import { analysis } from "./analysis/client";
-import { call, fs } from "./host";
+import { call, fs, isNative } from "./host";
+import { breakpoints } from "./debug/breakpoints";
 import { session } from "./session";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -25,12 +26,17 @@ export async function selftest(app: AppController) {
   const r: Record<string, unknown> = {};
   const log = (m: string) => call("log", m).catch(() => {});
 
+  // #selftest&only=<substring> runs a subset.
+  const only = new URLSearchParams(location.hash.slice(1)).get("only");
+
   async function step(name: string, fn: () => Promise<Record<string, unknown> | void>) {
+    if (only && !name.includes(only)) return;
     const t0 = performance.now();
     try {
       r[name] = { ok: true, ...(await fn()), ms: Math.round(performance.now() - t0) };
     } catch (e) {
-      r[name] = { ok: false, error: String((e as Error).message ?? e), console: consoleText().slice(-400) };
+      const { status, debug, pausing } = session.getSnapshot();
+      r[name] = { ok: false, error: String((e as Error).message ?? e), console: consoleText().slice(-400), session: { status, pausing, debug: debug && { reason: debug.reason, frames: debug.frames } } };
     }
     await log(`${name}: ${JSON.stringify(r[name])}`);
   }
@@ -245,6 +251,157 @@ export async function selftest(app: AppController) {
     await until(idle);
     const out = consoleText();
     if (!out.includes("requires Python <3.10") || out.includes("should not run")) throw new Error(out);
+  });
+
+  // -- debugger (D23) --------------------------------------------------------------
+
+  await fs.mkdir("Tests").catch(() => {});
+  const stopped = (prev = -1) => () => {
+    const d = session.getSnapshot().debug;
+    return d && d.stopId !== prev ? d : null;
+  };
+
+  await step("debugger_breakpoint_step_inspect", async () => {
+    const code = "def greet(name):\n    message = f'Hello {name}'\n    return message\n\n\nfor who in ['Ada', 'Guido']:\n    print(greet(who))\n";
+    await fs.writeText("Tests/debug.py", code);
+    breakpoints.set("Tests/debug.py", [{ line: 3, enabled: true }]);
+    const t0 = performance.now();
+    await runFile("Tests/debug.py");
+    let d = await until(stopped());
+    const stopMs = Math.round(performance.now() - t0);
+    const where = `${d.frames[0].name}:${d.frames[0].line}/${d.frames[1]?.name}:${d.frames[1]?.line}`;
+    if (where !== "greet:3/<module>:7") throw new Error(`stopped at ${where}`);
+    const message = d.scopes[0].variables.find((v) => v.name === "message")?.value;
+    if (message !== "'Hello Ada'") throw new Error(`message = ${message}`);
+    const evaluated = await session.debugEvaluate("name.upper()");
+    if (evaluated.value?.value !== "'ADA'") throw new Error(JSON.stringify(evaluated));
+    await session.debugConsole("message = 'Hi Ada'"); // the program sees the change
+    session.resume("next");
+    d = await until(stopped(d.stopId));
+    if (d.frames[0].name !== "<module>") throw new Error(`next went to ${d.frames[0].name}:${d.frames[0].line}`);
+    breakpoints.clear("Tests/debug.py"); // sent to the paused program
+    session.resume("continue");
+    await until(idle);
+    const out = consoleText();
+    if (!out.includes("Hi Ada") || !out.includes("Hello Guido")) throw new Error(out);
+    return { stopMs };
+  });
+
+  await step("debugger_pause_and_stop", async () => {
+    await fs.writeText("Tests/loop.py", "import time\nn = 0\nwhile True:\n    n += 1\n    if n % 1000 == 0:\n        time.sleep(0.05)\n");
+    await runFile("Tests/loop.py");
+    await until(() => session.getSnapshot().status === "running");
+    await sleep(800);
+    const t0 = performance.now();
+    session.pause();
+    const d = await until(stopped());
+    const pauseMs = Math.round(performance.now() - t0);
+    if (d.reason !== "pause" || d.frames[0].file !== "Tests/loop.py") throw new Error(JSON.stringify(d.frames));
+    session.stop();
+    await until(idle);
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    if (run?.status !== "stopped") throw new Error(`run ${run?.status}: ${consoleText()}`);
+    return { pauseMs, line: d.frames[0].line };
+  });
+
+  await step("debugger_breakpoint_while_running", async () => {
+    await fs.writeText("Tests/late.py", "import time\ntotal = 0\nfor i in range(400):\n    total += i\n    time.sleep(0.01)\nprint('total', total)\n");
+    await runFile("Tests/late.py");
+    await until(() => session.getSnapshot().status === "running");
+    await sleep(500);
+    breakpoints.set("Tests/late.py", [{ line: 4, enabled: true }]);
+    const d = await until(stopped(), 5000);
+    breakpoints.clear("Tests/late.py");
+    session.resume("continue");
+    await until(idle);
+    if (!consoleText().includes("total 79800")) throw new Error(consoleText());
+    return { line: d.frames[0].line, i: d.scopes[0].variables.find((v) => v.name === "i")?.value };
+  });
+
+  await step("debugger_inspect_error", async () => {
+    await fs.writeText("Tests/avg.py", "def average(xs):\n    total = sum(xs)\n    return total / len(xs)\n\nprint(average([]))\n");
+    const { done } = await runFile("Tests/avg.py");
+    await done;
+    await until(idle);
+    if (!session.canInspect) throw new Error("cannot inspect");
+    void session.inspectError();
+    const d = await until(stopped());
+    if (!d.postMortem || !d.exception?.startsWith("ZeroDivisionError") || d.frames[0].name !== "average") throw new Error(JSON.stringify(d));
+    const xs = d.scopes[0].variables.find((v) => v.name === "xs")?.value;
+    session.resume("continue");
+    await until(() => !session.getSnapshot().debug && idle());
+    return { xs };
+  });
+
+  await step("breakpoint_builtin", async () => {
+    await fs.writeText("Tests/bp.py", "x = 41\nbreakpoint()\nx += 1\nprint('x is', x)\n");
+    await runFile("Tests/bp.py");
+    const d = await until(stopped());
+    if (d.reason !== "breakpoint()" || d.frames[0].line !== 2) throw new Error(JSON.stringify(d.frames));
+    session.resume("continue");
+    await until(idle);
+    if (!consoleText().includes("x is 42")) throw new Error(consoleText());
+  });
+
+  // -- typing through iOS text input (native only) ---------------------------------
+
+  const via = new URLSearchParams(location.hash.slice(1)).get("via") ?? "insert";
+  const typeNative = (text: string) => call<string>("test.type", { text, via });
+  const pressEnter = () =>
+    document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const replInput = () => document.querySelector<HTMLInputElement>(".repl input");
+
+  await step("typing_console", async () => {
+    if (!isNative) return { skipped: "browser" };
+    await fs.writeText("Tests/typing.py", "x = 1\n");
+    const { done } = await runFile("Tests/typing.py");
+    await done;
+    await until(idle);
+    app.showPane("console");
+    const input = await until(replInput);
+    input.focus();
+    await sleep(600);
+    const responder = await typeNative("x + 41");
+    await sleep(300);
+    const value = replInput()?.value;
+    if (value !== "x + 41") throw new Error(`typed "x + 41", field has ${JSON.stringify(value)} (${responder}, active ${document.activeElement?.tagName}.${document.activeElement?.className})`);
+    pressEnter();
+    await until(() => consoleText().includes("42"));
+  });
+
+  await step("typing_input", async () => {
+    if (!isNative) return { skipped: "browser" };
+    await runFile("Examples/Hello.py");
+    await until(() => session.getSnapshot().awaitingInput);
+    await sleep(600);
+    const responderInput = await typeNative("Armin");
+    await sleep(300);
+    const value = document.querySelector<HTMLInputElement>(".inline-input")?.value;
+    if (value !== "Armin") throw new Error(`typed "Armin", field has ${JSON.stringify(value)} (${responderInput}, active ${document.activeElement?.tagName}.${document.activeElement?.className})`);
+    pressEnter();
+    await until(idle);
+    if (!consoleText().includes("Hello, Armin!")) throw new Error(consoleText());
+  });
+
+  await step("typing_debugger_console", async () => {
+    if (!isNative) return { skipped: "browser" };
+    await fs.writeText("Tests/typing2.py", "def f(a):\n    b = a * 2\n    return b\n\nprint(f(21))\n");
+    breakpoints.set("Tests/typing2.py", [{ line: 3, enabled: true }]);
+    await runFile("Tests/typing2.py");
+    await until(stopped());
+    app.showPane("console");
+    const input = await until(replInput);
+    input.focus();
+    await sleep(600);
+    await typeNative("b + 1");
+    await sleep(300);
+    const value = replInput()?.value;
+    if (value !== "b + 1") throw new Error(`typed "b + 1", field has ${JSON.stringify(value)} (active ${document.activeElement?.tagName}.${document.activeElement?.className})`);
+    pressEnter();
+    await until(() => consoleText().includes("43"));
+    breakpoints.clear("Tests/typing2.py");
+    session.resume("continue");
+    await until(idle);
   });
 
   await fs.remove("Tests").catch(() => {});

@@ -18,7 +18,7 @@ app, a thin Swift host and a pi-durable coding agent. Early research phase.
 ## Current work
 
 App (`app/`): IDE with files, editor, run, console, UI apps, ruff + ty,
-PEP 723 dependencies. Next: hands-on device feedback, then the gaps in
+PEP 723 dependencies, visual debugger (D23). Next: hands-on device feedback, then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 
 Spike queue (update the status here). The pi-durable agent always comes last
@@ -28,7 +28,8 @@ Spike queue (update the status here). The pi-durable agent always comes last
 2. [x] `pyodide-worker`: bundled Pyodide in a worker: console, `input()`, interrupt, restart, package cache (D10-D12; open: PyPI offline cache, Q11)
 3. [x] `ui-toolkit`: declarative Python UI in the app and exported as a static site (D14, D15)
 4. [x] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, wasm-GC trampoline check (D13 confirmed, D16; open: App Intents Q6, Q14, Q15)
-5. [ ] `agent` (last): pi-durable in the web view, with a SQLite bridge adapter, `python` tool and proxied providers (D7, Q4)
+5. [x] `debugger`: breakpoints, stepping, pause and post-mortem on bdb's `monitoring` backend (D23, built into the app; open: Q19)
+6. [ ] `agent` (last): pi-durable in the web view, with a SQLite bridge adapter, `python` tool and proxied providers (D7, Q4)
 
 Done:
 - [x] `jspi-repro`: JSPI "hang" root-caused to CPython's iOS JS-trampoline fallback (D13)

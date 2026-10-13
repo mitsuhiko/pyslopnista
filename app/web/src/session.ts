@@ -2,7 +2,8 @@
 // (grouped into runs), pending input(), the >>> console and UI apps. React
 // subscribes via useSyncExternalStore. Output is batched per animation frame.
 import { base64ToBytes, basename, bytesToBase64, dirname, fs, haptic, join } from "./host";
-import { PyWorker, WorkerPool, type Stream } from "./python";
+import { breakpoints } from "./debug/breakpoints";
+import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
 
 export type LineKind = Stream | "input" | "prompt" | "run";
 
@@ -25,6 +26,45 @@ export interface Run {
 
 export type Status = "idle" | "starting" | "running";
 
+// -- debugger (D23) -------------------------------------------------------------------
+
+export interface DebugFrame {
+  name: string; // qualified function name, "<module>" for module level
+  file: string; // app path
+  line: number;
+}
+
+export interface DebugVariable {
+  name: string;
+  value: string; // reprlib-limited repr
+  type: string;
+  ref: number; // > 0: has children, fetch with session.debugVariables(ref)
+}
+
+export interface DebugScope {
+  name: string;
+  variables: DebugVariable[];
+}
+
+export interface DebugState {
+  stopId: number; // changes on every stop; variable refs are only valid until the next
+  /** Transcript lines from this id on were written while paused (>>> evaluations); the console shows them below the paused block. */
+  firstLineId: number;
+  reason: "breakpoint" | "step" | "pause" | "breakpoint()" | "exception" | string;
+  postMortem: boolean;
+  exception: string | null;
+  frames: DebugFrame[];
+  selected: number;
+  scopes: DebugScope[];
+}
+
+export type DebugCommand =
+  | { op: "continue" | "next" | "stepIn" | "stepOut" }
+  | { op: "scopes"; frame: number }
+  | { op: "variables"; ref: number }
+  | { op: "evaluate"; expr: string; frame: number; context: "hover" | "repl" }
+  | { op: "setBreakpoints"; breakpoints: Record<string, number[]> };
+
 export interface SessionState {
   lines: Line[];
   runs: Record<number, Run>;
@@ -35,6 +75,10 @@ export interface SessionState {
   bootMs: number | null;
   /** Bumped when a run starts so the console can open itself. */
   runCounter: number;
+  /** The program is stopped in the debugger. */
+  debug: DebugState | null;
+  /** Pause was requested and the program has not stopped yet. */
+  pausing: boolean;
 }
 
 const MAX_CHARS = 400_000;
@@ -53,6 +97,7 @@ function applyCR(text: string): string {
 export class Session {
   private state: SessionState = {
     lines: [], runs: {}, status: "idle", awaitingInput: false, uiOpen: false, runningFile: null, bootMs: null, runCounter: 0,
+    debug: null, pausing: false,
   };
   private listeners = new Set<() => void>();
   private pool = new WorkerPool();
@@ -68,9 +113,15 @@ export class Session {
   private flushScheduled = false;
   /** Called after a run wrote files back into the project. */
   onFilesChanged: (paths: string[]) => void = () => {};
+  // The worker blocks in the debugger until debugNext is called with a command.
+  private debugNext: ((command: DebugCommand) => void) | null = null;
+  private debugResult: ((message: any) => void) | null = null;
+  private debugQueue: Promise<unknown> = Promise.resolve();
+  private stopCounter = 0;
 
   constructor() {
     this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
+    breakpoints.subscribe(() => this.syncBreakpoints());
   }
 
   subscribe = (fn: () => void) => {
@@ -107,7 +158,10 @@ export class Session {
     for (const { kind, text, runId } of this.pendingOutput) {
       const last = lines.at(-1);
       const mergeable = kind === "stdout" || kind === "stderr" || kind === "system";
-      if (mergeable && last && last.kind === kind && last.runId === runId) {
+      // Output while paused must not merge into a line from before the stop:
+      // the console shows the two on different sides of the paused block.
+      const boundary = this.state.debug?.firstLineId ?? 0;
+      if (mergeable && last && last.kind === kind && last.runId === runId && last.id >= boundary) {
         lines[lines.length - 1] = { ...last, text: applyCR(last.text + text) };
       } else {
         lines.push({ id: this.nextId++, runId, kind, text: mergeable ? applyCR(text) : text });
@@ -161,7 +215,7 @@ export class Session {
       const files = tree.map((f) => ({ path: f.path, data: base64ToBytes(f.data) }));
       const worker = await this.takeWorker(dir);
       this.set({ status: "running" });
-      const result = await worker.run(code, { filename: basename(path), cwd: PROJECT_ROOT, files });
+      const result = await worker.run(code, { filename: basename(path), cwd: PROJECT_ROOT, files, breakpoints: breakpoints.forRun(dir) });
       await this.finishRun(result);
     } catch (e) {
       this.append("stderr", `${(e as Error).message ?? e}\n`);
@@ -201,7 +255,142 @@ export class Session {
       this.uiListener?.(json);
     };
     worker.onCrash = (error) => this.append("stderr", `Python crashed: ${error}\n`);
+    worker.onDebug = (message) => this.onDebugMessage(worker, message);
     return worker;
+  }
+
+  // -- debugger -----------------------------------------------------------------------
+
+  private onDebugMessage(worker: PyWorker, message: any): Promise<DebugCommand> {
+    if (message.event === "breakpoints") {
+      return Promise.resolve({ op: "setBreakpoints", breakpoints: breakpoints.forRun(this.workerDir) });
+    }
+    if (message.event === "stopped") {
+      this.flushOutput();
+      this.set({
+        pausing: false,
+        debug: {
+          stopId: ++this.stopCounter,
+          firstLineId: this.nextId,
+          reason: message.reason,
+          postMortem: !!message.postMortem,
+          exception: message.exception ?? null,
+          frames: (message.frames as { name: string; file: string; line: number }[]).map((f) => ({ ...f, file: join(this.workerDir, f.file) })),
+          selected: 0,
+          scopes: message.scopes ?? [],
+        },
+      });
+      if (!message.postMortem) haptic();
+    } else if (message.event === "result") {
+      const resolve = this.debugResult;
+      this.debugResult = null;
+      resolve?.(message);
+    }
+    return new Promise((resolve) => {
+      // A late message from a replaced worker must not take over.
+      if (this.worker !== worker) return resolve({ op: "continue" });
+      this.debugNext = resolve;
+    });
+  }
+
+  /** Ask the paused program something; answers come back in order. */
+  debugRequest(command: DebugCommand): Promise<any> {
+    const result = this.debugQueue.then(
+      () =>
+        new Promise((resolve) => {
+          // Checks the pending command, not state.debug: resume() hides the
+          // paused UI right away, but requests queued before it still go first.
+          const next = this.debugNext;
+          if (!next) return resolve({ error: "The program is not paused." });
+          this.debugNext = null;
+          this.debugResult = resolve;
+          next(command);
+        }),
+    );
+    this.debugQueue = result.catch(() => {});
+    return result;
+  }
+
+  /** Continue or step. */
+  resume(op: "continue" | "next" | "stepIn" | "stepOut") {
+    if (!this.state.debug) return;
+    this.set({ debug: null });
+    void this.debugQueue.then(() => {
+      const next = this.debugNext;
+      this.debugNext = null;
+      next?.({ op });
+    });
+  }
+
+  async selectFrame(index: number) {
+    const debug = this.state.debug;
+    if (!debug || index === debug.selected || index < 0 || index >= debug.frames.length) return;
+    this.set({ debug: { ...debug, selected: index, scopes: [] } });
+    const result = await this.debugRequest({ op: "scopes", frame: index });
+    const now = this.state.debug;
+    if (now && now.stopId === debug.stopId && now.selected === index) this.set({ debug: { ...now, scopes: result.scopes ?? [] } });
+  }
+
+  async debugVariables(ref: number): Promise<DebugVariable[]> {
+    const result = await this.debugRequest({ op: "variables", ref });
+    return result.variables ?? [];
+  }
+
+  /** The value of a name tapped in the editor. */
+  async debugEvaluate(expr: string): Promise<{ value?: DebugVariable; error?: string }> {
+    return this.debugRequest({ op: "evaluate", expr, frame: this.state.debug?.selected ?? 0, context: "hover" });
+  }
+
+  /** >>> input while paused runs in the selected frame. */
+  async debugConsole(source: string) {
+    const debug = this.state.debug;
+    if (!debug || !source.trim()) return;
+    this.append("prompt", source);
+    await this.debugRequest({ op: "evaluate", expr: source, frame: debug.selected, context: "repl" });
+    // Assignments show up in the variables.
+    const scopes = await this.debugRequest({ op: "scopes", frame: debug.selected });
+    const now = this.state.debug;
+    if (now && now.stopId === debug.stopId && scopes.scopes) this.set({ debug: { ...now, scopes: scopes.scopes } });
+  }
+
+  /** Stop at the next line of user code. */
+  pause() {
+    if (this.state.status !== "running" || this.state.debug || this.state.awaitingInput) return;
+    if (this.worker?.signal(SIGNAL.pause)) this.set({ pausing: true });
+  }
+
+  get canInspect() {
+    return !!this.worker && !this.worker.dead && this.state.status === "idle" && !this.state.debug;
+  }
+
+  /** Open the debugger on the frames of the last uncaught exception. */
+  async inspectError() {
+    const worker = this.worker;
+    if (!worker || !this.canInspect) return;
+    this.flushOutput();
+    const result = await worker.run("import _pyslop_debug\n_pyslop_debug.post_mortem()", { repl: true, cwd: PROJECT_ROOT });
+    if (this.worker !== worker) return;
+    this.set({ debug: null });
+    if (!result.ok && result.error) this.append("stderr", cleanTraceback(result.error) + "\n");
+  }
+
+  /** Breakpoints changed: tell a program that is running (or paused). */
+  private syncBreakpoints() {
+    const worker = this.worker;
+    if (!worker || worker.dead) return;
+    if (this.debugNext && !this.state.debug?.postMortem) {
+      void this.debugRequest({ op: "setBreakpoints", breakpoints: breakpoints.forRun(this.workerDir) });
+    } else if (this.state.status === "running" || this.state.uiOpen) {
+      worker.signal(SIGNAL.breakpoints);
+    }
+  }
+
+  private endDebug() {
+    this.debugNext = null;
+    const resolve = this.debugResult;
+    this.debugResult = null;
+    resolve?.({ error: "The program ended." });
+    if (this.state.debug || this.state.pausing) this.set({ debug: null, pausing: false });
   }
 
   private async finishRun(
@@ -229,7 +418,8 @@ export class Session {
     } else {
       this.endRun(status);
     }
-    this.set({ status: "idle", awaitingInput: false });
+    this.set({ status: "idle", awaitingInput: false, pausing: false });
+    if (this.state.debug && !this.state.uiOpen) this.endDebug();
     if (status === "error" || status === "crashed") haptic();
     if (result.changed?.length) {
       const written: string[] = [];
@@ -264,12 +454,22 @@ export class Session {
   }
 
   stop() {
+    const debug = this.state.debug;
+    if (debug?.postMortem) return this.resume("continue"); // just ends the inspection
     this.stopRequested = true;
-    this.worker?.stop();
+    if (this.worker?.running) {
+      this.worker.stop(); // also interrupts a paused debugger (its call is pending)
+      this.endDebug();
+    } else if (debug) {
+      // Paused in a UI app's callback after the script returned: end the app.
+      this.endDebug();
+      this.closeUI();
+    }
   }
 
   private closeWorker() {
     if (this.worker && !this.worker.dead) this.worker.terminate("closed");
+    this.endDebug();
     this.worker = null;
     this.lastUI = null;
     this.set({ uiOpen: false, awaitingInput: false });

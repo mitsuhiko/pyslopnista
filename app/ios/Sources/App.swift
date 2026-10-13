@@ -97,6 +97,13 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
             case "keyboard.mode":
                 KeyboardAccessory.shared.setMode(KeyboardAccessory.Mode(rawValue: str("mode")) ?? .plain)
                 replyHandler(nil, nil)
+            case "test.type":
+                // Self-test only: type through the software keyboard's own path.
+                let text = str("text"), via = str("via")
+                Task { @MainActor in
+                    let result = await KeyboardAccessory.shared.typeForTesting(text, via: via)
+                    replyHandler(result, nil)
+                }
             case "echo": replyHandler(body["value"], nil)
             case "haptic":
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()

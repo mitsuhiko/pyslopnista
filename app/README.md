@@ -34,6 +34,20 @@ iPad. Swift host + web app (D4), Python in Pyodide workers (D2, D6).
   internal frames, inline matplotlib plots (`plt.show()`), and a `>>>` prompt
   that runs in the program's globals after it finishes (last expression is
   shown, top-level `await` works).
+- **Debugger** (D23):
+  - Long-press a line number to set a breakpoint. Long-press it again to
+    disable or remove it.
+  - Run as usual: the program stops there and the editor turns read-only
+    with the line highlighted.
+  - Step over, in or out from the console header (iPhone) or the nav bar
+    (iPad), and Continue from the Run button.
+  - The console shows the stack and the variables. Tap a name in the editor
+    for its value, and `>>>` runs in the paused function.
+  - Pause (in the console header) stops a running program, e.g. an endless
+    loop.
+  - `breakpoint()` works too.
+  - After an error, Inspect opens the same view on the failing line.
+  - Breakpoints cost nothing while they are not hit.
 - **UI apps**: programs using `import ui` (D14) open full screen; "Done" ends
   the program.
 - **Crashes**: a native stack overflow ends the run with "Python crashed" and
@@ -55,12 +69,14 @@ app/
     Sources/FileStore.swift    Documents-backed file operations
     copy-web.sh                build phase: web/dist + Pyodide into the bundle
   web/                    React + Vite + TypeScript (D18)
-    public/runtime/       py-worker.js, sab-polyfill.js, python/_pyslop.py, python/ui.py
+    public/runtime/       py-worker.js, sab-polyfill.js, python/_pyslop.py, python/ui.py,
+                          python/_pyslop_debug.py (debugger)
     public/examples/      seeded into Documents/Examples
     src/                  App, Editor (CodeMirror), KeyBar, Console, FileBrowser,
                           UIAppView, ProblemBar, session (run/console/UI state),
                           python (worker pool), host (bridge + browser mock), selftest
     src/analysis/         ruff + ty worker, client, CodeMirror lint/completions/fixes
+    src/debug/            breakpoints store, CodeMirror gutter/paused line/inspect, debugger views
 ```
 
 ## Running
@@ -71,19 +87,23 @@ app/
 ./run.sh --device                         # on the paired iPhone (unlocked)
 ./run.sh --device --selftest
 SIM=<udid> ./run.sh                       # a specific simulator (e.g. an iPad)
-FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, run, pane, focus, keybar
+FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, run, pane, focus, keybar
+FRAGMENT="selftest&only=debugger" ./run.sh --selftest   # a subset of the checks
 cd web && npm run dev                     # desktop browser; files in localStorage
 ```
 
 ## Status (2026-10-13)
 
-`./run.sh --selftest` passes all 19 checks in the iPhone 17 simulator and on
-the iPhone 14 Pro (`--device`): examples seeded, edit → autosave → run,
+`./run.sh --selftest` passes all 24 checks in the iPhone 17 simulator. The 19
+checks without the debugger also pass on the iPhone 14 Pro (`--device`). The
+checks are: examples seeded, edit → autosave → run,
 `input()`, traceback cleanup, `>>>` console, file write-back, sibling
 imports, inline plot, Stop, UI app, crash recovery, ruff/ty startup,
 diagnostics (F401, invalid-argument-type, unresolved-reference), completions,
 formatting, Pyodide imports not flagged, add-dependency quick fix + install
-from PyPI, cached rerun, requires-python.
+from PyPI, cached rerun, requires-python, debugger (breakpoint → evaluate →
+assignment → step → continue, Pause + Stop, breakpoint added while running,
+Inspect after an error, `breakpoint()`).
 
 On the iPhone 14 Pro: ruff/ty start in 120-140 ms, the first check of a file
 takes about 400 ms, completions 44 ms, formatting 57 ms; installing a small

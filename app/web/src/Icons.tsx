@@ -54,6 +54,15 @@ export const StopCircle = fill(<path d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0
 export const Sidebar = stroke(<><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M9.5 4.5v15M5.5 8h2M5.5 11h2" /></>);
 export const Sort = stroke(<path d="M7 4.5v15M4 16.5l3 3 3-3M17 19.5v-15M14 7.5l3-3 3 3" />);
 
+// Debugger
+export const PauseCircle = fill(<path d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19zM9.6 8h.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-.8a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zm4 0h.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-.8a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />);
+export const Pause = fill(<><rect x="6" y="5" width="4.2" height="14" rx="1.3" /><rect x="13.8" y="5" width="4.2" height="14" rx="1.3" /></>);
+export const Continue = fill(<><rect x="4" y="5" width="3" height="14" rx="1.2" /><path d="M10 5.9v12.2a1 1 0 0 0 1.52.85l9.6-6.1a1 1 0 0 0 0-1.7l-9.6-6.1A1 1 0 0 0 10 5.9z" /></>);
+export const StepOver = stroke(<><path d="M4.5 14a7.5 7.5 0 0 1 14.2-3.4" /><path d="m19.5 5.5-.6 5.3-5.2-.9" /><circle cx="12" cy="18.5" r="1.6" fill="currentColor" stroke="none" /></>, 2);
+export const StepInto = stroke(<><path d="M12 3.5v10" /><path d="m7.5 9.5 4.5 4.5 4.5-4.5" /><circle cx="12" cy="19.5" r="1.6" fill="currentColor" stroke="none" /></>, 2);
+export const StepOut = stroke(<><path d="M12 14.5v-10" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><circle cx="12" cy="19.5" r="1.6" fill="currentColor" stroke="none" /></>, 2);
+export const Inspect = stroke(<><circle cx="10.5" cy="10.5" r="6" /><path d="m15 15 5 5M10.5 7.5v3.2M10.5 13.2v.1" /></>, 2);
+
 /** File type icon in the style of the Files app. */
 export function FileIcon({ name, size = 30 }: { name: string; size?: number }) {
   const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";

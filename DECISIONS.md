@@ -266,6 +266,66 @@ the formats uv understands (PEP 723 now, possibly `pylock.toml` later), so the
 same scripts run with `uv run` on a desktop. Resolution or locking with uv
 (natively in the host or as a service) stays open (Q16).
 
+## D23: A visual debugger on bdb's `monitoring` backend, shown only when a program stops
+
+2026-10-13 - Accepted (was P1; `spikes/debugger/`)
+
+`_pyslop_debug.py` subclasses `bdb.Bdb(backend="monitoring")`, new in 3.14.
+With breakpoints set but not hit, programs run as fast as without the
+debugger, while settrace and pdb are 6-12x slower. That is why every run is
+debuggable and there is no "Debug" mode. The other options considered were
+text pdb in the console, which stays as a fallback, and debugpy, which needs
+threads and sockets.
+
+How it works:
+- **Stopping:** at a stop the worker makes a blocking `debug` call through the
+  Atomics channel (D10). It answers requests (scopes, variables, evaluate,
+  setBreakpoints) until it gets a resume command. The messages follow DAP's
+  shapes.
+- **Stop while paused:** it uses the interrupt path of D11, because Stop
+  already answers pending sync calls.
+- **Signals through the interrupt buffer:**
+  - `SIGUSR1` pauses at the next line of user code.
+  - `SIGUSR2` makes the program fetch breakpoints that changed while it runs.
+  - The worker's `time.sleep` wakes on any signal and runs its handler
+    immediately via `checkInterrupt` (except for Stop). Pause ends the sleep;
+    other signals sleep on.
+- **Only project files stop.** The stdlib, site-packages and our runtime are
+  skipped and hidden from the stack.
+- **`breakpoint()`** uses the same debugger; `import pdb` still gives text pdb.
+- **Inspect** after an error runs `post_mortem()` on `sys.last_exc` in the
+  finished run's interpreter.
+
+UI, aimed at staying out of the way:
+- **Nothing new until the program stops.** Run stays the only button.
+- **Breakpoints:**
+  - Long-press a line number to add one; a plain tap does nothing, to avoid
+    accidents while scrolling.
+  - Long-pressing an existing breakpoint offers Disable and Remove.
+  - On a blank or comment line, the breakpoint moves to the next line of code.
+  - Breakpoints live in app state (not the source). They follow edits,
+    renames and deletes.
+  - They look like Xcode's blue tags behind the line number.
+- **While paused, the editor is read-only.**
+  - A green band marks the current line; a red band marks the failing line
+    when inspecting an error.
+  - Tapping a name or `a.b` chain shows its value in a popover with
+    expandable children.
+- **No inline values.**
+- **While paused, controls and console:**
+  - Run becomes Continue.
+  - Step over, in and out and Stop sit in the console sheet's header on
+    iPhone, so they work with the sheet collapsed, and in the nav bar on
+    iPad.
+  - The console gets a paused block at its end: reason and location, stack
+    chips with only user frames (tap one to switch frame), and variables.
+  - `>>>` runs in the selected frame, and assignments stick.
+- **Pause** is a button in the console header while a program runs.
+- **Inspect:** a run that ended with an error offers Inspect in its header;
+  Done ends the inspection.
+- **UI apps:** a stop inside a callback hides the app view until the program
+  continues.
+
 ## Proposed (not yet decided)
 
 (none)
@@ -284,4 +344,8 @@ same scripts run with `uv run` on a desktop. Resolution or locking with uv
 - **Q16:** Lock files / reproducible installs: write a lock (e.g. PEP 751 `pylock.toml` or micropip's freeze) per script, and decide whether uv resolves it (linked into the iOS host, or as a service), which needs a 3.14 Pyodide target in uv.
 - **Q17:** Type information for third-party packages in ty: feed installed packages (or their stubs) into ty's in-memory file system as `extra-paths`.
 - **Q18:** ty in a WebKit worker on larger files: watch for native stack overflows (D16); fall back to running ty on the main thread if needed.
+- **Q19:** Debugger: run the overhead benchmark and the debugger self-tests on
+  a device. Pause cannot interrupt a program that is suspended in JavaScript
+  (JSPI `await`); it stops when Python resumes. Conditional breakpoints and
+  hardware-keyboard shortcuts (⌘. / F6-F8) are not built yet.
 - **Q15:** Memory: iOS kills WebContent at about 1.9 GB (iPhone 14 Pro) without a `MemoryError`. Cap the wasm heap below the jetsam limit, and have the host recover from WebContent termination (recreate the web view, report "out of memory").

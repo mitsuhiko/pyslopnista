@@ -73,17 +73,26 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   py.registerJsModule("host", {
     call: (op, value) => asyncCall("host", { op, value: value?.toJs?.() ?? value }),
     call_sync: (op, value) => syncCall("host", { op, value: value?.toJs?.() ?? value }),
-    // Sleeps without burning CPU; Stop notifies the interrupt buffer, which
-    // wakes this early. KeyboardInterrupt is then raised by CPython's own signal
-    // check right after we return, not thrown through JavaScript (which WebKit
-    // reports as an uncaught worker error).
+    // Sleeps without burning CPU; any signal wakes it early. KeyboardInterrupt
+    // (Stop) is then raised by CPython's own signal check right after we
+    // return, not thrown through JavaScript (which WebKit reports as an
+    // uncaught worker error). _pyslop_debug wraps this into time.sleep.
     sleep: (seconds) => {
       Atomics.wait(interruptInts, 0, 0, Math.max(0, seconds * 1000));
+      // Woken by Pause or a breakpoint update: run that handler now, before
+      // the sleep loop waits again (CPython only polls the buffer now and then).
+      const signal = Atomics.load(interruptInts, 0);
+      if (signal !== 0 && signal !== 2) py.checkInterrupt();
     },
   });
   py.registerJsModule("_pyslophost", {
     image: (b64) => postMessage({ type: "output", stream: "image", text: b64 }),
     status: (text) => postMessage({ type: "output", stream: "system", text: text + "\n" }),
+    // The debugger's blocking round trip (_pyslop_debug.py); null when interrupted.
+    debug: (json) => {
+      const reply = syncCall("debug", JSON.parse(json));
+      return reply == null ? null : JSON.stringify(reply);
+    },
   });
   py.registerJsModule("_uihost", {
     render: (json) => postMessage({ type: "ui-render", tree: json }),
@@ -102,8 +111,8 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   py.runPython([
     "import sys",
     "sys.path.append('/lib/pyslop')",
-    "import _pyslop",
-    ...(interruptInts ? ["import time, host, pyodide.webloop", "time.sleep = pyodide.webloop._orig_sleep = host.sleep", "del time, host"] : []),
+    "import _pyslop, _pyslop_debug",
+    interruptInts ? "import host\n_pyslop_debug.install(host.sleep)\ndel host" : "_pyslop_debug.install()",
   ].join("\n"));
   postMessage({
     type: "ready", bootMs: performance.now() - t0, version: py.version,
@@ -145,7 +154,7 @@ function changedFiles(cwd) {
   return out;
 }
 
-async function run({ code, filename, cwd, files, repl, indexURL }) {
+async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) {
   const t0 = performance.now();
   try {
     if (files && cwd) syncIn(cwd, files);
@@ -170,8 +179,14 @@ async function run({ code, filename, cwd, files, repl, indexURL }) {
       py.globals.set("__pyslop_src", code);
       await py.runPythonAsync("import _pyslop\nawait _pyslop.repl(__pyslop_src)", { filename: "<console>" });
     } else {
-      const result = await py.runPythonAsync(code, { filename: filename ?? "<main>" });
-      result?.destroy?.();
+      py.globals.set("__pyslop_bps", JSON.stringify(breakpoints ?? {}));
+      py.runPython("import _pyslop_debug\n_pyslop_debug.start(__pyslop_bps)\ndel __pyslop_bps");
+      try {
+        const result = await py.runPythonAsync(code, { filename: filename ?? "<main>" });
+        result?.destroy?.();
+      } finally {
+        py.runPython("import _pyslop_debug\n_pyslop_debug.finished()");
+      }
     }
     postMessage({ type: "done", ok: true, ms: performance.now() - t0, changed: cwd ? changedFiles(cwd) : [] });
   } catch (e) {

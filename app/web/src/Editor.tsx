@@ -14,6 +14,10 @@ import {
 } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import type { Breakpoint } from "./debug/breakpoints";
+import {
+  breakpointLines, debugExtensions, pausedCompartment, pausedExtension, setBreakpointsEffect, setDebugLineEffect,
+} from "./debug/codemirror";
 
 export interface EditorHandle {
   getText(): string;
@@ -33,6 +37,18 @@ interface Props {
   onFocusChange: (focused: boolean) => void;
   /** Called (at most once per frame) after any editor update, e.g. for the problem bar. */
   onViewUpdate?: (view: EditorView) => void;
+  // Debugger (D23)
+  breakpoints: Breakpoint[];
+  /** Edits moved breakpoints to other lines. */
+  onBreakpointsChange: (path: string, list: Breakpoint[]) => void;
+  onGutterLongPress: (line: number, rect: DOMRect) => void;
+  /** Read-only, tap a name to inspect it. */
+  paused: boolean;
+  onInspect: (expr: string, rect: DOMRect) => void;
+  /** The line the program is paused at in this file. */
+  debugLine: number | null;
+  /** How much of the editor's height is not covered (by the console sheet). */
+  visibleFraction: number;
 }
 
 const highlight = HighlightStyle.define([
@@ -99,8 +115,11 @@ function extensions(
   onFocus: (focused: boolean) => void,
   onUpdate: (view: EditorView) => void,
   getPath: () => string | null,
+  onGutterLongPress: (line: number, rect: DOMRect) => void,
+  onBreakpointsMoved: (state: EditorState) => void,
 ): Extension[] {
   return [
+    debugExtensions(onGutterLongPress),
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
@@ -125,6 +144,7 @@ function extensions(
     EditorView.contentAttributes.of({ autocapitalize: "off", autocorrect: "off", spellcheck: "false", "aria-label": "Code editor" }),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) onChange(u.state.doc.toString());
+      if (u.docChanged) onBreakpointsMoved(u.state);
       if (u.focusChanged) onFocus(u.view.hasFocus);
       onUpdate(u.view);
     }),
@@ -143,7 +163,11 @@ const cursorMove = (view: EditorView, dir: "left" | "right" | "up" | "down") => 
   view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
 };
 
-export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, text, onChange, onFocusChange, onViewUpdate }, ref) {
+const sameBreakpoints = (a: Breakpoint[], b: Breakpoint[]) =>
+  a.length === b.length && a.every((bp, i) => bp.line === b[i].line && bp.enabled === b[i].enabled);
+
+export const Editor = forwardRef<EditorHandle, Props>(function Editor(props, ref) {
+  const { path, text, onChange, onFocusChange, onViewUpdate, breakpoints, paused, debugLine, visibleFraction } = props;
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const states = useRef(new Map<string, EditorState>());
@@ -152,6 +176,8 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, te
   const focusRef = useRef(onFocusChange);
   const updateRef = useRef(onViewUpdate);
   const frame = useRef(0);
+  const propsRef = useRef(props);
+  propsRef.current = props;
   changeRef.current = onChange;
   focusRef.current = onFocusChange;
   updateRef.current = onViewUpdate;
@@ -167,6 +193,13 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, te
           frame.current = requestAnimationFrame(() => updateRef.current?.(view));
         },
         () => pathRef.current,
+        (line, rect) => propsRef.current.onGutterLongPress(line, rect),
+        (state) => {
+          const p = pathRef.current;
+          if (!p) return;
+          const lines = breakpointLines(state);
+          if (!sameBreakpoints(lines, propsRef.current.breakpoints)) propsRef.current.onBreakpointsChange(p, lines);
+        },
       ),
     });
 
@@ -203,6 +236,40 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ path, te
     const t = setTimeout(() => view.requestMeasure(), 450);
     return () => clearTimeout(t);
   }, [path, text]);
+
+  // Breakpoints from the store (also after switching files).
+  useEffect(() => {
+    const view = viewRef.current!;
+    if (!sameBreakpoints(breakpointLines(view.state), breakpoints)) view.dispatch({ effects: setBreakpointsEffect.of(breakpoints) });
+  }, [path, text, breakpoints]);
+
+  // Paused: read-only and tap-to-inspect.
+  useEffect(() => {
+    const view = viewRef.current!;
+    if (paused) view.contentDOM.blur();
+    view.dispatch({
+      effects: pausedCompartment.reconfigure(paused ? pausedExtension((expr, rect) => propsRef.current.onInspect(expr, rect)) : []),
+    });
+  }, [path, text, paused]);
+
+  // The paused line: highlight it and bring it into the uncovered part of the editor.
+  useEffect(() => {
+    const view = viewRef.current!;
+    view.dispatch({ effects: setDebugLineEffect.of(debugLine) });
+    if (debugLine === null || debugLine > view.state.doc.lines) return;
+    const reveal = () => {
+      const pos = view.state.doc.line(debugLine).from;
+      const block = view.lineBlockAt(pos);
+      const scroller = view.scrollDOM;
+      const top = scroller.scrollTop;
+      const visible = scroller.clientHeight * visibleFraction;
+      if (block.top < top + 8 || block.bottom > top + visible - 8) {
+        view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: Math.round(visible * 0.3) }) });
+      }
+    };
+    // After a file switch the layout settles first.
+    requestAnimationFrame(reveal);
+  }, [path, text, debugLine, visibleFraction]);
 
   useImperativeHandle(ref, () => ({
     getText: () => viewRef.current?.state.doc.toString() ?? "",

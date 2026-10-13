@@ -2,6 +2,7 @@
 // that can be dragged or tapped. Opens itself when a run starts or asks for input.
 import { useEffect, useRef, useState } from "react";
 import { Console, runSummary } from "./Console";
+import { DebugBar, frameLabel, PauseButton } from "./debug/DebugViews";
 import { ChevronDown, ChevronUp } from "./Icons";
 import type { SessionState } from "./session";
 
@@ -74,6 +75,10 @@ export function ConsoleSheet({ state, hidden, detent, onDetent }: { state: Sessi
   const height = drag ? drag.h : heightFor(detent);
   const run = state.runs[state.lines.at(-1)?.runId ?? -1];
   const collapsed = !drag && detent === "peek";
+  const debug = state.debug;
+  const where = debug ? `${frameLabel(debug.frames[0])} · line ${debug.frames[0].line}` : "";
+  const title = debug ? (debug.postMortem ? "Inspecting Error" : "Paused") : collapsed && run ? runSummary(run, state.awaitingInput) : "Console";
+  const canPause = state.status === "running" && !debug;
 
   return (
     <div
@@ -84,11 +89,18 @@ export function ConsoleSheet({ state, hidden, detent, onDetent }: { state: Sessi
       <div className="sheet-handle" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
         <div className="grabber" />
         <div className="sheet-header">
-          <span className={`status-dot ${run?.status ?? "none"} ${state.awaitingInput ? "input" : ""}`} />
+          <span className={`status-dot ${run?.status ?? "none"} ${state.awaitingInput ? "input" : ""} ${debug ? "paused" : ""}`} />
           <div className="sheet-title">
-            <span className="sheet-title-main">{collapsed && run ? runSummary(run, state.awaitingInput) : "Console"}</span>
-            {collapsed && <span className="sheet-preview">{lastOutputLine(state) || (run ? (run.file ?? "Console") : "Output and >>> prompt")}</span>}
+            <span className="sheet-title-main">{title}</span>
+            {collapsed && <span className="sheet-preview">{where || lastOutputLine(state) || (run ? (run.file ?? "Console") : "Output and >>> prompt")}</span>}
           </div>
+          {canPause && <PauseButton disabled={state.awaitingInput || state.pausing} />}
+          {debug && (
+            // The step controls live in the header, so they also work with the sheet collapsed.
+            <div className="sheet-controls" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+              <DebugBar debug={debug} inline />
+            </div>
+          )}
           {collapsed ? <ChevronUp size={18} className="sheet-chevron" /> : <ChevronDown size={18} className="sheet-chevron" />}
         </div>
       </div>
