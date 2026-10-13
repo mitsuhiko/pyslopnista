@@ -4,8 +4,10 @@
 import { base64ToBytes, basename, bytesToBase64, dirname, fs, haptic, join } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import { PyWorker, SIGNAL, WorkerPool, type ChangedFile, type Stream } from "./python";
+import { TurtleScene, turtleScenes } from "./turtle";
 
-export type LineKind = Stream | "input" | "prompt" | "run";
+/** "turtle": a turtle screen; the line's text is the key of its scene (D29). */
+export type LineKind = Stream | "input" | "prompt" | "run" | "turtle";
 
 export interface Line {
   id: number;
@@ -104,6 +106,7 @@ export class Session {
   private pool = new WorkerPool();
   private worker: PyWorker | null = null;
   private workerDir = "";
+  private workerSerial = 0; // scene keys are "<worker>:<screen>"
   private nextId = 1;
   private currentRun = 0;
   private stopRequested = false;
@@ -175,21 +178,32 @@ export class Session {
       }
     }
     this.pendingOutput = [];
+    const size = (l: Line) => (l.kind === "image" || l.kind === "turtle" ? 2000 : l.text.length);
     let total = 0;
-    for (const l of lines) total += l.kind === "image" ? 2000 : l.text.length;
+    for (const l of lines) total += size(l);
     let drop = 0;
     while (total > MAX_CHARS && drop < lines.length - 1) {
-      total -= lines[drop].kind === "image" ? 2000 : lines[drop].text.length;
+      total -= size(lines[drop]);
       drop++;
     }
     if (drop) lines = lines.slice(drop);
     this.set({ lines });
+    if (drop) this.pruneScenes();
+  }
+
+  /** Forget turtle scenes that are no longer in the transcript. */
+  private pruneScenes() {
+    const shown = new Set(this.state.lines.filter((l) => l.kind === "turtle").map((l) => l.text));
+    for (const [key, scene] of turtleScenes) {
+      if (!shown.has(key) && !scene.live) turtleScenes.delete(key);
+    }
   }
 
   clear() {
     this.pendingOutput = [];
     const running = this.state.status !== "idle" ? this.state.runs[this.currentRun] : null;
     this.set({ lines: running ? [{ id: this.nextId++, runId: running.id, kind: "run", text: "" }] : [], runs: running ? { [running.id]: running } : {} });
+    this.pruneScenes();
   }
 
   private startRun(file: string | null) {
@@ -241,6 +255,7 @@ export class Session {
     if (!reuse || !this.state.runs[this.currentRun]) this.startRun(null);
     this.append("prompt", source);
     const worker = reuse ? this.worker! : await this.takeWorker(this.workerDir);
+    this.setScenesActive(true);
     this.set({ status: "running" });
     const result = await worker.run(source, { repl: true, cwd: PROJECT_ROOT });
     await this.finishRun(result, true);
@@ -250,6 +265,7 @@ export class Session {
     const worker = await this.pool.take();
     this.worker = worker;
     this.workerDir = dir;
+    const serial = ++this.workerSerial;
     worker.onOutput = (stream, text) => this.append(stream, text);
     worker.onInput = () =>
       new Promise((resolve) => {
@@ -264,7 +280,42 @@ export class Session {
     worker.onFiles = (changed) => void this.writeBack(changed, dir);
     worker.onCrash = (error) => this.append("stderr", `Python crashed: ${error}\n`);
     worker.onDebug = (message) => this.onDebugMessage(worker, message);
+    worker.onTurtle = (batches) => {
+      for (const json of batches) {
+        const { id, ops } = JSON.parse(json) as { id: number; ops: any[] };
+        const key = `${serial}:${id}`;
+        let scene = turtleScenes.get(key);
+        if (!scene) {
+          scene = new TurtleScene(key);
+          turtleScenes.set(key, scene);
+          this.append("turtle", key);
+        }
+        scene.apply(ops);
+      }
+    };
+    worker.onTurtleCall = async (request: { id: number; wait?: number; prompt?: { title: string; text: string; default: string } }) => {
+      if (request.prompt) {
+        const { title, text, default: value } = request.prompt;
+        this.flushOutput();
+        return window.prompt([title, text].filter(Boolean).join("\n\n"), value);
+      }
+      const scene = turtleScenes.get(`${serial}:${request.id}`);
+      return scene ? scene.take(request.wait ?? 0) : [];
+    };
     return worker;
+  }
+
+  /** Whether the worker's turtle screens take events (only while code runs). */
+  private setScenesActive(active: boolean) {
+    const prefix = `${this.workerSerial}:`;
+    for (const [key, scene] of turtleScenes) if (key.startsWith(prefix)) scene.setActive(active);
+  }
+
+  /** The worker's turtle screens take no more events. */
+  private endScenes() {
+    const prefix = `${this.workerSerial}:`;
+    for (const [key, scene] of turtleScenes) if (key.startsWith(prefix)) scene.end();
+    this.pruneScenes();
   }
 
   // -- debugger -----------------------------------------------------------------------
@@ -406,6 +457,7 @@ export class Session {
     fromConsole = false,
   ) {
     this.inputResolver = null;
+    this.setScenesActive(false);
     let status: RunStatus = "ok";
     if (!result.ok && result.error) {
       const interrupted = /KeyboardInterrupt\s*$/.test(result.error.trim()) || (result.killed && this.stopRequested);
@@ -491,6 +543,7 @@ export class Session {
 
   private closeWorker(keepAlive = false) {
     if (this.worker && !this.worker.dead && !keepAlive) this.worker.terminate("closed");
+    if (this.worker) this.endScenes();
     this.endDebug();
     this.worker = null;
     this.set({ uiOpen: false, awaitingInput: false });

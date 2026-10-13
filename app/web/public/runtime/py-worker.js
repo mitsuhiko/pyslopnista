@@ -82,6 +82,31 @@ let written = new Set(); // paths this program wrote back (their deletion is wri
 let flushTimer = null;
 let plumbing; // a private namespace for our own Python, so the program's globals stay clean
 
+// Turtle graphics (D29): ops from _pyslop_turtle.py, sent to the page at most
+// every 16 ms, and always before the program blocks, sleeps or prints (so the
+// console keeps the order) and when it ends.
+let turtleBatches = [];
+let turtleSentAt = 0;
+function flushTurtle() {
+  if (turtleBatches.length) {
+    postMessage({ type: "turtle", batches: turtleBatches });
+    turtleBatches = [];
+  }
+  turtleSentAt = performance.now();
+}
+let measureContext;
+/** A 2D context for measuring text and parsing colors (null if unavailable). */
+function context2d() {
+  if (measureContext === undefined) {
+    try {
+      measureContext = new OffscreenCanvas(1, 1).getContext("2d");
+    } catch {
+      measureContext = null;
+    }
+  }
+  return measureContext;
+}
+
 /** Run our own setup code without touching the program's namespace (__main__). */
 function runPlumbing(code) {
   py.runPython(code, { globals: plumbing });
@@ -90,6 +115,7 @@ let runCwd = null; // the program's working directory, for later write-backs
 
 function syncCall(op, value) {
   if (!syncChannel) throw new Error(`blocking call '${op}' needs cross-origin isolation`);
+  flushTurtle();
   const ints = new Int32Array(syncChannel, 0, 2);
   Atomics.store(ints, 0, 0);
   postMessage({ type: "call", sync: true, op, value });
@@ -115,6 +141,7 @@ function asyncCall(op, value) {
 function writer(stream) {
   return {
     write(buf) {
+      if (turtleBatches.length) flushTurtle();
       postMessage({ type: "output", stream, text: decoder.decode(buf) });
       return buf.length;
     },
@@ -139,8 +166,8 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
     indexURL,
     packageBaseUrl,
     env: { HOME: "/home/pyodide", MPLBACKEND: "agg" },
-    stdout: (s) => postMessage({ type: "output", stream: "stdout", text: s + "\n" }),
-    stderr: (s) => postMessage({ type: "output", stream: "stderr", text: s + "\n" }),
+    stdout: (s) => (flushTurtle(), postMessage({ type: "output", stream: "stdout", text: s + "\n" })),
+    stderr: (s) => (flushTurtle(), postMessage({ type: "output", stream: "stderr", text: s + "\n" })),
   });
   py.setStdout(writer("stdout"));
   py.setStderr(writer("stderr"));
@@ -154,6 +181,7 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
     // return, not thrown through JavaScript (which WebKit reports as an
     // uncaught worker error). _pyslop_debug wraps this into time.sleep.
     sleep: (seconds) => {
+      flushTurtle();
       Atomics.wait(interruptInts, 0, 0, Math.max(0, seconds * 1000));
       // Woken by Pause or a breakpoint update: run that handler now, before
       // the sleep loop waits again (CPython only polls the buffer now and then).
@@ -168,6 +196,32 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
     debug: (json) => {
       const reply = syncCall("debug", JSON.parse(json));
       return reply == null ? null : JSON.stringify(reply);
+    },
+    turtle: (json) => {
+      turtleBatches.push(json);
+      if (performance.now() - turtleSentAt > 16) flushTurtle();
+    },
+    // Events (waiting up to `wait` ms for one) and dialogs; null when interrupted.
+    turtle_call: (json) => {
+      const reply = syncCall("turtle", JSON.parse(json));
+      return reply === undefined ? null : JSON.stringify(reply);
+    },
+    measure_text: (font, text) => {
+      const ctx = context2d();
+      if (!ctx) return null;
+      ctx.font = font;
+      return ctx.measureText(text).width;
+    },
+    /** A CSS color as the canvas normalizes it ("#rrggbb"), or null if it is none. */
+    css_color: (name) => {
+      const ctx = context2d();
+      if (!ctx) return name;
+      ctx.fillStyle = "#010203";
+      ctx.fillStyle = name;
+      const a = ctx.fillStyle;
+      ctx.fillStyle = "#040506";
+      ctx.fillStyle = name;
+      return a === ctx.fillStyle ? a : null;
     },
   });
   py.registerJsModule("_uihost", {
@@ -329,14 +383,28 @@ async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) 
       try {
         const result = await py.runPythonAsync(code, { filename: filename ?? "<main>" });
         result?.destroy?.();
+        // A turtle program with event handlers keeps running, as in IDLE.
+        runPlumbing("import sys\nif '_pyslop_turtle' in sys.modules: sys.modules['_pyslop_turtle'].finish()");
       } finally {
         await callRuntime("_pyslop_debug", "finished");
       }
     }
+    finishTurtle();
     postMessage({ type: "done", ok: true, ms: performance.now() - t0, changed: cwd ? changedFiles(cwd) : [] });
   } catch (e) {
+    finishTurtle();
     postMessage({ type: "done", ok: false, error: String(e.message ?? e), ms: performance.now() - t0, changed: cwd ? changedFiles(cwd) : [] });
   }
+}
+
+/** Send what the program drew last (also when it failed). */
+function finishTurtle() {
+  try {
+    runPlumbing("import sys\nif '_pyslop_turtle' in sys.modules: sys.modules['_pyslop_turtle'].flush_all()");
+  } catch {
+    // the interpreter is unusable; nothing to send
+  }
+  flushTurtle();
 }
 
 // Errors escaping Pyodide are crashes (D16), except KeyboardInterrupt: it is a

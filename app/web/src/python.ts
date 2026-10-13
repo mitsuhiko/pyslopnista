@@ -49,6 +49,8 @@ function workerOptions() {
       "_pyslop.py": new URL("/runtime/python/_pyslop.py", location.href).href,
       "ui.py": new URL("/runtime/python/ui.py", location.href).href,
       "_pyslop_debug.py": new URL("/runtime/python/_pyslop_debug.py", location.href).href,
+      "turtle.py": new URL("/runtime/python/turtle.py", location.href).href,
+      "_pyslop_turtle.py": new URL("/runtime/python/_pyslop_turtle.py", location.href).href,
     },
   };
 }
@@ -64,11 +66,16 @@ export class PyWorker {
   onCrash: (error: string) => void = () => {};
   /** A debugger message; the returned promise is the next command (D23). */
   onDebug: (message: any) => Promise<unknown> = async () => ({ op: "continue" });
+  /** Turtle graphics ops: JSON strings of {id, ops} (D29). */
+  onTurtle: (batches: string[]) => void = () => {};
+  /** A blocking turtle call: events for a screen, or a dialog. */
+  onTurtleCall: (request: any) => Promise<unknown> = async () => [];
 
   private worker: Worker;
   private interrupt: Int32Array | null;
   private channel: SharedArrayBuffer | null;
   private syncPending = false;
+  private syncSeq = 0; // the blocking call being answered (a late answer to an interrupted one is dropped)
   private current: ((r: RunResult) => void) | null = null;
   private stopTimer: ReturnType<typeof setInterval> | null = null;
   private resolveReady!: (info: WorkerInfo) => void;
@@ -107,6 +114,9 @@ export class PyWorker {
       case "ui-render":
         this.onUIRender(msg.tree);
         break;
+      case "turtle":
+        this.onTurtle(msg.batches);
+        break;
       case "call":
         void this.handleCall(msg);
         break;
@@ -138,11 +148,13 @@ export class PyWorker {
 
   private async handleCall(msg: any) {
     let reply: { value?: unknown; error?: string };
+    const seq = msg.sync ? ++this.syncSeq : 0;
     try {
       if (msg.sync) this.syncPending = true;
       let value: unknown;
       if (msg.op === "stdin") value = await this.onInput();
       else if (msg.op === "debug") value = await this.onDebug(msg.value);
+      else if (msg.op === "turtle") value = await this.onTurtleCall(msg.value);
       else if (msg.op === "host") value = await call(msg.value.op, msg.value.value);
       else throw new Error(`unknown call ${msg.op}`);
       reply = { value };
@@ -150,7 +162,7 @@ export class PyWorker {
       reply = { error: String((e as Error).message ?? e) };
     }
     if (msg.sync) {
-      if (this.syncPending) this.replySync(reply);
+      if (this.syncPending && seq === this.syncSeq) this.replySync(reply);
     } else {
       this.worker.postMessage({ type: "call-reply", id: msg.id, ...reply });
     }

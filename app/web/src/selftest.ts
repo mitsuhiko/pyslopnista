@@ -6,6 +6,7 @@ import { analysis } from "./analysis/client";
 import { base64ToBytes, call, fs, isNative, locations } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import { session } from "./session";
+import { turtleScenes } from "./turtle";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -19,7 +20,7 @@ async function until<T>(fn: () => T | undefined | null | false, timeout = 15000)
   }
 }
 
-const consoleText = () => session.getSnapshot().lines.filter((l) => l.kind !== "image").map((l) => l.text).join("");
+const consoleText = () => session.getSnapshot().lines.filter((l) => l.kind !== "image" && l.kind !== "turtle").map((l) => l.text).join("");
 const idle = () => session.getSnapshot().status === "idle";
 
 export async function selftest(app: AppController) {
@@ -137,6 +138,111 @@ export async function selftest(app: AppController) {
     await until(idle);
     const run = Object.values(session.getSnapshot().runs).at(-1);
     if (run?.status !== "stopped" || consoleText().includes("crashed")) throw new Error(`${run?.status}: ${consoleText()}`);
+  });
+
+  // -- turtle graphics (D29) ----------------------------------------------------------
+
+  const lastScene = () => [...turtleScenes.values()].at(-1);
+  /** Where turtle coordinates (x, y) are on screen, and the canvas pixel there. */
+  const turtlePoint = (canvas: HTMLCanvasElement, x: number, y: number) => {
+    const { w, h } = lastScene()!.info;
+    const r = canvas.getBoundingClientRect();
+    const s = r.width / w;
+    const px = (x + w / 2) / w, py = (-y + h / 2) / h;
+    const pixel = canvas.getContext("2d")!.getImageData(Math.round(px * canvas.width), Math.round(py * canvas.height), 1, 1).data;
+    return { clientX: r.left + (x + w / 2) * s, clientY: r.top + (-y + h / 2) * s, rgb: [...pixel.slice(0, 3)] };
+  };
+
+  await step("turtle_draw_and_events", async () => {
+    await fs.mkdir("Tests").catch(() => {});
+    await fs.writeText("Tests/turtle_check.py", [
+      "import turtle",
+      "t = turtle.Turtle()",
+      "t.speed(0)",
+      "t.color('red', 'yellow')",
+      "t.begin_fill()",
+      "for _ in range(4):",
+      "    t.forward(100)",
+      "    t.left(90)",
+      "t.end_fill()",
+      "t.write('hi', font=('Arial', 16, 'bold'))",
+      "screen = turtle.Screen()",
+      "screen.onclick(lambda x, y: print(f'click {round(x)} {round(y)}'))",
+      "def up():",
+      "    print('key Up')",
+      "    screen.bye()",
+      "screen.onkey(up, 'Up')",
+      "screen.listen()",
+      "print('ready')",
+      "turtle.done()",
+      "print('after done')",
+    ].join("\n"));
+    const { done } = await runFile("Tests/turtle_check.py");
+    await until(() => consoleText().includes("ready"));
+    const canvas = await until(() => document.querySelector<HTMLCanvasElement>(".turtle-canvas"));
+    await sleep(300); // a frame or two
+    const inside = turtlePoint(canvas, 50, 50).rgb;
+    const outside = turtlePoint(canvas, -150, -150).rgb;
+    if (!(inside[0] > 200 && inside[1] > 200 && inside[2] < 80)) throw new Error(`not yellow inside the square: ${inside}`);
+    if (!outside.every((c) => c > 240)) throw new Error(`not white outside: ${outside}`);
+    const tap = turtlePoint(canvas, -120, 80);
+    const pointer = { clientX: tap.clientX, clientY: tap.clientY, bubbles: true, pointerId: 1, button: 0, isPrimary: true };
+    canvas.dispatchEvent(new PointerEvent("pointerdown", pointer));
+    canvas.dispatchEvent(new PointerEvent("pointerup", pointer));
+    await until(() => consoleText().includes("click -120 80"), 5000);
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    canvas.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", bubbles: true }));
+    await until(() => consoleText().includes("after done"), 5000);
+    await done;
+    await until(idle);
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    if (run?.status !== "ok") throw new Error(`${run?.status}: ${consoleText()}`);
+    return { items: lastScene()!.items.size, inside, outside };
+  });
+
+  await step("turtle_timer_keeps_running_and_stop", async () => {
+    // Handlers without done(): the program keeps running, as in IDLE.
+    await fs.writeText("Tests/turtle_timer.py", "import turtle\nn = 0\ndef tick():\n    global n\n    n += 1\n    print('tick', n)\n    turtle.ontimer(tick, 50)\ntick()\n");
+    await runFile("Tests/turtle_timer.py");
+    await until(() => consoleText().includes("tick 4"));
+    if (idle()) throw new Error("the program ended");
+    session.stop();
+    await until(idle);
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    if (run?.status !== "stopped" || consoleText().includes("Traceback")) throw new Error(`${run?.status}: ${consoleText()}`);
+  });
+
+  await step("turtle_example", async () => {
+    const t0 = performance.now();
+    await runFile("Examples/Turtle.py");
+    await until(idle, 60000);
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    if (run?.status !== "ok") throw new Error(`${run?.status}: ${consoleText()}`);
+    const scene = lastScene()!;
+    if (scene.items.size < 10) throw new Error(`${scene.items.size} items`);
+    return { ms: Math.round(performance.now() - t0), items: scene.items.size };
+  });
+
+  await step("turtle_catch_example", async () => {
+    await runFile("Examples/Catch the Turtle.py");
+    const canvas = await until(() => document.querySelector<HTMLCanvasElement>(".turtle-canvas"));
+    const scene = await until(() => lastScene()?.listening.pointer && lastScene());
+    const score = () => [...scene.items.values()].filter((i) => i.type === "text").map((i) => i.o.text).join();
+    await until(() => score().includes("Score: 0"));
+    // Tap the middle of the turtle's shape (it hops every 1.3 s; try again if it moved away).
+    for (let i = 0; i < 5 && !score().includes("Score: 1"); i++) {
+      const shell = [...scene.items.values()].find((it) => it.type === "polygon" && it.o.fill === "#006400")!;
+      const xs = shell.xy.filter((_, j) => j % 2 === 0), ys = shell.xy.filter((_, j) => j % 2 === 1);
+      const p = turtlePoint(canvas, xs.reduce((a, b) => a + b) / xs.length, -ys.reduce((a, b) => a + b) / ys.length);
+      const pointer = { clientX: p.clientX, clientY: p.clientY, bubbles: true, pointerId: 1, button: 0, isPrimary: true };
+      canvas.dispatchEvent(new PointerEvent("pointerdown", pointer));
+      canvas.dispatchEvent(new PointerEvent("pointerup", pointer));
+      await sleep(400);
+    }
+    if (!score().includes("Score: 1")) throw new Error(`score: ${score()}`);
+    session.stop();
+    await until(idle);
+    return { score: score() };
   });
 
   await step("ui_app", async () => {

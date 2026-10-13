@@ -275,6 +275,10 @@ button.nav-subtitle.problems { display: inline-flex; align-items: center; gap: 3
 .console-prompt-line::before { content: ">>> "; color: var(--secondary); }
 .inline-input { display: inline; font: inherit; color: var(--tint); caret-color: var(--tint); background: color-mix(in srgb, var(--tint) 8%, transparent); border: 0; border-radius: 4px; outline: none; padding: 0 2px; margin: 0; min-width: 3ch; max-width: 100%; }
 .console-image { display: block; max-width: 100%; border-radius: 12px; background: #fff; margin: 8px 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.turtle-view { margin: 8px 0; }
+.turtle-title { font: 600 12.5px/1.3 -apple-system, system-ui, sans-serif; color: var(--secondary); margin-bottom: 4px; white-space: normal; }
+.turtle-canvas { display: block; border-radius: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); outline: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.turtle-canvas.keys:focus { box-shadow: 0 0 0 2px var(--tint); }
 .repl { display: flex; align-items: center; gap: 8px; padding: 8px 12px calc(8px + var(--safe-bottom)) 16px; border-top: 0.5px solid var(--separator); flex: none; }
 .repl-prompt { font: 600 14px var(--mono); color: var(--secondary); letter-spacing: 0; }
 .repl input { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 18px; border: 0; outline: none; background: var(--fill); color: var(--label); font: 16px var(--mono); letter-spacing: 0; }

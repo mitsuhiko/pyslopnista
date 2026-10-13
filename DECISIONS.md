@@ -490,6 +490,49 @@ writes, runs a script with a sibling import and file write-back, and removes
 the link (iPhone 17 simulator). Not yet tried with iCloud Drive or a file
 provider on a device.
 
+## D29: `turtle` is CPython's module on a browser canvas, drawn inline in the console
+
+2026-10-13 - Accepted
+
+Pyodide ships neither `tkinter` nor `turtle`. We ship CPython's own
+`turtle.py`, so the whole API and its behavior are the standard library's
+(speeds, undo, stamps, shapes, `setworldcoordinates`, `Vec2D`, ...). Only its
+Tkinter interface, which CPython keeps in one block (`TurtleScreenBase`,
+`ScrolledCanvas`, `_Root`) for exactly this kind of port, is replaced by
+`_pyslop_turtle.py`. `app/scripts/make-turtle.py` generates the app's
+`turtle.py` from the host's 3.14 standard library.
+
+- The backend keeps Tk's canvas model in Python (items with coordinates and
+  options) and sends the changes as ops. The worker sends them on at most
+  every 16 ms, and always before the program sleeps, blocks, prints or ends,
+  so the console keeps the order and animation follows turtle's own delays.
+- The page mirrors the items per screen (`TurtleScene`) and redraws them on
+  a `<canvas>` once per frame. A screen is a console line, like a plot: it
+  stays in the transcript after the run, fits the console (never scaled up),
+  and >>> input can keep drawing on it. On iPhone the console sheet expands
+  to full height when a drawing appears.
+- Events: taps (screen and turtle clicks, drags, releases) and hardware
+  keys are queued by the page while the program has handlers, and the
+  program fetches them with a blocking call when it updates the screen (at
+  most every 30 ms) or waits in `mainloop()`/`done()`, where Tk handles
+  events too. Turtles get 10 canvas units of slack for fingers. Timers run in
+  the same places. `textinput`/`numinput` use the native prompt dialog.
+- Differences from Tk, on purpose: `done()`/`mainloop()`/`exitonclick()`
+  return right away when nothing could happen (no handlers, no timers), since
+  the drawing stays either way. A script that ends with handlers or timers
+  keeps running as if it called `done()`, like in IDLE. `bye()` keeps the
+  drawing and only ends its events. `save()` writes EPS from the items.
+
+On the other hand, the window has no scrollbars (it always shows the middle
+of the canvas), and there is no on-screen keyboard for key handlers on a
+phone.
+
+Evidence: the `turtle_*` selftests (draw a filled square and check its
+pixels, a tap and a key reach the handlers, `bye()` ends `done()`, a timer
+program keeps running until Stop, `Examples/Turtle.py`, and a tap that
+catches the turtle in `Examples/Catch the Turtle.py`) pass in the iPhone 17
+and iPad Pro 11 simulators (WKWebView). Not yet tried on a device.
+
 ## Proposed (not yet decided)
 
 (none)

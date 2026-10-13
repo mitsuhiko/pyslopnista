@@ -18,6 +18,7 @@ function lastOutputLine(state: SessionState): string {
       if (text) return text;
     }
     if (l.kind === "image") return "Figure";
+    if (l.kind === "turtle") return "Turtle graphics";
   }
   return "";
 }
@@ -37,6 +38,13 @@ export function ConsoleSheet({ state, hidden, detent, onDetent }: { state: Sessi
   useEffect(() => {
     if (state.awaitingInput && detent === "peek") onDetent("half");
   }, [state.awaitingInput, detent, onDetent]);
+  // A new turtle drawing gets the whole height (half a phone is small for it).
+  const lastTurtle = state.lines.findLast((l) => l.kind === "turtle")?.id ?? 0;
+  const seenTurtle = useRef(lastTurtle);
+  useEffect(() => {
+    if (lastTurtle > seenTurtle.current && detent !== "full") onDetent("full");
+    seenTurtle.current = lastTurtle;
+  }, [lastTurtle, detent, onDetent]);
 
   const parentHeight = () => sheet.current?.parentElement?.clientHeight ?? window.innerHeight;
   const heightFor = (d: Detent) => {

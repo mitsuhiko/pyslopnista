@@ -1,9 +1,10 @@
 // Console: runs as blocks (header + output), inline input() right where the
-// program asked, ANSI colors, inline images, and the >>> prompt.
+// program asked, ANSI colors, inline images and turtle drawings, and the >>> prompt.
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { basename, join } from "./host";
 import { navigation } from "./navigation";
 import { PausedBlock } from "./debug/DebugViews";
+import { TurtleView } from "./TurtleView";
 import { CheckCircle, Error as ErrorIcon, Inspect, PauseCircle, StopCircle, Terminal, Trash } from "./Icons";
 import type { Line, Run, SessionState } from "./session";
 import { session } from "./session";
@@ -207,6 +208,8 @@ function renderLine(line: Line, dir: string) {
     <Fragment key={line.id}>
       {line.kind === "run" ? null : line.kind === "image" ? (
         <img className="console-image" src={`data:image/png;base64,${line.text}`} alt="Figure" />
+      ) : line.kind === "turtle" ? (
+        <TurtleView sceneKey={line.text} />
       ) : line.kind === "prompt" ? (
         <span className="console-prompt-line">{line.text}{"\n"}</span>
       ) : (
