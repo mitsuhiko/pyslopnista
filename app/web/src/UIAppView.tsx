@@ -1,4 +1,7 @@
-// Full-screen view for programs using the ui module (D14).
+// Full-screen view for programs using the ui module (P1: fine-grained ops,
+// see uikit/). The renderer asks Python for a full snapshot when it is
+// created, so this view can mount late or be re-created (e.g. after the
+// debugger hid it) without missing anything.
 import { useEffect, useRef } from "react";
 import { session } from "./session";
 import { UIRenderer } from "./uiRenderer.js";
@@ -18,7 +21,7 @@ export function UIAppView() {
 
   return (
     <div className="ui-app">
-      <div className="ui-app-content ui-root" ref={root} />
+      <div className="ui-app-content" ref={root} />
       <button className="ui-app-close" onClick={() => session.closeUI()}>Done</button>
     </div>
   );

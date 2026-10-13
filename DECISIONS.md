@@ -165,7 +165,7 @@ Evidence: `spikes/jspi-repro/`.
 
 ## D14: User UI is a declarative Python tree rendered by a JS renderer
 
-2026-10-13 - Accepted (was P2)
+2026-10-13 - Superseded by D26 (was P2)
 
 Python apps describe their UI with `ui.state()` plus a `view()` function that
 returns components. Each state change re-runs `view()`; the whole tree goes to
@@ -383,36 +383,50 @@ proxy only exists inside the app. Unhandled promise rejections in the worker
 only count as crashes (D16) when they show a broken interpreter: urllib3
 leaves a rejected promise behind in WebKit.
 
-## Proposed (not yet decided)
+## D26: UI apps use Solid-style fine-grained reactivity
 
-### P1: Replace D14's re-render model with Solid-style fine-grained reactivity
+2026-10-13 - Accepted (was P1; supersedes D14; `uikit/`)
 
-2026-10-13 · Proposed (built in isolation in `uikit/`, not in the app yet)
+The `ui` module works like SolidJS:
+- Components are plain functions that run once.
+- State lives in signals, computed values and deep reactive stores.
+- Any function passed as a prop or child is a live binding that updates one
+  DOM property.
 
-Components are plain functions that run once. State lives in signals,
-computed values and deep reactive stores. Any function passed as a prop or
-child is a live binding that updates one DOM property. Python keeps the
-element tree and sends batched ops (`mount`/`move`/`unmount`/`set`); `For`
-reconciles keyed lists with minimal moves. Nothing is re-rendered or diffed,
-so text fields keep focus and one change sends one op. It uses the worker's
-existing `_uihost.render`/`set_dispatcher` and the renderer keeps the
-`UIRenderer(root, sendEvent)` interface, so adopting it means swapping
-`ui.py`, `uiRenderer.js` and `ui-toolkit.css`. A new renderer asks for a full
-snapshot (`resync`), so the app view can attach late or be re-created (D23).
-The API is much larger than D14's: navigation stacks, tabs, sheets, dialogs,
-every common input with two-way binding, canvas with a frame loop, async
-resources, and raw HTML via `h()`.
+Python keeps the element tree and sends batched ops (`mount`, `move`,
+`unmount`, `set`). `For` reconciles keyed lists with minimal moves. Nothing is
+re-rendered or diffed: text fields keep focus, and one change sends one op.
+The library covers navigation stacks, tabs, sheets, dialogs, every common
+input with two-way binding, canvas with a frame loop, async resources, and
+raw HTML through `h()`.
 
-Why not keep D14: re-running `view()` resends and re-diffs the whole tree on
-every change (23-26 ms for 1,000 rows). Positional callback ids are fragile.
-Controlled inputs need care to keep the caret. Signals are also easier to
+D14 re-ran `view()` and resent and re-diffed the whole tree on every change
+(23-26 ms for 1,000 rows). Its positional callback ids were fragile, and
+controlled inputs needed care to keep the caret. Signals are also easier to
 explain: "the lambda is what updates".
 
-Evidence, `uikit/` (desktop Chrome and Playwright WebKit on macOS, not iOS):
-0.1-0.23 ms per tap, 10-11 ms in Python for 1,000 rows, one op and about 1 ms
-to toggle one row of 1,000, 87 host tests plus 11 browser checks. To accept:
-run it in the app (WKWebView, simulator and device) and follow the
-integration steps in `uikit/README.md`.
+How it fits into the app:
+- It uses the worker's existing `_uihost.render`/`set_dispatcher`.
+- Every new renderer asks for a full snapshot (`resync`), so the app view can
+  mount late or be re-created after the debugger hid it (D23). The session
+  no longer replays messages.
+- The source of truth is `uikit/`; `uikit/scripts/install.sh` copies
+  `ui.py`, the renderer, the CSS and the todo example into `app/web`.
+- Files a UI app writes after its script returned are written back when the
+  app view closes (Done) or the app goes to the background. The worker
+  answers a `sync` message with the files changed since the last sync.
+- Examples in Documents are updated when the user hasn't edited them
+  (checked by hash), so the D14-era examples get replaced.
+
+Evidence: 88 host tests, plus 12 browser checks in desktop Chrome and
+Playwright WebKit (0.1-0.23 ms per tap, 10-11 ms in Python for 1,000 rows,
+one op and about 1 ms to toggle one row of 1,000). The `ui_app` and
+`ui_todo` app selftests pass in WKWebView in the iPhone 17 simulator. Not yet
+tried on a device.
+
+## Proposed (not yet decided)
+
+(none)
 
 ## Open questions
 

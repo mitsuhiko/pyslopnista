@@ -108,6 +108,61 @@ export async function selftest(pg, params) {
     return { rows: rows().map((r) => r.textContent) };
   });
 
+  await step("todoApp", async () => {
+    await pg.loadExample("Todo App");
+    const screen = () => visibleScreen();
+    const cards = await until(() => qa(".ui-card").length === 4 && qa(".ui-card"), "smart cards");
+    const cardCount = (i) => cards[i].querySelector(".ui-text-title2").textContent;
+    assert(cardCount(0) === "1" && cardCount(2) === "5", `today ${cardCount(0)}, all ${cardCount(2)}`);
+    // Open Groceries and add a to-do.
+    qa(".ui-row").find((r) => r.textContent.includes("Groceries")).querySelector(".ui-row-inner").click();
+    await until(() => screen()?.querySelector(".ui-screen-title")?.textContent === "Groceries", "groceries");
+    const input = screen().querySelector(".ui-textfield input");
+    type(input, "Bread");
+    enter(input);
+    const rows = () => [...screen().querySelectorAll(".ui-row")];
+    await until(() => rows().some((r) => r.textContent.includes("Bread")), "added Bread");
+    assert(cardCount(2) === "6", "all count follows");
+    // Check one off with the circle: it leaves the Open filter.
+    rows().find((r) => r.textContent.includes("Oat milk")).querySelector(".ui-row-check").click();
+    await until(() => !rows().some((r) => r.textContent.includes("Oat milk")), "checked off");
+    assert(cardCount(0) === "0", "today count updated");
+    // Open the detail screen of Bread, set a priority and move it to the Inbox.
+    rows().find((r) => r.textContent.includes("Bread")).querySelector(".ui-row-inner").click();
+    await until(() => screen()?.querySelector(".ui-navbar-title")?.textContent === "Bread", "detail");
+    const detail = screen();
+    const title = detail.querySelector(".ui-textfield input");
+    type(title, "Sourdough bread");
+    await until(() => detail.querySelector(".ui-navbar-title").textContent === "Sourdough bread", "renamed");
+    const [priority, list] = [...detail.querySelectorAll(".ui-select")];
+    priority.value = "3";
+    priority.dispatchEvent(new Event("change", { bubbles: true }));
+    list.value = "0";
+    list.dispatchEvent(new Event("change", { bubbles: true }));
+    detail.querySelector(".ui-navbar-back").click();
+    await until(() => qa(".ui-nav > .ui-screen").length === 2 && !rows().some((r) => r.textContent.includes("Sourdough")), "moved away");
+    screen().querySelector(".ui-navbar-back").click();
+    await until(() => qa(".ui-nav > .ui-screen").length === 1, "home");
+    const inbox = qa(".ui-row").find((r) => r.textContent.includes("Inbox"));
+    assert(inbox.querySelector(".ui-row-detail").textContent === "2", "inbox count");
+    // Search in All.
+    cards[2].click();
+    await until(() => screen()?.querySelector(".ui-screen-title")?.textContent === "All", "all");
+    type(screen().querySelector("input[type=search]"), "sour");
+    await until(() => rows().length === 1 && rows()[0].textContent.includes("!!!"), "search + priority");
+    screen().querySelector(".ui-navbar-back").click();
+    await until(() => qa(".ui-nav > .ui-screen").length === 1, "home again");
+    // Delete the Learning list (with confirm).
+    qa(".ui-row").find((r) => r.textContent.includes("Learning")).querySelector(".ui-row-delete").click();
+    (await until(() => byText(".ui-alert-button", "Delete"), "confirm")).click();
+    await until(() => !qa(".ui-row").some((r) => r.textContent.includes("Learning")), "list deleted");
+    // Saved after a quiet half second.
+    await sleep(800);
+    const saved = JSON.parse(await pg.py.eval("open('todos.json').read()"));
+    assert(saved.lists.length === 2 && saved.todos.some((t) => t.title === "Sourdough bread" && t.priority === 3 && t.list === 1), "saved");
+    return { todos: saved.todos.length };
+  });
+
   await step("bigList", async () => {
     let first = null;
     const firstRender = new Promise((r) => (nextRender = r));

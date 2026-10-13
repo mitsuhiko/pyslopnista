@@ -168,3 +168,13 @@ def test_runaway_effects_are_stopped(h):
         assert "keep triggering" in str(e)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_unwrap_tracks_deeply_inside_effects(h):
+    data = ui.store({"todos": [{"title": "a", "done": False}]})
+    saved = []
+    ui.effect(lambda: saved.append(ui.unwrap(data)))
+    data.todos[0].done = True
+    data.todos.append({"title": "b", "done": False})
+    assert [len(s["todos"]) for s in saved] == [1, 1, 2]
+    assert saved[1]["todos"][0]["done"] is True

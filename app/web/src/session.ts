@@ -3,7 +3,7 @@
 // subscribes via useSyncExternalStore. Output is batched per animation frame.
 import { base64ToBytes, basename, bytesToBase64, dirname, fs, haptic, join } from "./host";
 import { breakpoints } from "./debug/breakpoints";
-import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
+import { PyWorker, SIGNAL, WorkerPool, type ChangedFile, type Stream } from "./python";
 
 export type LineKind = Stream | "input" | "prompt" | "run";
 
@@ -109,7 +109,6 @@ export class Session {
   private stopRequested = false;
   private inputResolver: ((text: string | null) => void) | null = null;
   private uiListener: ((json: string | null) => void) | null = null;
-  private lastUI: string | null = null;
   private pendingOutput: { kind: LineKind; text: string; runId: number }[] = [];
   private flushScheduled = false;
   /** Called after a run wrote files back into the project. */
@@ -123,6 +122,12 @@ export class Session {
   constructor() {
     this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
     breakpoints.subscribe(() => this.syncBreakpoints());
+    // A UI app may be killed while in the background: save what it wrote.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && this.state.uiOpen && this.worker && !this.state.debug) {
+        void this.worker.syncFiles().then((changed) => this.writeBack(changed, this.workerDir));
+      }
+    });
   }
 
   subscribe = (fn: () => void) => {
@@ -252,7 +257,6 @@ export class Session {
         this.set({ awaitingInput: true });
       });
     worker.onUIRender = (json) => {
-      this.lastUI = json;
       this.set({ uiOpen: true });
       this.uiListener?.(json);
     };
@@ -423,15 +427,19 @@ export class Session {
     this.set({ status: "idle", awaitingInput: false, pausing: false });
     if (this.state.debug && !this.state.uiOpen) this.endDebug();
     if (status === "error" || status === "crashed") haptic();
-    if (result.changed?.length) {
-      const written: string[] = [];
-      for (const f of result.changed) {
-        const target = join(this.workerDir, f.path);
-        await fs.writeBase64(target, bytesToBase64(f.data));
-        written.push(target);
-      }
-      this.onFilesChanged(written);
+    await this.writeBack(result.changed ?? [], this.workerDir);
+  }
+
+  /** Write files the program created or changed back into the project. */
+  private async writeBack(changed: ChangedFile[], dir: string) {
+    if (!changed.length) return;
+    const written: string[] = [];
+    for (const f of changed) {
+      const target = join(dir, f.path);
+      await fs.writeBase64(target, bytesToBase64(f.data));
+      written.push(target);
     }
+    this.onFilesChanged(written);
   }
 
   /** Pyodide prints the KeyboardInterrupt traceback when input() is interrupted; a stop is not an error. */
@@ -469,21 +477,20 @@ export class Session {
     }
   }
 
-  private closeWorker() {
-    if (this.worker && !this.worker.dead) this.worker.terminate("closed");
+  private closeWorker(keepAlive = false) {
+    if (this.worker && !this.worker.dead && !keepAlive) this.worker.terminate("closed");
     this.endDebug();
     this.worker = null;
-    this.lastUI = null;
     this.set({ uiOpen: false, awaitingInput: false });
     this.uiListener?.(null);
   }
 
   // -- UI apps ------------------------------------------------------------------------
 
-  /** The UI view registers here; it gets the latest tree right away. */
+  /** The UI view registers here. Its renderer asks the program for a full
+   * snapshot itself, so nothing needs replaying. */
   attachUI(fn: (json: string | null) => void) {
     this.uiListener = fn;
-    if (this.lastUI) fn(this.lastUI);
     return () => {
       if (this.uiListener === fn) this.uiListener = null;
     };
@@ -497,7 +504,19 @@ export class Session {
     // Closing the app view ends the program, like Pythonista's close button.
     this.stopRequested = true;
     if (this.state.runs[this.currentRun]?.status === "running") this.endRun("stopped");
-    this.closeWorker();
+    const worker = this.worker;
+    if (!worker || worker.dead || worker.running || this.state.debug) {
+      this.closeWorker();
+      return;
+    }
+    // Close the view right away, but let the program hand over the files it
+    // wrote after its script returned (e.g. saved data) before it is killed.
+    const dir = this.workerDir;
+    this.closeWorker(true);
+    void worker
+      .syncFiles()
+      .then((changed) => this.writeBack(changed, dir))
+      .finally(() => worker.terminate("closed"));
   }
 }
 

@@ -8,10 +8,10 @@ app, a thin Swift host and a pi-durable coding agent. Early research phase.
 - `app/`: the real app (see `app/README.md`). Build and test with `app/run.sh`
   (`--selftest`, `--device`). Keep `./run.sh --selftest` passing.
 
-- `uikit/`: the `ui` module (P1, Solid-style signals), built in isolation from `app/`:
-  `python/ui.py`, `web/renderer.js`, `web/ui.css`, examples and a playground. Test
-  with `uikit/run.sh --selftest` (host pytest + headless Chrome). Integration steps
-  are in `uikit/README.md`.
+- `uikit/`: the `ui` module (D26, Solid-style signals): `python/ui.py`,
+  `web/renderer.js`, `web/ui.css`, examples and a playground. Edit it there,
+  then run `uikit/scripts/install.sh` to copy it into `app/web`. Test with
+  `uikit/run.sh --selftest` (host pytest + headless Chrome).
 
 - `GOALS.md`: the feature set, tagged [core]/[later]/[maybe]. Update it when scope changes.
 - `DECISIONS.md`: decisions D<n> (append-only), proposals P<n>, open questions Q<n>.
@@ -22,7 +22,7 @@ app, a thin Swift host and a pi-durable coding agent. Early research phase.
 
 ## Current work
 
-App (`app/`): IDE with files, editor, run, console, UI apps, ruff + ty,
+App (`app/`): IDE with files, editor, run, console, UI apps (D26, `uikit/`), ruff + ty,
 PEP 723 dependencies, visual debugger (D23), tabs and split view with
 traceback links and go to definition (D24), outline / go to line / find in
 folder / show info / settings / keyboard shortcuts, HTTP through the host (D25). Next: hands-on device feedback, then the gaps in

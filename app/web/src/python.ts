@@ -24,8 +24,10 @@ export interface RunResult {
   error?: string;
   ms: number;
   killed?: boolean;
-  changed?: { path: string; data: Uint8Array }[];
+  changed?: ChangedFile[];
 }
+
+export type ChangedFile = { path: string; data: Uint8Array };
 
 export interface WorkerInfo {
   bootMs: number;
@@ -108,6 +110,10 @@ export class PyWorker {
       case "done":
         this.finish(msg);
         break;
+      case "synced":
+        this.syncs.get(msg.id)?.(msg.changed);
+        this.syncs.delete(msg.id);
+        break;
       case "worker-error": {
         // The interpreter is unusable afterwards; only report it as a crash
         // while something is running (a late error must not rewrite a run).
@@ -169,6 +175,27 @@ export class PyWorker {
     Atomics.store(this.interrupt, 0, signal);
     Atomics.notify(this.interrupt, 0);
     return true;
+  }
+
+  private syncs = new Map<number, (changed: ChangedFile[]) => void>();
+  private nextSync = 0;
+
+  /** Files the program created or changed since the last sync or run end
+   * (UI apps keep running after their script returned). Empty on timeout. */
+  syncFiles(timeoutMs = 1000): Promise<ChangedFile[]> {
+    if (this.dead) return Promise.resolve([]);
+    const id = this.nextSync++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.syncs.delete(id);
+        resolve([]);
+      }, timeoutMs);
+      this.syncs.set(id, (changed) => {
+        clearTimeout(timer);
+        resolve(changed);
+      });
+      this.worker.postMessage({ type: "sync", id });
+    });
   }
 
   sendUIEvent(id: string, args: string) {

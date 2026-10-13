@@ -335,7 +335,8 @@ button.nav-subtitle.problems { display: inline-flex; align-items: center; gap: 3
 /* -- ui apps -- */
 .ui-app { position: fixed; inset: 0; z-index: 50; background: var(--grouped-bg); animation: rise 0.38s var(--ease); }
 @keyframes rise { from { transform: translateY(100%); } }
-.ui-app-content { position: absolute; inset: 0; overflow-y: auto; padding-top: env(safe-area-inset-top); }
+/* The ui renderer handles scrolling and safe areas itself; nav bar buttons keep clear of Done. */
+.ui-app-content { position: absolute; inset: 0; --ui-host-inset-right: 76px; }
 .ui-app-close {
   position: fixed; top: calc(env(safe-area-inset-top) + 8px); right: 12px; z-index: 51; height: 36px; padding: 0 16px; border-radius: 18px;
   color: var(--tint); font-weight: 600; background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);

@@ -212,8 +212,12 @@ export class UIRenderer {
         return;
     }
     const b = BUILDERS[el.__t];
-    if (k.startsWith("on_") && b?.listen) {
-      b.listen(el, k.slice(3), this);
+    if (k.startsWith("on_")) {
+      // Events a builder doesn't emit itself become plain DOM listeners, so
+      // on_click works on a Card, an Image or a stack.
+      const event = k.slice(3);
+      if (v && !b?.emits?.includes(event) && el.addEventListener) listen(el, event, this);
+      b?.set?.(el, k, v, old, this);
       return;
     }
     if (k === "disabled" && !b?.handlesDisabled) {
@@ -347,7 +351,7 @@ const ICONS = {
   stop: "M6 6h12v12H6z",
   "arrow.clockwise": "M20 12a8 8 0 11-2.3-5.7M20 4v5h-5",
   share: "M12 3v12M8 7l4-4 4 4M5 11v9h14v-9",
-  ellipsis: "M5 12h.01M12 12h.01M19 12h.01",
+  ellipsis: "M7 12a1.6 1.6 0 1 1-3.2 0 1.6 1.6 0 0 1 3.2 0zM13.6 12a1.6 1.6 0 1 1-3.2 0 1.6 1.6 0 0 1 3.2 0zM20.2 12a1.6 1.6 0 1 1-3.2 0 1.6 1.6 0 0 1 3.2 0z",
   list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
   circle: "M12 21a9 9 0 100-18 9 9 0 000 18z",
   "checkmark.circle": "M12 21a9 9 0 100-18 9 9 0 000 18zM8 12.5l3 3 5-6",
@@ -365,6 +369,7 @@ const ICONS = {
   flag: "M5 21V4M5 4h12l-2 4 2 4H5",
   bookmark: "M6 3h12v18l-6-4-6 4z",
 };
+const ALWAYS_FILLED = new Set(["ellipsis"]);
 const ICON_ALIASES = { gearshape: "gear", "square.and.arrow.up": "share", search: "magnifyingglass", "info.circle": "info", x: "xmark", check: "checkmark" };
 
 function icon(name, size) {
@@ -388,7 +393,7 @@ function icon(name, size) {
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(SVG_NS, "path");
   path.setAttribute("d", d);
-  if (fill) path.setAttribute("fill", "currentColor");
+  if (fill || ALWAYS_FILLED.has(key)) path.setAttribute("fill", "currentColor");
   svg.append(path);
   span.append(svg);
   return span;
@@ -420,6 +425,17 @@ function eventPayload(e) {
     Object.assign(out, { x: e.clientX - rect.left, y: e.clientY - rect.top, width: rect.width, height: rect.height });
   }
   return out;
+}
+
+function listen(el, event, r) {
+  el.__events ??= new Set();
+  if (el.__events.has(event)) return;
+  el.__events.add(event);
+  if (event === "click" && el.__t !== "h") (el.__style ?? el).classList.add("ui-tappable");
+  el.addEventListener(event, (e) => {
+    if (event === "submit") e.preventDefault();
+    r.emit(el, event, eventPayload(e));
+  });
 }
 
 function fieldRow(cls, input) {
@@ -460,6 +476,7 @@ function textInput(r, el, input, submit) {
 
 const BUILDERS = {
   "#text": {
+    emits: ["click"],
     create: () => document.createTextNode(""),
     set(el, k, v) {
       if (k === "text" && el.data !== v) el.data = v ?? "";
@@ -524,6 +541,7 @@ const BUILDERS = {
   // -- navigation --
 
   Screen: {
+    emits: ["back"],
     create(r) {
       const el = h("div", "ui-screen");
       el.__bar = h("div", "ui-navbar");
@@ -575,6 +593,7 @@ const BUILDERS = {
   Toolbar: { create: () => h("div", "ui-toolbar") },
 
   NavigationStack: {
+    emits: [],
     create(r) {
       const el = h("div", "ui-nav");
       // Swipe from the left edge to go back.
@@ -637,6 +656,7 @@ const BUILDERS = {
   },
 
   TabView: {
+    emits: ["change"],
     create(r) {
       const el = h("div", "ui-tabview");
       el.__host = h("div", "ui-tabs-content");
@@ -683,6 +703,7 @@ const BUILDERS = {
   },
 
   Sheet: {
+    emits: ["dismiss"],
     create(r) {
       const el = h("div", "ui-sheet-anchor");
       el.hidden = true;
@@ -781,6 +802,7 @@ const BUILDERS = {
   },
 
   Row: {
+    emits: ["click", "check", "delete"],
     create(r) {
       const el = h("div", "ui-row");
       const inner = (el.__inner = h("div", "ui-row-inner"));
@@ -810,8 +832,8 @@ const BUILDERS = {
           BUILDERS.Row.reveal(el, false);
           return;
         }
-        if (el.__p.on_click) r.emit(el, "click");
-        else if (e.target === el.__check && el.__p.checked != null) r.emit(el, "click");
+        if (e.target === el.__check && el.__p.on_check) r.emit(el, "check");
+        else if (el.__p.on_click) r.emit(el, "click");
       });
       horizontalDrag(inner, {
         start: () => !!el.__p.on_delete,
@@ -870,6 +892,9 @@ const BUILDERS = {
           break;
         case "on_click":
           el.classList.toggle("ui-row-tappable", !!v);
+          break;
+        case "on_check":
+          el.__check.classList.toggle("ui-row-check-tappable", !!v);
           break;
         case "on_delete":
           el.__delete.hidden = !v;
@@ -956,6 +981,7 @@ const BUILDERS = {
     },
   },
   Canvas: {
+    emits: ["frame", "pointer_down", "pointer_move", "pointer_up"],
     create(r) {
       const el = h("canvas", "ui-canvas");
       el.__ctx = el.getContext("2d");
@@ -1075,20 +1101,12 @@ const BUILDERS = {
       const tag = tree.p?.tag ?? "div";
       return SVG_TAGS.has(tag) ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
     },
-    listen(el, event, r) {
-      el.__events ??= new Set();
-      if (el.__events.has(event)) return;
-      el.__events.add(event);
-      el.addEventListener(event, (e) => {
-        if (event === "submit") e.preventDefault();
-        r.emit(el, event, eventPayload(e));
-      });
-    },
   },
 
   // -- inputs --
 
   Button: {
+    emits: ["click"],
     create(r) {
       const el = h("button", "ui-button ui-button-filled");
       el.type = "button";
@@ -1113,6 +1131,7 @@ const BUILDERS = {
   },
 
   TextField: {
+    emits: ["change", "submit"],
     create(r) {
       const input = h("input", "ui-input");
       const el = fieldRow("ui-textfield", input);
@@ -1135,6 +1154,7 @@ const BUILDERS = {
     },
   },
   TextArea: {
+    emits: ["change"],
     create(r) {
       const input = h("textarea", "ui-input ui-textarea-input");
       const el = h("div", "ui-textarea");
@@ -1152,6 +1172,7 @@ const BUILDERS = {
     },
   },
   Toggle: {
+    emits: ["change"],
     create(r) {
       const el = h("label", "ui-toggle");
       el.__labelEl = h("span", "ui-toggle-label");
@@ -1168,6 +1189,7 @@ const BUILDERS = {
     },
   },
   Slider: {
+    emits: ["change"],
     create(r) {
       const input = h("input", "ui-slider");
       input.type = "range";
@@ -1196,6 +1218,7 @@ const BUILDERS = {
     },
   },
   Stepper: {
+    emits: ["change"],
     create(r) {
       const el = h("div", "ui-stepper");
       el.__labelEl = h("span", "ui-stepper-label");
@@ -1223,6 +1246,7 @@ const BUILDERS = {
     },
   },
   Picker: {
+    emits: ["change"],
     create(r) {
       const el = h("div", "ui-picker ui-picker-segmented");
       el.__labelEl = h("span", "ui-field-label");
@@ -1283,6 +1307,7 @@ const BUILDERS = {
     },
   },
   DatePicker: {
+    emits: ["change"],
     create(r) {
       const input = h("input", "ui-date");
       input.type = "date";
@@ -1298,6 +1323,7 @@ const BUILDERS = {
     },
   },
   ColorPicker: {
+    emits: ["change"],
     create(r) {
       const input = h("input", "ui-color");
       input.type = "color";

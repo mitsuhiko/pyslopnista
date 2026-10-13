@@ -501,11 +501,13 @@ def _wrap(value):
 
 
 def unwrap(value):
-    """Turn store data back into plain dicts and lists (e.g. for json.dumps)."""
+    """Turn store data back into plain dicts and lists (e.g. for json.dumps).
+    Inside an effect it reads everything, so the effect re-runs on any change:
+    ``ui.effect(lambda: save(ui.unwrap(data)))``."""
     if isinstance(value, ReactiveDict):
-        return {k: unwrap(v) for k, v in value._data.items()}
+        return {k: unwrap(value[k]) for k in value}
     if isinstance(value, ReactiveList):
-        return [unwrap(v) for v in value._items]
+        return [unwrap(v) for v in value]
     if isinstance(value, dict):
         return {k: unwrap(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -1960,14 +1962,17 @@ def Section(*children: Child, header: Reactive[str] | None = None, footer: React
 def Row(title: Reactive[str] | None = None, *children: Child, subtitle: Reactive[str] | None = None,
         detail: Reactive[Any] = None, icon: Reactive[str] | None = None,
         accessory: Reactive[str] | None = None, checked: Reactive[bool] | None = None,
-        on_click: Handler | None = None, on_delete: Handler | None = None, **mods) -> Element:
+        on_click: Handler | None = None, on_check: Handler | None = None,
+        on_delete: Handler | None = None, **mods) -> Element:
     """A list row for use in a Section. ``accessory``: chevron, check, info.
-    ``checked`` shows a round check box. ``on_delete`` enables swipe to delete."""
+    ``checked`` shows a round check box; tapping it calls ``on_check`` (or
+    ``on_click``). ``on_delete`` enables swipe to delete."""
     if isinstance(title, (Element, _Region)):
         children = (title, *children)
         title = None
     return _el("Row", children, title=title, subtitle=subtitle, detail=detail, icon=icon,
-               accessory=accessory, checked=checked, on_click=on_click, on_delete=on_delete, **mods)
+               accessory=accessory, checked=checked, on_click=on_click, on_check=on_check,
+               on_delete=on_delete, **mods)
 
 
 # -- content -----------------------------------------------------------------------

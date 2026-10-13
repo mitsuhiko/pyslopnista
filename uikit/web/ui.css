@@ -74,6 +74,8 @@
 .ui-root button { font: inherit; color: inherit; letter-spacing: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; }
 .ui-root button:disabled { cursor: default; }
 .ui-disabled { opacity: 0.4; pointer-events: none; }
+.ui-tappable { cursor: pointer; transition: opacity 0.15s, transform 0.15s; }
+.ui-tappable:active { opacity: 0.7; transform: scale(0.98); }
 
 /* Plain content (no Screen) scrolls in the root with safe-area padding. */
 .ui-content {
@@ -206,7 +208,9 @@
 .ui-root .ui-section-body > .ui-button-destructive { color: var(--red); }
 .ui-root .ui-section-body > .ui-button:active { background: var(--fill); opacity: 1; }
 .ui-root .ui-section-body > .ui-button:disabled { color: var(--tertiary); opacity: 1; }
-.ui-section-body > .ui-textfield .ui-input, .ui-section-body > .ui-textarea .ui-input { background: none; padding: 0; border-radius: 0; }
+.ui-section-body .ui-textfield .ui-input, .ui-section-body .ui-textarea .ui-input { background: none; padding: 0; border-radius: 0; }
+.ui-section-body .ui-textfield .ui-input { min-height: 22px; }
+.ui-section-body > :not(.ui-textfield) .ui-textfield { min-height: 0; }
 .ui-section-body > .ui-textfield, .ui-section-body > .ui-textarea { padding-top: 0; padding-bottom: 0; }
 .ui-section-body > .ui-textarea .ui-input { padding: 11px 0; }
 .ui-section-body > .ui-picker-segmented { padding: 8px 16px; }
@@ -218,6 +222,8 @@
 .ui-row-tappable > .ui-row-inner:active { background: color-mix(in srgb, var(--cell), var(--label) 8%); }
 .ui-row-check { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--tertiary); position: relative; transition: background 0.15s, border-color 0.15s; }
 .ui-row-check.checked { background: var(--tint); border-color: var(--tint); }
+.ui-row-check-tappable { cursor: pointer; }
+.ui-row-check-tappable::before { content: ""; position: absolute; inset: -11px -12px -11px -16px; }
 .ui-row-check.checked::after { content: ""; position: absolute; left: 6.5px; top: 3px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .ui-row-icon { --icon-size: 22px; color: var(--tint); flex: none; }
 .ui-row-text { flex: 1; min-width: 0; }

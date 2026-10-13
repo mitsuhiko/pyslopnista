@@ -1,9 +1,9 @@
 # uikit: the `ui` module, Solid-style
 
-2026-10-13. A standard library for building UI apps in Python, built in
-isolation from `app/` so it can be dropped in later. It replaces the D14
-re-render model with fine-grained reactivity in the style of SolidJS.
-Proposal P1 in `DECISIONS.md`.
+2026-10-13. The standard library for building UI apps in Python: fine-grained
+reactivity in the style of SolidJS, replacing D14's re-render model (D26).
+This folder is the source of truth; `scripts/install.sh` copies it into the
+app.
 
 ```python
 import ui
@@ -49,7 +49,8 @@ purpose without the hint.
 | Drawing | `Canvas(draw, width=, height=, on_frame=, on_pointer_down/move/up=)`: the browser's canvas 2D API in snake_case, redrawn when signals change. `on_frame(dt)` is a game loop |
 | Escape hatches | `h(tag, *children, **attrs)` for any HTML/SVG element and any DOM event (`on_keydown=lambda e: e.key`), `Html`, `css`, `Element.focus()` |
 
-Every element also takes layout and style keywords, static or live: `padding`,
+Every element accepts `on_<event>` for any DOM event it doesn't handle itself
+(e.g. `on_click` on a `Card`). Every element also takes layout and style keywords, static or live: `padding`,
 `margin`, `width`, `height`, `min_*`/`max_*`, `flex`, `background`, `color`,
 `font_size`, `font_weight`, `text_align`, `corner_radius`, `border`,
 `opacity`, `shadow`, `hidden`, `disabled`, `style={...}`, `class_`,
@@ -60,7 +61,9 @@ Event handlers can take the event value or nothing (`lambda: ...` or
 inside the component that created them, so `ui.navigation()` works there.
 
 See `examples/`: Counter, Todos (store, For, filters, swipe to delete,
-confirm), Navigation (push, sheet, prompt, toast, `bind`), Settings (every
+confirm), Todo App (the complete Reminders-style app shipped in the app:
+smart lists, search, sorting, due dates, priorities, notes, autosave to
+`todos.json`), Navigation (push, sheet, prompt, toast, `bind`), Settings (every
 input), Tabs (tabs, a stack per tab, badge, a stopwatch whose interval belongs
 to an effect), Paint (pointer events), Bounce (game loop), Escape Hatches
 (`h`, `css`, `resource`, SVG), Plot (live matplotlib).
@@ -101,8 +104,8 @@ existing two `_uihost` functions are used.
 
 ```sh
 ./run.sh               # playground: http://127.0.0.1:18770/playground/ (examples, editor, phone frame)
-./run.sh --test        # 87 Python tests on the host (fake DOM applies the op stream like renderer.js)
-./run.sh --selftest    # tests + 11 browser checks in headless Chrome, JSON (ONLY=<step>, OFFLINE=1)
+./run.sh --test        # 88 Python tests on the host (fake DOM applies the op stream like renderer.js)
+./run.sh --selftest    # tests + 12 browser checks in headless Chrome, JSON (ONLY=<step>, OFFLINE=1)
 uv run scripts/selftest_webkit.py "http://127.0.0.1:18770/playground/#selftest"   # same checks in Playwright WebKit
 ```
 
@@ -113,7 +116,9 @@ The playground uses Pyodide 314.0.7 from `app/vendor/` with a minimal worker
 ## Results (2026-10-13)
 
 Tested in headless Chrome 155 and Playwright WebKit (Safari 26.6 engine), both
-on macOS. **Not tested in the iOS simulator, in WKWebView or on a device.**
+on macOS. In the app, the `ui_app` and `ui_todo` selftests pass in WKWebView
+(iPhone 17 simulator, iOS 27). The timings below are not from iOS, and
+nothing was run on a device.
 
 | Check | Chrome | WebKit (macOS) |
 |---|---|---|
@@ -123,36 +128,33 @@ on macOS. **Not tested in the iOS simulator, in WKWebView or on a device.**
 | Toggle one row of 1,000 | 1 op, 0.2 ms | 1 op, 1 ms (median of 7) |
 | Reverse 1,000 rows (999 moves, nodes reused) | 3 ms | 31-34 ms |
 | Canvas game loop (`on_frame`, 8+ balls) | 60 fps | 60 fps |
+| Todo App walkthrough (lists, add, check off, detail edit, move, search, delete list, saved JSON) | pass | pass |
 | Todos, navigation/sheet/dialogs/edge swipe, every input, tabs/badge/stopwatch, paint, `h()`/SVG/resource, resync of a second renderer, handler errors + hint, live matplotlib | pass | pass |
 
 Earlier D14 numbers for comparison: 0.24 ms per tap and 23-26 ms for
 re-rendering 1,000 rows, since the whole tree was resent and diffed on every
 change.
 
-## Integrating into the app (not done; `app/` is untouched)
+## In the app
 
-1. Copy `python/ui.py` to `app/web/public/runtime/python/ui.py`,
-   `web/renderer.js` to `app/web/src/uiRenderer.js`, and `web/ui.css` to
-   `app/web/src/ui-toolkit.css`. The worker, `python.ts` and the ty stub
-   loading need no changes.
-2. `UIAppView`: give the renderer a full-size element with no padding and no
-   scrolling of its own (the renderer handles scrolling and safe areas), and
-   set `--ui-host-inset-right` on it so nav bar buttons stay clear of the Done
-   button.
-3. `session.ts`: the `lastUI` replay can go. A new renderer resyncs by itself,
-   and replaying one op message into an empty renderer is harmless but
-   pointless.
-4. Port `Examples/Counter App.py` and `Todo App.py` to the new API (or copy
-   `examples/`). `ui.state()` and the `view()` re-render style are gone on
-   purpose.
-5. Run the app selftest; the UI step looks for `.ui-button` "+1" and
-   `.ui-text-largeTitle`.
+`scripts/install.sh` copies `python/ui.py`, `web/renderer.js`, `web/ui.css`
+and `examples/Todo App.py` into `app/web`. The app's copies are generated:
+edit them here. The app side:
+- `UIAppView` gives the renderer a full-size root. It sets
+  `--ui-host-inset-right` so nav bar buttons stay clear of the Done button.
+- The session no longer replays messages, because each renderer resyncs.
+- Files written after the script returned are synced back on Done and when
+  the app goes to the background (`sync` message, D26).
+- `examples.ts` updates seeded examples the user hasn't edited (by hash).
+- App selftests: `ui_app` (Counter App) and `ui_todo` (Todo App: open the
+  Inbox, type a to-do, go back, Done, check `todos.json` in Documents). Both
+  pass in WKWebView in the iPhone 17 simulator.
 
 ## Not covered yet
 
-- Real iOS: WKWebView, touch gestures on glass, the software keyboard with
-  text fields, IME composition (handled on `compositionend`, not tried),
-  safe areas on a device.
+- On a device: touch gestures (edge swipe, swipe to delete), the software
+  keyboard with text fields, IME composition (handled on `compositionend`,
+  not tried), safe areas.
 - Long lists are not virtualized (1,000 rows are fine; 10,000 not measured).
 - Canvas resends the whole command list on each redraw. Transferring an
   OffscreenCanvas to the worker is the upgrade path for heavy drawing.

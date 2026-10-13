@@ -78,6 +78,7 @@ let nextCallId = 0;
 const pendingCalls = new Map();
 let uiDispatcher = null;
 let manifest = new Map(); // path -> mtime of files synced into the project dir
+let runCwd = null; // the program's working directory, for later write-backs
 
 function syncCall(op, value) {
   if (!syncChannel) throw new Error(`blocking call '${op}' needs cross-origin isolation`);
@@ -225,6 +226,7 @@ async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) 
   const t0 = performance.now();
   try {
     if (files && cwd) syncIn(cwd, files);
+    if (cwd && !repl) runCwd = cwd;
     if (cwd) {
       py.FS.mkdirTree(cwd);
       py.FS.chdir(cwd);
@@ -310,6 +312,10 @@ onmessage = async (e) => {
       break;
     case "ui-event":
       if (uiDispatcher) uiDispatcher(msg.id, msg.args);
+      break;
+    case "sync":
+      // Files a UI app wrote after its script returned (e.g. saved data).
+      postMessage({ type: "synced", id: msg.id, changed: runCwd ? changedFiles(runCwd) : [] });
       break;
     case "call-reply": {
       const pending = pendingCalls.get(msg.id);

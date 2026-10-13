@@ -152,6 +152,35 @@ export async function selftest(app: AppController) {
     await until(() => !session.getSnapshot().uiOpen);
   });
 
+  await step("ui_todo", async () => {
+    // The full example: navigation, a text field, and saving after the script
+    // returned (written back when the app view closes).
+    if (await fs.exists("Examples/todos.json")) await fs.remove("Examples/todos.json");
+    await runFile("Examples/Todo App.py");
+    const q = (sel: string) => [...document.querySelectorAll<HTMLElement>(sel)];
+    const inbox = await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox")));
+    inbox.querySelector<HTMLElement>(".ui-row-inner")!.click();
+    const top = () => q(".ui-nav > .ui-screen").at(-1)!;
+    await until(() => q(".ui-nav > .ui-screen").length === 2 && top().querySelector(".ui-screen-title")?.textContent === "Inbox");
+    const input = top().querySelector<HTMLInputElement>(".ui-textfield input")!;
+    input.value = "Selftest to-do";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await until(() => [...top().querySelectorAll(".ui-row")].some((r) => r.textContent?.includes("Selftest to-do")));
+    top().querySelector<HTMLElement>(".ui-navbar-back")!.click();
+    await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox"))?.querySelector(".ui-row-detail")?.textContent === "2");
+    await sleep(700); // the app saves after half a second of quiet
+    (document.querySelector(".ui-app-close") as HTMLButtonElement).click();
+    await until(() => !session.getSnapshot().uiOpen);
+    let saved: { todos: { title: string }[] } | null = null;
+    for (let i = 0; i < 50 && !saved; i++) {
+      if (await fs.exists("Examples/todos.json")) saved = JSON.parse(await fs.readText("Examples/todos.json"));
+      else await sleep(100);
+    }
+    if (!saved?.todos.some((t) => t.title === "Selftest to-do")) throw new Error(`not saved: ${JSON.stringify(saved)?.slice(0, 200)}`);
+    await fs.remove("Examples/todos.json");
+  });
+
   await step("crash_recovery", async () => {
     await fs.writeText("Tests/deep.py", "x = []\nfor _ in range(50000): x = [x]\nprint(len(repr(x)))\n");
     await runFile("Tests/deep.py");

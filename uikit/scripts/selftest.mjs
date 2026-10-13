@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 const url = process.argv[2];
 const timeout = Number(process.argv[3] ?? 180) * 1000;
+const prefix = process.env.PREFIX ?? "SELFTEST "; // console line that carries the JSON
 const chrome = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const profile = mkdtempSync(join(tmpdir(), "uikit-chrome-"));
 const port = 9300 + Math.floor(Math.random() * 500);
@@ -53,7 +54,7 @@ try {
       }
       if (msg.method === "Runtime.consoleAPICalled") {
         const text = msg.params.args.map((a) => a.value ?? a.description ?? "").join(" ");
-        if (text.startsWith("SELFTEST ")) resolve(text.slice(9));
+        if (text.startsWith(prefix)) resolve(text.slice(prefix.length));
         else if (process.env.VERBOSE) console.error(`[${msg.params.type}]`, text);
       }
       if (msg.method === "Runtime.exceptionThrown") console.error("page error:", msg.params.exceptionDetails?.exception?.description);

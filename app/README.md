@@ -92,8 +92,13 @@ iPad. Swift host + web app (D4), Python in Pyodide workers (D2, D6).
   - `breakpoint()` works too.
   - After an error, Inspect opens the same view on the failing line.
   - Breakpoints cost nothing while they are not hit.
-- **UI apps**: programs using `import ui` (D14) open full screen; "Done" ends
-  the program.
+- **UI apps**: programs using `import ui` open full screen; "Done" ends
+  the program. The module is Solid-style (D26): components run once, and
+  signals and lambdas update exactly what changed. It includes navigation,
+  tabs, sheets, dialogs, lists, all common inputs and a canvas (see
+  `uikit/README.md`). Files the app writes while it runs (e.g. saved data)
+  are written back when it closes. `Examples/Todo App.py` is a complete
+  Reminders-style app that saves to `todos.json`.
 - **Crashes**: a native stack overflow ends the run with "Python crashed" and
   the next run gets a fresh interpreter (D16).
 - **Layouts**: on iPhone, Files → Code/Console; on iPad, a sidebar with the
@@ -113,7 +118,7 @@ app/
     Sources/FileStore.swift    Documents-backed file operations
     copy-web.sh                build phase: web/dist + Pyodide into the bundle
   web/                    React + Vite + TypeScript (D18)
-    public/runtime/       py-worker.js, sab-polyfill.js, python/_pyslop.py, python/ui.py,
+    public/runtime/       py-worker.js, sab-polyfill.js, python/_pyslop.py, python/ui.py (from uikit/),
                           python/_pyslop_debug.py (debugger)
     public/examples/      seeded into Documents/Examples
     src/                  App, Editor (CodeMirror), KeyBar, Console, FileBrowser,
@@ -143,7 +148,8 @@ cd web && npm run dev                     # desktop browser; files in localStora
 simulators (2026-10-13). An earlier set of 19 also passed on the iPhone 14 Pro
 (`--device`). The checks are: examples seeded, edit → autosave → run,
 `input()`, traceback cleanup, `>>>` console, file write-back, sibling
-imports, inline plot, Stop, UI app, crash recovery, ruff/ty startup,
+imports, inline plot, Stop, UI app, todo app (navigation, typing, saving
+after the script returned), crash recovery, ruff/ty startup,
 diagnostics (F401, invalid-argument-type, unresolved-reference), completions,
 formatting, Pyodide imports not flagged, add-dependency quick fix + install
 from PyPI, cached rerun, requires-python, debugger (breakpoint → evaluate →
@@ -159,8 +165,6 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
 
 ## Known gaps
 
-- Run results from UI apps that write files after the script returns are not
-  written back.
 - iPadOS does not list our shortcuts in the ⌘-hold overlay (they are handled
   in the web view, not as UIKeyCommands).
 - HTTP is request/response only: no WebSockets or raw sockets; responses are
