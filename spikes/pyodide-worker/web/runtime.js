@@ -1,29 +1,48 @@
 // Page-side controller for Python workers: a warm pool, output streaming,
-// stdin, interrupt, and relaying host calls to Swift.
+// stdin, interrupt, relaying host calls to Swift, and UI messages.
 
 const encoder = new TextEncoder();
 const CHANNEL_BYTES = 8 + 1024 * 1024;
 
 // Inside the app the bridge is a WKScriptMessageHandlerWithReply; in a plain
-// browser (dev-server.py) it falls back to POST /__bridge.
+// browser (dev-server.py) it falls back to POST /__bridge; on a static host
+// there is no bridge at all.
 export const bridge = window.webkit?.messageHandlers?.bridge
   ? (op, value) => window.webkit.messageHandlers.bridge.postMessage({ op, value })
   : async (op, value) => {
       const res = await fetch("/__bridge", { method: "POST", body: JSON.stringify({ op, value }) });
+      if (!res.ok) throw new Error(`bridge unavailable (${res.status})`);
       const reply = await res.json();
       if (reply.error) throw new Error(reply.error);
       return reply.value;
     };
 
+/** Options default to the in-app setup; query parameters jspi=1 / gc=1 toggle JSPI. */
+export function defaultOptions() {
+  const params = new URLSearchParams(location.search);
+  return {
+    indexURL: new URL("/pyodide/", location.href).href,
+    packageBaseUrl: new URL("/pkgs/", location.href).href,
+    jspi: params.get("jspi") === "1",
+    gcTrampoline: params.get("gc") === "1",
+    files: {},
+  };
+}
+
 export class PyWorker {
-  constructor() {
+  constructor(options = defaultOptions()) {
     this.createdAt = performance.now();
-    this.worker = new Worker("py-worker.js", { type: "module" });
-    this.interrupt = new Int32Array(new SharedArrayBuffer(4));
-    this.channel = new SharedArrayBuffer(CHANNEL_BYTES);
+    this.worker = new Worker(new URL("py-worker.js", import.meta.url), { type: "module" });
+    // Blocking calls (stdin, interrupt, host.call_sync) need SharedArrayBuffer,
+    // which needs cross-origin isolation. Published apps on plain static hosts
+    // run without it.
+    this.isolated = self.crossOriginIsolated && typeof SharedArrayBuffer === "function";
+    this.interrupt = this.isolated ? new Int32Array(new SharedArrayBuffer(4)) : null;
+    this.channel = this.isolated ? new SharedArrayBuffer(CHANNEL_BYTES) : null;
     this.syncPending = false;
     this.onOutput = () => {};
     this.onInput = async () => null; // (prompt) => string | null
+    this.onUIRender = () => {};
     this.current = null;
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
@@ -31,10 +50,12 @@ export class PyWorker {
     });
     this.worker.onmessage = (e) => this.handle(e.data);
     this.worker.onerror = (e) => this.rejectReady(new Error(e.message));
-    const params = new URLSearchParams(location.search);
-    const jspi = params.get("jspi") === "1";
-    const gcTrampoline = params.get("gc") === "1";
-    this.worker.postMessage({ type: "boot", interrupt: this.interrupt.buffer, channel: this.channel, jspi, gcTrampoline });
+    this.worker.postMessage({
+      type: "boot",
+      interrupt: this.interrupt?.buffer ?? null,
+      channel: this.channel,
+      ...options,
+    });
   }
 
   handle(msg) {
@@ -49,6 +70,9 @@ export class PyWorker {
       case "output":
         this.onOutput(msg.stream, msg.text);
         break;
+      case "ui-render":
+        this.onUIRender(msg.tree);
+        break;
       case "call":
         this.handleCall(msg);
         break;
@@ -56,6 +80,10 @@ export class PyWorker {
         this.finish(msg);
         break;
     }
+  }
+
+  sendUIEvent(id, args) {
+    this.worker.postMessage({ type: "ui-event", id, args });
   }
 
   async handleCall(msg) {
@@ -89,7 +117,7 @@ export class PyWorker {
 
   run(code, filename = "main.py") {
     if (this.current) throw new Error("already running");
-    Atomics.store(this.interrupt, 0, 0);
+    if (this.interrupt) Atomics.store(this.interrupt, 0, 0);
     return new Promise((resolve) => {
       this.current = resolve;
       this.worker.postMessage({ type: "run", code, filename });
@@ -107,10 +135,15 @@ export class PyWorker {
    * Raise KeyboardInterrupt in the running code (also wakes a blocked stdin or
    * sleep). The interrupt is re-asserted until the run ends, because Pyodide
    * may clear it if the run had not started yet. If the code does not stop
-   * within `killAfterMs` (e.g. stuck in C code), the worker is killed.
+   * within `killAfterMs` (e.g. stuck in C code), the worker is killed. Without
+   * isolation there is no interrupt buffer, so stop() kills right away.
    */
   stop(killAfterMs = 1500) {
     if (!this.current) return;
+    if (!this.interrupt) {
+      this.terminate("killed");
+      return;
+    }
     const assert = () => {
       Atomics.store(this.interrupt, 0, 2); // SIGINT
       Atomics.notify(this.interrupt, 0); // wake host.sleep
@@ -133,13 +166,14 @@ export class PyWorker {
 
 /** Keeps one booted worker in reserve so that a fresh run starts instantly. */
 export class WorkerPool {
-  constructor() {
-    this.spare = new PyWorker();
+  constructor(options = defaultOptions()) {
+    this.options = options;
+    this.spare = new PyWorker(options);
   }
 
   async take() {
     const worker = this.spare;
-    this.spare = new PyWorker();
+    this.spare = new PyWorker(this.options);
     await worker.ready;
     return worker;
   }

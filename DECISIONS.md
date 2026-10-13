@@ -163,11 +163,31 @@ the wasm-GC trampoline. JSPI then works in WKWebView: `run_sync`,
 
 Evidence: `spikes/jspi-repro/`.
 
+## D14: User UI is a declarative Python tree rendered by a JS renderer
+
+2026-10-13 - Accepted (was P2)
+
+Python apps describe their UI with `ui.state()` plus a `view()` function that
+returns components. Each state change re-runs `view()`; the whole tree goes to
+the page as JSON, and a keyed JS renderer patches the DOM with iOS styling.
+Callback ids are positional so they stay stable across renders. The same
+renderer and runtime power the IDE playground and exported apps. Evidence:
+`spikes/ui-toolkit/` (about 0.25 ms per tap round trip; 1,000 rows re-rendered
+in about 25 ms).
+
+## D15: Published apps are plain static sites with Pyodide from a CDN
+
+2026-10-13 - Accepted (refines D5)
+
+An export contains the app code, `ui.py`, the renderer, the worker runtime, a
+manifest and an icon (37 KiB). Pyodide comes from jsDelivr at the pinned
+version. No special headers are required: without cross-origin isolation the
+app runs without SharedArrayBuffer (no `input()`, no Stop), which UI apps don't
+need. Offline support and self-hosted Pyodide come later.
+
 ## Proposed (not yet decided)
 
 - **P1:** The editor is CodeMirror 6. (Implied by D4; confirm after testing it on a device.)
-- **P2:** The user UI toolkit is a Pythonic declarative tree built in the worker,
-  diffed and rendered by a JavaScript renderer with iOS-styled components.
 - **P3:** The web UI is built with React and Vite, like pi-mobile.
 - **P4:** The Xcode project is generated with XcodeGen.
 

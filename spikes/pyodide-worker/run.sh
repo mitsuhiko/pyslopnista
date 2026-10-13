@@ -26,6 +26,10 @@ xcrun -sdk iphonesimulator swiftc \
   Sources/*.swift -o "$APP/PyodideSpike"
 cp Info.plist "$APP/"
 cp -R web "$APP/web"
+# EXTRA_WEB="dir:name ..." copies other spikes' web dirs into the app (web/<name>)
+for spec in ${EXTRA_WEB:-}; do
+  cp -R "${spec%%:*}" "$APP/web/${spec##*:}"
+done
 mkdir -p "$APP/web/pyodide"
 for f in pyodide.mjs pyodide.asm.mjs pyodide.asm.wasm python_stdlib.zip pyodide-lock.json; do
   cp "$VENDOR/$f" "$APP/web/pyodide/"
@@ -40,11 +44,11 @@ LOG="$DATA/Documents/probe-log.txt"
 rm -f "$RESULT" "$LOG"
 
 if [ "${1:-}" != "--selftest" ]; then
-  xcrun simctl launch "$DEVICE" "$BUNDLE_ID" >/dev/null
+  xcrun simctl launch "$DEVICE" "$BUNDLE_ID" --page "${PAGE:-}" --query "${QUERY:-}" --fragment "${FRAGMENT:-}" >/dev/null
   exit 0
 fi
 
-xcrun simctl launch "$DEVICE" "$BUNDLE_ID" --selftest "${2:-}" --query "${QUERY:-}" >/dev/null
+xcrun simctl launch "$DEVICE" "$BUNDLE_ID" --selftest "${2:-}" --page "${PAGE:-}" --query "${QUERY:-}" >/dev/null
 for _ in $(seq 1 ${TIMEOUT:-240}); do
   [ -f "$RESULT" ] && break
   sleep 1

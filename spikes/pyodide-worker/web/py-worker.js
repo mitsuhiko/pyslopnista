@@ -1,17 +1,19 @@
 // One Pyodide interpreter per worker. The page talks to it with messages;
 // blocking calls back to the page (stdin, synchronous host calls) use a
-// SharedArrayBuffer channel and Atomics.wait.
+// SharedArrayBuffer channel and Atomics.wait. Without cross-origin isolation
+// (plain static hosting) there is no channel: stdin is EOF, there is no
+// interrupt buffer, and time.sleep keeps Pyodide's own implementation.
 import "./sab-polyfill.js";
-import { loadPyodide } from "./pyodide/pyodide.mjs";
 
 const decoder = new TextDecoder();
-const encoder = new TextEncoder();
 let py;
 let syncChannel; // Int32Array view: [state, length], payload from byte 8
 let nextCallId = 0;
 const pendingCalls = new Map();
+let uiDispatcher = null;
 
 function syncCall(op, value) {
+  if (!syncChannel) throw new Error(`blocking call '${op}' needs cross-origin isolation`);
   const ints = new Int32Array(syncChannel, 0, 2);
   Atomics.store(ints, 0, 0);
   postMessage({ type: "call", sync: true, op, value });
@@ -43,33 +45,35 @@ function writer(stream) {
   };
 }
 
-async function boot({ interrupt, channel, jspi, gcTrampoline }) {
+async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageBaseUrl, files }) {
   syncChannel = channel;
   // CPython's Emscripten build sniffs the UA and on iOS falls back to a JS call
   // trampoline (gh-130418, for WebKit bug 293113, fixed upstream in 2025). The
   // JS trampoline puts JS frames on every C function-pointer call, which makes
-  // JSPI suspension impossible. Hiding the iOS UA selects the wasm-gc trampoline.
+  // JSPI suspension impossible. Hiding the iOS UA selects the wasm-gc trampoline
+  // (see spikes/jspi-repro, D13).
   if (gcTrampoline) {
     Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" });
   }
-  // WebKit exposes JSPI but Pyodide's run_sync hangs with it (see README), so
-  // hide it unless explicitly requested. Pyodide checks at load time.
+  // With the JS trampoline JSPI cannot work, so hide it unless requested
+  // (Pyodide checks at load time).
   if (!jspi) {
     delete WebAssembly.Suspending;
     delete WebAssembly.promising;
   }
-  const interruptInts = new Int32Array(interrupt);
+  const interruptInts = interrupt ? new Int32Array(interrupt) : null;
   const t0 = performance.now();
+  const { loadPyodide } = await import(new URL("pyodide.mjs", indexURL).href);
   py = await loadPyodide({
-    indexURL: new URL("/pyodide/", location.href).href,
-    packageBaseUrl: new URL("/pkgs/", location.href).href,
+    indexURL,
+    packageBaseUrl,
     stdout: (s) => postMessage({ type: "output", stream: "stdout", text: s + "\n" }),
     stderr: (s) => postMessage({ type: "output", stream: "stderr", text: s + "\n" }),
   });
   py.setStdout(writer("stdout"));
   py.setStderr(writer("stderr"));
-  py.setStdin({ stdin: () => syncCall("stdin", null) ?? undefined }); // autoEOF: one line per read
-  py.setInterruptBuffer(interruptInts);
+  py.setStdin({ stdin: () => (syncChannel ? syncCall("stdin", null) ?? undefined : undefined) });
+  if (interruptInts) py.setInterruptBuffer(interruptInts);
   py.registerJsModule("host", {
     call: (op, value) => asyncCall("host", { op, value: value?.toJs?.() ?? value }),
     call_sync: (op, value) => syncCall("host", { op, value: value?.toJs?.() ?? value }),
@@ -80,13 +84,32 @@ async function boot({ interrupt, channel, jspi, gcTrampoline }) {
       py.checkInterrupt();
     },
   });
-  py.runPython([
-    "import time, host, pyodide.webloop",
-    "time.sleep = pyodide.webloop._orig_sleep = host.sleep",
-    "del time, host",
-  ].join("\n"));
+  py.registerJsModule("_uihost", {
+    render: (json) => postMessage({ type: "ui-render", tree: json }),
+    set_dispatcher: (fn) => {
+      uiDispatcher?.destroy?.();
+      uiDispatcher = fn;
+    },
+  });
+  if (interruptInts) {
+    py.runPython([
+      "import time, host, pyodide.webloop",
+      "time.sleep = pyodide.webloop._orig_sleep = host.sleep",
+      "del time, host",
+    ].join("\n"));
+  }
+  // Extra Python files (e.g. the ui module) go into the working directory,
+  // which is on sys.path.
+  for (const [path, url] of Object.entries(files ?? {})) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`failed to fetch ${url}: ${res.status}`);
+    py.FS.writeFile(path, new Uint8Array(await res.arrayBuffer()));
+  }
   const bootMs = performance.now() - t0;
-  postMessage({ type: "ready", bootMs, version: py.version, jspi: typeof WebAssembly.Suspending, gcTrampoline: !!gcTrampoline });
+  postMessage({
+    type: "ready", bootMs, version: py.version, jspi: typeof WebAssembly.Suspending,
+    gcTrampoline: !!gcTrampoline, isolated: !!syncChannel,
+  });
 }
 
 async function run({ code, filename }) {
@@ -118,6 +141,9 @@ onmessage = async (e) => {
       break;
     case "run":
       await run(msg);
+      break;
+    case "ui-event":
+      if (uiDispatcher) uiDispatcher(msg.id, msg.args);
       break;
     case "call-reply": {
       const pending = pendingCalls.get(msg.id);

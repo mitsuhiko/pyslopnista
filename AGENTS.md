@@ -19,7 +19,7 @@ Spike queue (update the status here). The pi-durable agent always comes last
 
 1. [x] `ios-host`: Swift host, WKWebView, `app://` scheme handler; probe inside it (Q1 answered: D9; Q2/Q3 narrowed)
 2. [x] `pyodide-worker`: bundled Pyodide in a worker: console, `input()`, interrupt, restart, package cache (D10-D12; open: PyPI offline cache, Q11)
-3. [ ] `ui-toolkit`: declarative Python UI (counter and list app) in the app, also exported as a static site (P2, D5)
+3. [x] `ui-toolkit`: declarative Python UI in the app and exported as a static site (D14, D15)
 4. [ ] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, App Intents, wasm-GC trampoline check (Q3, Q5, Q6, Q12)
 5. [ ] `agent` (last): pi-durable in the web view, with a SQLite bridge adapter, `python` tool and proxied providers (D7, Q4)
 

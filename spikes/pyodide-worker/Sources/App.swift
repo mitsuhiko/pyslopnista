@@ -33,13 +33,20 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
         let args = CommandLine.arguments
         var fragment = ""
         var query = ""
+        var page = "index.html"
+        if let i = args.firstIndex(of: "--page"), i + 1 < args.count, !args[i + 1].isEmpty {
+            page = args[i + 1]
+        }
         if let i = args.firstIndex(of: "--query"), i + 1 < args.count {
             query = "?" + args[i + 1]
+        }
+        if let i = args.firstIndex(of: "--fragment"), i + 1 < args.count {
+            fragment = "#" + args[i + 1]
         }
         if let i = args.firstIndex(of: "--selftest") {
             fragment = i + 1 < args.count ? "#selftest=\(args[i + 1])" : "#selftest"
         }
-        webView.load(URLRequest(url: URL(string: "\(AppSchemeHandler.scheme)://app/index.html\(query)\(fragment)")!))
+        webView.load(URLRequest(url: URL(string: "\(AppSchemeHandler.scheme)://app/\(page)\(query)\(fragment)")!))
         return webView
     }
 
