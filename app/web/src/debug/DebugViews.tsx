@@ -24,10 +24,11 @@ export function DebugBar({ debug, compact, inline }: { debug: DebugState; compac
     fn();
   };
   if (debug.postMortem) {
+    // Inspecting an error has nothing to step through: just a way out.
     return (
-      <div className={`debug-bar ${compact ? "compact" : ""} ${inline ? "inline" : ""}`}>
-        <button className="debug-done" onClick={act(() => session.resume("continue"))}>Done</button>
-      </div>
+      <button className={`done-pill ${compact ? "compact" : ""}`} onClick={act(() => session.resume("continue"))}>
+        Done
+      </button>
     );
   }
   return (

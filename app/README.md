@@ -38,6 +38,38 @@ iPad. Swift host + web app (D4), Python in Pyodide workers (D2, D6).
   (next to Copy/Paste), in the ⋯ menu, on F12 or with ⌘-click. It works across
   the program's folder (sibling modules) and into the standard library and the
   `ui` module, which open as read-only tabs.
+- **Getting around**:
+  - Tap the file name in the nav bar for an outline of its classes and
+    functions with a filter. Typing a number offers "Go to Line N".
+  - Find in Folder searches the text files of the current folder.
+  - Show Info shows ty's signature and docstring for a name. It's in the
+    selection menu and the ⋯ menu, or ⌥-click.
+- **Settings** (⌘, or the ⋯ menus): editor font size, line wrapping.
+- **Hardware keyboard**:
+
+  | Action | Shortcut |
+  |---|---|
+  | Run | ⌘R or F5 |
+  | Stop | ⌘. |
+  | Go to line | ⌘L |
+  | Go to symbol | ⌘⇧O |
+  | Find in folder | ⌘⇧F |
+  | Settings | ⌘, |
+  | Close tab | ⌘W |
+  | Split view | ⌘\ |
+  | Previous / next tab | ⌘⇧[ / ⌘⇧] |
+  | Toggle breakpoint | F9 |
+  | Step over | F6 or F10 |
+  | Step in | F7 or F11 |
+  | Step out | F8 or ⇧F11 |
+  | Continue | F5 or ⌃⌘Y |
+
+- **Code fields** (editor, `>>>`, `input()`): no auto-capitalization,
+  autocorrection or smart punctuation, enforced natively.
+- **HTTP** (D25): `requests`, `urllib`, `httpx` and `pyfetch` work without
+  CORS limits. Cross-origin requests from Python go through the host, which
+  makes them with `URLSession`; a custom `User-Agent` works too. Example:
+  `Web Requests.py`.
 - **Run / Stop**: the file's folder is copied into the interpreter as the
   working directory, so `open()` and imports of sibling modules work. Files the
   program creates or changes are written back. Stop raises `KeyboardInterrupt`
@@ -107,7 +139,7 @@ cd web && npm run dev                     # desktop browser; files in localStora
 
 ## Status (2026-10-13)
 
-`./run.sh --selftest` passes all 31 checks in the iPhone 17 and iPad Pro 11
+`./run.sh --selftest` passes all 33 checks in the iPhone 17 and iPad Pro 11
 simulators (2026-10-13). An earlier set of 19 also passed on the iPhone 14 Pro
 (`--device`). The checks are: examples seeded, edit → autosave → run,
 `input()`, traceback cleanup, `>>>` console, file write-back, sibling
@@ -117,8 +149,9 @@ formatting, Pyodide imports not flagged, add-dependency quick fix + install
 from PyPI, cached rerun, requires-python, debugger (breakpoint → evaluate →
 assignment → step → continue, Pause + Stop, breakpoint added while running,
 Inspect after an error, `breakpoint()`), traceback links, go to definition
-(project and stdlib), tabs, split view (iPad), and typing into the console
-fields through UIKit's text input.
+(project and stdlib), tabs, split view (iPad), HTTP (requests, urllib, httpx,
+pyfetch, connection errors), plain keyboard traits in code fields, and typing
+into the console fields through UIKit's text input.
 
 On the iPhone 14 Pro: ruff/ty start in 120-140 ms, the first check of a file
 takes about 400 ms, completions 44 ms, formatting 57 ms; installing a small
@@ -128,8 +161,10 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
 
 - Run results from UI apps that write files after the script returns are not
   written back.
-- No find-in-project, go to line or outline; no settings (font size,
-  wrapping); no hardware-keyboard shortcuts for run, stop and the debugger.
+- iPadOS does not list our shortcuts in the ⌘-hold overlay (they are handled
+  in the web view, not as UIKeyCommands).
+- HTTP is request/response only: no WebSockets or raw sockets; responses are
+  buffered, not streamed.
 - Typing into the console fields was reported broken on a device (not
   reproduced yet). Focusing a field from code (`input()`) may not bring up the
   keyboard by itself.
@@ -137,5 +172,5 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   auto-load; `micropip` works from the console). No lock files yet.
 - ty has no type information for installed third-party packages (it only
   knows the standard library); their imports are simply not flagged.
-- Hover (type info) exists in ty but is not wired up for touch yet. "Jump to
-  Definition" in the selection menu has not been tried on a device yet.
+- "Jump to Definition" and "Show Info" in the selection menu have not been
+  tried on a device yet.

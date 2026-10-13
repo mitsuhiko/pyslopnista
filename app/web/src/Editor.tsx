@@ -7,7 +7,7 @@ import { python } from "@codemirror/lang-python";
 import { bracketMatching, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { openLintPanel } from "@codemirror/lint";
 import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from "@codemirror/search";
-import { Annotation, type ChangeSet, EditorState, type Extension, RangeSetBuilder, StateEffect, StateField, Transaction } from "@codemirror/state";
+import { Annotation, type ChangeSet, Compartment, EditorState, type Extension, RangeSetBuilder, StateEffect, StateField, Transaction } from "@codemirror/state";
 import {
   Decoration, type DecorationSet, drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter,
   highlightSpecialChars, keymap, lineNumbers, ViewPlugin, type ViewUpdate,
@@ -15,6 +15,7 @@ import {
 import { tags as t } from "@lezer/highlight";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useSyncExternalStore } from "react";
 import { type Breakpoint, breakpoints as breakpointStore } from "./debug/breakpoints";
+import { settings } from "./settings";
 import {
   breakpointLines, debugExtensions, pausedCompartment, pausedExtension, setBreakpointsEffect, setDebugLineEffect,
 } from "./debug/codemirror";
@@ -58,6 +59,8 @@ interface Props {
   onGutterLongPress: (path: string, line: number, rect: DOMRect) => void;
   /** F12 or ⌘-click: jump to the definition at the cursor. */
   onDefinition?: () => void;
+  /** ⌥-click: show what ty knows about the name at the cursor. */
+  onInfo?: () => void;
   // Debugger (D23)
   paused: boolean;
   onInspect: (expr: string, rect: DOMRect) => void;
@@ -67,6 +70,9 @@ interface Props {
   /** Jump to a line (tracebacks, go to definition). */
   reveal: Reveal | null;
 }
+
+const wrapCompartment = new Compartment();
+const wrapping = (on: boolean) => (on ? [EditorView.lineWrapping, hangingIndent] : []);
 
 /** Marks transactions that mirror another pane's edits (not saved or re-sent). */
 const remote = Annotation.define<boolean>();
@@ -153,6 +159,7 @@ function extensions(
   onGutterLongPress: (line: number, rect: DOMRect) => void,
   onBreakpointsMoved: (state: EditorState) => void,
   onDefinition: () => void,
+  onInfo: () => void,
   readOnly: boolean,
 ): Extension[] {
   return [
@@ -161,11 +168,13 @@ function extensions(
     keymap.of([{ key: "F12", run: () => (onDefinition(), true) }]),
     EditorView.domEventHandlers({
       mousedown(e, view) {
-        if (!(e.metaKey || e.ctrlKey) || e.button !== 0) return false;
+        // ⌘-click: jump to the definition; ⌥-click: show info (as in Xcode).
+        const action = e.metaKey || e.ctrlKey ? onDefinition : e.altKey ? onInfo : null;
+        if (!action || e.button !== 0) return false;
         const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
         if (pos === null) return false;
         view.dispatch({ selection: { anchor: pos } });
-        onDefinition();
+        action();
         return true;
       },
     }),
@@ -184,8 +193,7 @@ function extensions(
     highlightSelectionMatches(),
     search({ top: true }),
     python(),
-    EditorView.lineWrapping,
-    hangingIndent,
+    wrapCompartment.of(wrapping(settings.getSnapshot().wrap)),
     indentUnit.of("    "),
     EditorState.tabSize.of(4),
     syntaxHighlighting(highlight),
@@ -229,6 +237,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(props, ref
   const propsRef = useRef(props);
   propsRef.current = props;
   useSyncExternalStore(breakpointStore.subscribe, breakpointStore.getSnapshot);
+  const { wrap, fontSize } = useSyncExternalStore(settings.subscribe, settings.getSnapshot);
   const fileBreakpoints = breakpointStore.get(path);
 
   const makeState = (doc: string, readOnly = false) =>
@@ -253,6 +262,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(props, ref
           if (!sameBreakpoints(lines, breakpointStore.get(p))) breakpointStore.set(p, lines);
         },
         () => propsRef.current.onDefinition?.(),
+        () => propsRef.current.onInfo?.(),
         readOnly,
       ),
     });
@@ -291,6 +301,14 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(props, ref
     const t = setTimeout(() => view.requestMeasure(), 450);
     return () => clearTimeout(t);
   }, [path]);
+
+  // Settings: wrapping (also for documents created before the change), font size.
+  useEffect(() => {
+    viewRef.current!.dispatch({ effects: wrapCompartment.reconfigure(wrapping(wrap)) });
+  }, [path, wrap]);
+  useEffect(() => {
+    viewRef.current!.requestMeasure();
+  }, [fontSize]);
 
   // Breakpoints from the store (also after switching files).
   useEffect(() => {

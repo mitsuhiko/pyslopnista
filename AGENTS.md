@@ -24,7 +24,8 @@ app, a thin Swift host and a pi-durable coding agent. Early research phase.
 
 App (`app/`): IDE with files, editor, run, console, UI apps, ruff + ty,
 PEP 723 dependencies, visual debugger (D23), tabs and split view with
-traceback links and go to definition (D24). Next: hands-on device feedback, then the gaps in
+traceback links and go to definition (D24), outline / go to line / find in
+folder / show info / settings / keyboard shortcuts, HTTP through the host (D25). Next: hands-on device feedback, then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 
 Spike queue (update the status here). The pi-durable agent always comes last

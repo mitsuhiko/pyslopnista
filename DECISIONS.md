@@ -353,6 +353,36 @@ UI, aimed at staying out of the way:
   would otherwise create an empty document that saving writes back, which
   happened with restored tabs.
 
+## D25: HTTP from Python goes through the native host
+
+2026-10-13 - Accepted
+
+Requests from the app's origin to other hosts would hit CORS. The worker
+therefore routes cross-origin `XMLHttpRequest` and `fetch` calls to
+`app://app/__http?url=…`, and the scheme handler makes the real request with
+`URLSession`:
+- It forwards the method, headers and body and follows redirects.
+- The status and headers come back unchanged, except for headers that no
+  longer apply (encoding, length) or would override our cross-origin isolation
+  headers.
+- Headers that browsers don't let scripts set, like `User-Agent` and `Cookie`,
+  travel in `X-Pyslop-Headers`.
+- A network failure answers 502 with `X-Pyslop-Error`, which the shim turns
+  back into a network error.
+
+On the Python side there is nothing app-specific:
+- `requests` uses urllib3's Pyodide backend, which goes through fetch with
+  JSPI. We empty its `HEADERS_TO_IGNORE` so `User-Agent` reaches the proxy.
+- `urllib` gets pyodide-http's patch (sync XHR) when a program imports it.
+- `httpx` and `pyfetch` work as they are.
+
+The dev server implements the same `/__http` contract.
+
+Published apps (D15) have no host, so they keep the browser's CORS rules; the
+proxy only exists inside the app. Unhandled promise rejections in the worker
+only count as crashes (D16) when they show a broken interpreter: urllib3
+leaves a rejected promise behind in WebKit.
+
 ## Proposed (not yet decided)
 
 ### P1: Replace D14's re-render model with Solid-style fine-grained reactivity

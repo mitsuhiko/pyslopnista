@@ -6,6 +6,37 @@ import { defineConfig, type Plugin } from "vite";
 const PYODIDE_VERSION = "314.0.7";
 const PYODIDE_DIR = join(import.meta.dirname, "..", "vendor", `pyodide-${PYODIDE_VERSION}`);
 
+const HOP_HEADERS = new Set(["host", "origin", "referer", "connection", "content-length", "accept-encoding", "x-pyslop-headers", "cookie"]);
+const DROPPED = new Set(["content-encoding", "content-length", "transfer-encoding", "connection", "keep-alive", "cross-origin-opener-policy", "cross-origin-embedder-policy", "cross-origin-resource-policy"]);
+
+async function proxyHttp(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) {
+  const target = new URL(req.url!, "http://x").searchParams.get("url");
+  if (!target || !/^https?:/.test(target)) {
+    res.statusCode = 400;
+    return res.end("bad proxy request");
+  }
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!HOP_HEADERS.has(name) && !name.startsWith("sec-") && typeof value === "string") headers[name] = value;
+  }
+  const hidden = req.headers["x-pyslop-headers"];
+  if (typeof hidden === "string") for (const [name, value] of Object.entries(JSON.parse(hidden))) headers[name.toLowerCase()] = String(value);
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  try {
+    const r = await fetch(target, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined, redirect: "follow" });
+    res.statusCode = r.status;
+    r.headers.forEach((value, name) => !DROPPED.has(name) && res.setHeader(name, value));
+    res.setHeader("X-Pyslop-Final-Url", r.url);
+    res.end(Buffer.from(await r.arrayBuffer()));
+  } catch (e) {
+    const message = String((e as Error).cause ?? e).replace(/\n/g, " ");
+    res.statusCode = 502;
+    res.setHeader("X-Pyslop-Error", message);
+    res.end(message);
+  }
+}
+
 // Mirrors the iOS host for `npm run dev`: cross-origin isolation headers on
 // everything, /pyodide/ from the vendored core, /pkgs/ proxied to the CDN.
 function hostShim(): Plugin {
@@ -37,6 +68,11 @@ function hostShim(): Plugin {
               res.end(body);
             })
             .catch((e) => { res.statusCode = 502; res.end(String(e)); });
+          return;
+        }
+        if (url === "/__http") {
+          // HTTP for Python programs, same contract as the iOS host (D25).
+          void proxyHttp(req, res);
           return;
         }
         if (url.startsWith("/pypi-files/")) {

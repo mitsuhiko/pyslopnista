@@ -8,10 +8,14 @@ import { breakpoints } from "./debug/breakpoints";
 import { ContinueButton, DebugBar, PauseButton, pausedSummary, ValuePopover } from "./debug/DebugViews";
 import { Editor, type EditorCommand, type EditorHandle, type Reveal } from "./Editor";
 import { FileBrowser } from "./FileBrowser";
+import { FindPanel } from "./FindPanel";
+import { InfoPopover } from "./InfoPopover";
+import { JumpPanel } from "./JumpPanel";
+import { SettingsSheet } from "./SettingsSheet";
 import { base64ToBytes, basename, call, dirname, fs, haptic, isNative, join } from "./host";
 import {
-  ChevronLeft, Close, DocPlus, Duplicate, Ellipsis, FileIcon, JumpTo, Pencil, Play, Search, Sidebar, SplitView, Stop, Terminal, Trash, Wand,
-  Warning,
+  ChevronDown, ChevronLeft, Close, DocPlus, Duplicate, Ellipsis, FileIcon, Gear, Info, JumpTo, ListBullet, Pencil, Play, Search, Sidebar, SplitView,
+  Stop, Terminal, Trash, Wand, Warning,
 } from "./Icons";
 import { KeyBar } from "./KeyBar";
 import { navigation } from "./navigation";
@@ -57,6 +61,7 @@ export interface AppController {
   format(): Promise<void>;
   problems(): ProblemSummary;
   goToDefinition(): Promise<unknown>;
+  showInfo(): Promise<string | null>;
   panes(): PaneState[];
   setSplit(on: boolean): void;
   closeTab(path: string, pane?: number): void;
@@ -196,6 +201,10 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   const [edgeDrag, setEdgeDrag] = useState<number | null>(null);
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [splitRatio, setSplitRatio] = useState(0.5);
+  const [jump, setJump] = useState<{ initial: string } | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [info, setInfo] = useState<{ markdown: string | null; anchor: DOMRect } | null>(null);
   const pending = useRef(new Map<string, string>());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explicitlyOpened = useRef(false);
@@ -258,10 +267,14 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       const shownIn = panes.findIndex((p, i) => p.active === path && (split || i === focused));
       const target = opts.pane ?? (shownIn >= 0 ? shownIn : focused);
       setDocs((d) => ({ ...d, [path]: text }));
-      const before = panes[target] ?? { tabs: [], active: null };
-      const after = withTab(before, path);
-      for (const t of before.tabs) if (!after.tabs.includes(t)) editors.current[target]?.forget(t); // closed by the tab limit
-      setPanes((ps) => (ps[target] ? ps.map((p, i) => (i === target ? after : p)) : [...ps, after]));
+      // Update the panes as they are then (a restore may have changed them meanwhile).
+      setPanes((ps) => {
+        const before = ps[target] ?? { tabs: [], active: null };
+        const after = withTab(before, path);
+        const dropped = before.tabs.filter((t) => !after.tabs.includes(t)); // closed by the tab limit
+        if (dropped.length) queueMicrotask(() => dropped.forEach((t) => editors.current[target]?.forget(t)));
+        return ps[target] ? ps.map((p, i) => (i === target ? after : p)) : [...ps, after];
+      });
       setFocusedPane(target);
       if (opts.line) setReveal({ path, line: opts.line, column: opts.column, nonce: Date.now(), pane: target });
       if (!isExternal(path)) setDir(dirname(path));
@@ -434,17 +447,47 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     }
   }, [file, openLocation]);
 
-  // Keys from the native accessory and the native edit menu ("Jump to Definition").
+  /** ty's hover text for the name at the cursor, in a popover next to it. */
+  const showInfo = useCallback(async () => {
+    const editor = focusedEditor.current;
+    const view = editor?.view();
+    if (!view || !file || isExternal(file) || editor?.currentPath() !== file) return null;
+    const sel = view.state.selection.main;
+    const pos = sel.empty ? sel.head : sel.from;
+    const word = view.state.wordAt(pos);
+    const a = view.coordsAtPos(word?.from ?? pos);
+    const b = view.coordsAtPos(word?.to ?? pos, -1);
+    if (!a) return null;
+    const anchor = new DOMRect(a.left, a.top, Math.max(1, (b?.right ?? a.right) - a.left), a.bottom - a.top);
+    setInfo({ markdown: null, anchor });
+    const line = view.state.doc.lineAt(pos);
+    try {
+      const markdown = (await analysis.hover(file, view.state.doc.toString(), line.number, pos - line.from + 1)) ?? "";
+      setInfo((i) => (i && i.anchor === anchor ? { markdown, anchor } : i));
+      return markdown;
+    } catch {
+      setInfo(null);
+      return null;
+    }
+  }, [file]);
+
+  /** Jump to a line of the current file (outline, go to line). */
+  const goToLine = (line: number) => {
+    if (file) setReveal({ path: file, line, nonce: Date.now(), pane: focused });
+  };
+
+  // Keys from the native accessory and the native edit menu ("Jump to Definition", "Show Info").
   useEffect(() => {
     (window as any).__pyslopKey = (action: string) => {
       if (action === "definition") return void api.current.goToDefinition();
+      if (action === "info") return void api.current.showInfo();
       handleKey(focusedEditor.current, action);
     };
     if (!isNative) return;
     let mode = "";
     const onFocus = (e: FocusEvent) => {
       const target = e.target as Element | null;
-      const next = target?.closest?.(".cm-editor") ? "code" : target?.closest?.(".repl") ? "console" : "plain";
+      const next = target?.closest?.(".cm-editor") ? "code" : target?.closest?.(".repl, .inline-input") ? "console" : "plain";
       if (next !== mode) {
         mode = next;
         void call("keyboard.mode", { mode });
@@ -452,6 +495,54 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     };
     document.addEventListener("focusin", onFocus);
     return () => document.removeEventListener("focusin", onFocus);
+  }, []);
+
+  // Hardware keyboard shortcuts (Xcode's and VS Code's where they do not clash).
+  const shortcuts = useRef<(e: KeyboardEvent) => boolean>(() => false);
+  shortcuts.current = (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const pane = panes[focused];
+    const cycleTab = (step: number) => {
+      if (!pane || pane.tabs.length < 2 || !pane.active) return;
+      const i = pane.tabs.indexOf(pane.active);
+      void selectTab(focused, pane.tabs[(i + step + pane.tabs.length) % pane.tabs.length]);
+    };
+    if (debug && !debug.postMortem) {
+      if (key === "F6" || key === "F10") return session.resume("next"), true;
+      if (key === "F7" || (key === "F11" && !e.shiftKey)) return session.resume("stepIn"), true;
+      if (key === "F8" || (key === "F11" && e.shiftKey)) return session.resume("stepOut"), true;
+      if (key === "F5" || (e.ctrlKey && e.metaKey && key === "y")) return session.resume("continue"), true;
+    }
+    if ((mod && !e.shiftKey && key === "r") || (key === "F5" && !debug)) return void run(), true;
+    if (mod && key === ".") return session.stop(), true;
+    if (mod && !e.shiftKey && key === "l") return setJump({ initial: ":" }), true;
+    if (mod && e.shiftKey && key === "o") return setJump({ initial: "" }), true;
+    if (mod && e.shiftKey && key === "f") return setFindOpen(true), true;
+    if (mod && key === ",") return setSettingsOpen(true), true;
+    if (mod && !e.shiftKey && key === "w" && file) return closeTab(file), true;
+    if (mod && key === "\\" && wide) return setSplit(!split), true;
+    if (mod && e.shiftKey && (key === "[" || key === "{")) return cycleTab(-1), true;
+    if (mod && e.shiftKey && (key === "]" || key === "}")) return cycleTab(1), true;
+    if (key === "F9" && file && !isExternal(file)) {
+      const view = focusedEditor.current?.view();
+      if (!view) return false;
+      const line = view.state.doc.lineAt(view.state.selection.main.head).number;
+      if (breakpoints.get(file).some((bp) => bp.line === line)) breakpoints.remove(file, line);
+      else breakpoints.add(file, codeLineFrom(view.state.doc.toString(), line));
+      return true;
+    }
+    return false;
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (shortcuts.current(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
   // Traceback links in the console.
@@ -525,6 +616,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
     format,
     problems: () => problems,
     goToDefinition,
+    showInfo,
     panes: () => panes,
     setSplit,
     closeTab,
@@ -601,15 +693,23 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       anchor,
       sections: [
         [
+          { label: "Go to…", icon: <ListBullet size={19} />, onSelect: () => setJump({ initial: "" }) },
           { label: "Jump to Definition", icon: <JumpTo size={19} />, onSelect: () => void goToDefinition(), disabled: fileIsExternal },
+          { label: "Show Info", icon: <Info size={19} />, onSelect: () => void showInfo(), disabled: fileIsExternal },
+        ],
+        [
           { label: "Find", icon: <Search size={19} />, onSelect: () => focusedEditor.current?.command("search") },
+          { label: `Find in ${dir ? basename(dir) : "Files"}…`, icon: <Search size={19} />, onSelect: () => setFindOpen(true) },
           { label: "Format Code", icon: <Wand size={19} />, onSelect: () => void format(), disabled: fileIsExternal },
           { label: "Show Problems", icon: <Warning size={19} />, onSelect: () => setProblemsOpen(true), disabled: !problems.errors && !problems.warnings },
         ],
         ...(fileBreakpoints.length && file
           ? [[{ label: fileBreakpoints.length === 1 ? "Remove Breakpoint" : `Remove ${fileBreakpoints.length} Breakpoints`, icon: <BreakpointIcon />, onSelect: () => breakpoints.clear(file) }]]
           : []),
-        ...(wide ? [[{ label: split ? "Close Split View" : "Split View", icon: <SplitView size={19} />, onSelect: () => setSplit(!split) }]] : []),
+        [
+          ...(wide ? [{ label: split ? "Close Split View" : "Split View", icon: <SplitView size={19} />, onSelect: () => setSplit(!split) }] : []),
+          { label: "Settings…", icon: <Gear size={19} />, onSelect: () => setSettingsOpen(true) },
+        ],
         ...(fileIsExternal
           ? [[{ label: "Close Tab", icon: <Close size={17} />, onSelect: () => file && closeTab(file) }]]
           : [
@@ -681,6 +781,8 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       onOpenFile={(p) => void openFile(p)}
       onRenamed={onRenamed}
       onDeleted={onDeleted}
+      onFind={() => setFindOpen(true)}
+      onSettings={() => setSettingsOpen(true)}
     />
   );
 
@@ -710,7 +812,14 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
         )}
       </div>
       <div className="nav-title">
-        <span className="nav-title-main">{file ? tabLabel(file) : "Pyslopnista"}</span>
+        {file ? (
+          <button className="nav-title-main nav-title-button" onClick={() => setJump({ initial: "" })} aria-label={`${tabLabel(file)}: go to a symbol or line`}>
+            {tabLabel(file)}
+            <ChevronDown size={12} className="nav-title-chevron" />
+          </button>
+        ) : (
+          <span className="nav-title-main">Pyslopnista</span>
+        )}
         {subtitle ? (
           <span className={`nav-subtitle ${debug ? (debug.postMortem ? "debug-error" : "paused") : runningHere ? "running" : ""}`}>{subtitle}</span>
         ) : problemCount > 0 ? (
@@ -810,6 +919,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
             onViewUpdate={(view) => index === focused && setProblems(summarizeProblems(view))}
             onGutterLongPress={onGutterLongPress(index)}
             onDefinition={() => void goToDefinition()}
+            onInfo={() => void showInfo()}
             paused={!!debug}
             onInspect={(expr, anchor) => setInspect({ expr, anchor })}
             debugLine={debugFrame && debugFrame.file === shown ? debugFrame.line : null}
@@ -888,6 +998,19 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       {menu && <Menu anchor={menu.anchor} sections={menu.sections} align={menu.align} onClose={() => setMenu(null)} />}
       {inspect && debug && <ValuePopover expr={inspect.expr} anchor={inspect.anchor} onClose={() => setInspect(null)} />}
       {problemsOpen && focusedEditor.current?.view() && <ProblemsSheet view={focusedEditor.current.view()!} onClose={() => setProblemsOpen(false)} />}
+      {jump && focusedEditor.current?.view() && (
+        <JumpPanel state={focusedEditor.current.view()!.state} initial={jump.initial} onJump={goToLine} onClose={() => setJump(null)} />
+      )}
+      {findOpen && (
+        <FindPanel
+          dir={file && !isExternal(file) ? dirname(file) : dir}
+          beforeSearch={flush}
+          onOpen={(path, line, column) => void openLocation(path, { line, column, keepConsole: true })}
+          onClose={() => setFindOpen(false)}
+        />
+      )}
+      {info && <InfoPopover markdown={info.markdown} anchor={info.anchor} onClose={() => setInfo(null)} />}
+      {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
       <ToastHost />
     </>
   );

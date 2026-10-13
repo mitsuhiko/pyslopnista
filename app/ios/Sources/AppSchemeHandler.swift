@@ -11,6 +11,10 @@ import WebKit
 ///   then network-first with the cache as offline fallback; file URLs are
 ///   rewritten to `/pypi-files/`
 /// - `/pypi-files/<path>`: files.pythonhosted.org, cache-first (files are immutable)
+/// - `/__http?url=<url>`: HTTP for Python programs (D25). The request is made
+///   natively, so there is no CORS; the worker routes cross-origin XHR and fetch
+///   here. Headers scripts may not set travel in `X-Pyslop-Headers` (JSON);
+///   network failures answer 502 with `X-Pyslop-Error`.
 @MainActor
 final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "app"
@@ -24,6 +28,14 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
     private let packageCache: URL
     private let pypiCache: URL
     private var activeTasks = Set<ObjectIdentifier>()
+    private var proxyTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private lazy var proxySession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        config.httpCookieStorage = .shared
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
+    }()
 
     init(root: URL) {
         self.root = root.standardizedFileURL
@@ -56,6 +68,10 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
             servePypiFile(task, path: String(path.dropFirst("/pypi-files/".count)))
             return
         }
+        if path == "/__http" {
+            proxy(task)
+            return
+        }
 
         let fileURL = root.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
         guard fileURL.path.hasPrefix(root.path + "/"),
@@ -69,6 +85,80 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
         activeTasks.remove(ObjectIdentifier(task))
+        proxyTasks.removeValue(forKey: ObjectIdentifier(task))?.cancel()
+    }
+
+    // MARK: HTTP for Python programs
+
+    /// Headers that describe our hop, not the program's request.
+    private static let hopHeaders: Set<String> = [
+        "host", "origin", "referer", "connection", "content-length", "accept-encoding",
+        "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "x-pyslop-headers",
+    ]
+    /// Response headers that no longer apply (URLSession already decoded the
+    /// body) or would override our cross-origin isolation headers (D9).
+    private static let droppedResponseHeaders: Set<String> = [
+        "content-encoding", "content-length", "transfer-encoding", "connection", "keep-alive",
+        "cross-origin-opener-policy", "cross-origin-embedder-policy", "cross-origin-resource-policy",
+    ]
+
+    private func proxy(_ task: any WKURLSchemeTask) {
+        let incoming = task.request
+        guard let query = incoming.url.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) })?.queryItems,
+              let target = query.first(where: { $0.name == "url" })?.value.flatMap(URL.init(string:)),
+              let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https"
+        else {
+            respond(task, status: 400, body: Data("bad proxy request".utf8), mime: "text/plain")
+            return
+        }
+        var request = URLRequest(url: target)
+        request.httpMethod = incoming.httpMethod ?? "GET"
+        for (name, value) in incoming.allHTTPHeaderFields ?? [:] where !Self.hopHeaders.contains(name.lowercased()) {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        if let hidden = incoming.value(forHTTPHeaderField: "X-Pyslop-Headers"),
+           let extra = try? JSONSerialization.jsonObject(with: Data(hidden.utf8)) as? [String: String] {
+            for (name, value) in extra { request.setValue(value, forHTTPHeaderField: name) }
+        }
+        request.httpBody = incoming.httpBody ?? incoming.httpBodyStream.map(Self.readAll)
+        let id = ObjectIdentifier(task)
+        let session = proxySession
+        // Cancelling the Task (the page stopped the request) cancels the download.
+        proxyTasks[id] = Task { @MainActor in
+            let result: (Data, URLResponse)
+            do {
+                result = try await session.data(for: request)
+            } catch {
+                guard self.proxyTasks.removeValue(forKey: id) != nil else { return }
+                let message = error.localizedDescription.replacingOccurrences(of: "\n", with: " ")
+                self.respond(task, status: 502, body: Data(message.utf8), mime: "text/plain", extra: ["X-Pyslop-Error": message])
+                return
+            }
+            guard self.proxyTasks.removeValue(forKey: id) != nil else { return } // stopped
+            let (data, response) = result
+            let http = response as? HTTPURLResponse
+            var headers: [String: String] = [:]
+            for (key, value) in http?.allHeaderFields ?? [:] {
+                guard let name = key as? String, !Self.droppedResponseHeaders.contains(name.lowercased()) else { continue }
+                headers[name] = "\(value)"
+            }
+            headers["X-Pyslop-Final-Url"] = response.url?.absoluteString ?? target.absoluteString
+            let mime = http?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
+            self.respond(task, status: http?.statusCode ?? 200, body: data, mime: mime, extra: headers)
+        }
+    }
+
+    private static func readAll(_ stream: InputStream) -> Data {
+        var data = Data()
+        stream.open()
+        defer { stream.close() }
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while stream.hasBytesAvailable {
+            let n = stream.read(&buffer, maxLength: buffer.count)
+            if n <= 0 { break }
+            data.append(buffer, count: n)
+        }
+        return data
     }
 
     // MARK: Pyodide packages (cache-first)

@@ -417,6 +417,38 @@ export async function selftest(app: AppController) {
     await until(() => document.querySelectorAll(".editor-pane").length === 1);
   });
 
+  // -- HTTP through the host's proxy (D25) -------------------------------------------
+
+  await step("http", async () => {
+    await fs.mkdir("Tests").catch(() => {});
+    await fs.writeText("Tests/webcheck.py", [
+      "import requests, urllib.request",
+      "r = requests.get('https://httpbin.org/get', params={'q': 'x'}, headers={'User-Agent': 'pyslop-test/1'}, timeout=20)",
+      "print('get', r.status_code, r.json()['args'], r.json()['headers']['User-Agent'])",
+      "r = requests.post('https://httpbin.org/post', json={'a': 1}, timeout=20)",
+      "print('post', r.status_code, r.json()['json'])",
+      "print('urllib', urllib.request.urlopen('https://httpbin.org/status/201').status)",
+      "import httpx",
+      "print('httpx', httpx.get('https://httpbin.org/status/202').status_code)",
+      "from pyodide.http import pyfetch",
+      "print('pyfetch', (await pyfetch('https://httpbin.org/status/203')).status)",
+      "try:",
+      "    requests.get('https://does-not-exist.invalid/', timeout=5)",
+      "except requests.ConnectionError:",
+      "    print('connection error ok')",
+      "",
+    ].join("\n"));
+    const t0 = performance.now();
+    const { done } = await runFile("Tests/webcheck.py");
+    await done;
+    await until(idle, 60000);
+    const out = consoleText();
+    for (const want of ["get 200 {'q': 'x'} pyslop-test/1", "post 200 {'a': 1}", "urllib 201", "httpx 202", "pyfetch 203", "connection error ok"]) {
+      if (!out.includes(want)) throw new Error(out.slice(-600));
+    }
+    return { ms: Math.round(performance.now() - t0) };
+  });
+
   // -- typing through iOS text input (native only) ---------------------------------
 
   const via = new URLSearchParams(location.hash.slice(1)).get("via") ?? "insert";
@@ -441,6 +473,19 @@ export async function selftest(app: AppController) {
     if (value !== "x + 41") throw new Error(`typed "x + 41", field has ${JSON.stringify(value)} (${responder}, active ${document.activeElement?.tagName}.${document.activeElement?.className})`);
     pressEnter();
     await until(() => consoleText().includes("42"));
+  });
+
+  await step("typing_plain_traits", async () => {
+    if (!isNative) return { skipped: "browser" };
+    app.showPane("console");
+    const input = await until(replInput);
+    input.focus();
+    await sleep(800);
+    const notes = await typeNative("");
+    // UITextAutocapitalizationType.none = 0, UITextAutocorrectionType.no = 1, UITextSmartQuotesType.no = 1
+    if (!/autocap=0 autocorrect=1 quotes=1/.test(notes)) throw new Error(notes);
+    input.blur();
+    return { notes };
   });
 
   await step("typing_input", async () => {

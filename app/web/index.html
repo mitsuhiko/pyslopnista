@@ -2,7 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+    <!-- maximum-scale=1: WebKit must not zoom into a focused field whose font is
+         smaller than 16px (the editor); that zoom fought our viewport tracking. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="color-scheme" content="light dark">
     <title>Pyslopnista</title>
     <script src="/runtime/sab-polyfill.js"></script>

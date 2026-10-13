@@ -4,6 +4,73 @@
 // reported as crashes (D16).
 import "./sab-polyfill.js";
 
+// HTTP for Python programs (D25): cross-origin XHR and fetch go through the
+// host's /__http proxy, which makes the request natively (no CORS). requests
+// (urllib3's Pyodide backend), urllib (pyodide-http) and pyfetch all use these.
+{
+  const PROXY = new URL("/__http", location.href).href;
+  // Headers scripts may not set; the proxy sets them for us.
+  const FORBIDDEN = new Set(["user-agent", "cookie", "referer", "origin", "host", "connection", "accept-encoding", "content-length"]);
+  const proxied = (url) => {
+    try {
+      const u = new URL(url, location.href);
+      return (u.protocol === "http:" || u.protocol === "https:") && u.origin !== location.origin ? `${PROXY}?url=${encodeURIComponent(u.href)}` : null;
+    } catch {
+      return null;
+    }
+  };
+  const networkError = (message) => new DOMException(`Network error: ${message}`, "NetworkError");
+
+  const NativeXHR = self.XMLHttpRequest;
+  self.XMLHttpRequest = class extends NativeXHR {
+    open(method, url, async = true, ...rest) {
+      this._via = proxied(url);
+      this._hidden = {};
+      this._sync = async === false;
+      return super.open(method, this._via ?? url, async, ...rest);
+    }
+    setRequestHeader(name, value) {
+      if (this._via && FORBIDDEN.has(name.toLowerCase())) this._hidden[name] = value;
+      else super.setRequestHeader(name, value);
+    }
+    send(body) {
+      if (this._via && Object.keys(this._hidden).length) super.setRequestHeader("X-Pyslop-Headers", JSON.stringify(this._hidden));
+      super.send(body);
+      const error = this._via && this._sync ? this.getResponseHeader("X-Pyslop-Error") : null;
+      if (error) throw networkError(error);
+    }
+    get responseURL() {
+      return (this._via && this.getResponseHeader("X-Pyslop-Final-Url")) || super.responseURL;
+    }
+  };
+
+  const nativeFetch = self.fetch.bind(self);
+  /** Header pairs as given (Request and Headers objects drop forbidden ones). */
+  const rawHeaders = (h) => {
+    if (!h) return [];
+    if (h instanceof Map) return [...h];
+    if (Array.isArray(h)) return h;
+    if (typeof h.entries === "function" && !(h.constructor === Object)) return [...h.entries()];
+    return Object.entries(h);
+  };
+  self.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const via = proxied(request.url);
+    if (!via) return nativeFetch(request);
+    const headers = new Headers(request.headers);
+    const hidden = {};
+    for (const [name, value] of rawHeaders(init?.headers)) if (FORBIDDEN.has(String(name).toLowerCase())) hidden[name] = String(value);
+    if (Object.keys(hidden).length) headers.set("X-Pyslop-Headers", JSON.stringify(hidden));
+    const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
+    const response = await nativeFetch(via, { method: request.method, headers, body, signal: request.signal, redirect: "follow" });
+    const error = response.headers.get("X-Pyslop-Error");
+    if (error) throw new TypeError(`Network error: ${error}`);
+    const final = response.headers.get("X-Pyslop-Final-Url");
+    if (final) Object.defineProperty(response, "url", { value: final });
+    return response;
+  };
+}
+
 const decoder = new TextDecoder();
 let py;
 let syncChannel; // Int32Array view: [state, length], payload from byte 8
@@ -171,10 +238,20 @@ async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) 
       py.globals.set("__pyslop_index", indexURL ?? new URL("/pypi/simple", location.href).href);
       await py.runPythonAsync("import _pyslop\nawait _pyslop.prepare_environment(__pyslop_src, __pyslop_cwd, __pyslop_index)\ndel __pyslop_src, __pyslop_cwd, __pyslop_index", { filename: "<dependencies>" });
     }
+    // urllib.request has no Pyodide backend of its own: pyodide-http adds one (sync XHR).
+    if (/^\s*(import|from)\s[^\n#]*\burllib\b/m.test(code)) {
+      await py.loadPackage("pyodide-http");
+      py.runPython("import pyodide_http\npyodide_http.patch_urllib()");
+    }
     await py.loadPackagesFromImports(code, {
       messageCallback: (m) => m.startsWith("Loading ") && postMessage({ type: "output", stream: "system", text: m.replace(/^Loading /, "Loading packages: ") + "\n" }),
       errorCallback: (m) => postMessage({ type: "output", stream: "stderr", text: m + "\n" }),
     });
+    // urllib3 drops User-Agent because browsers forbid setting it; our proxy
+    // sets it (the XHR/fetch shim passes it along), so let it through.
+    if (/\b(requests|urllib3)\b/.test(code)) {
+      py.runPython("try:\n    import urllib3.contrib.emscripten.fetch as _f\n    _f.HEADERS_TO_IGNORE = ()\n    del _f\nexcept ImportError:\n    pass");
+    }
     if (repl) {
       py.globals.set("__pyslop_src", code);
       await py.runPythonAsync("import _pyslop\nawait _pyslop.repl(__pyslop_src)", { filename: "<console>" });
@@ -200,10 +277,22 @@ function reportEscaped(error) {
   if (/KeyboardInterrupt\s*$/.test(error.trim())) return;
   postMessage({ type: "worker-error", error });
 }
-addEventListener("error", (e) => reportEscaped(String(e.message ?? e)));
+addEventListener("error", (e) => {
+  // A plain Event (not an ErrorEvent) has no message: say where it came from.
+  const where = e.message ?? `${e.type} event from ${e.target?.constructor?.name ?? "?"}${e.filename ? ` (${e.filename}:${e.lineno})` : ""}`;
+  reportEscaped(String(where));
+});
+// An unhandled rejection is a crash only if it says the interpreter broke (a
+// wasm trap, a stack overflow, Pyodide's fatal error). Libraries leave other
+// rejections behind: urllib3 starts a helper worker for streaming downloads,
+// which WebKit refuses with an error Event that nobody handles.
+const FATAL = /fatal error|unreachable|out of bounds|call stack|RuntimeError|Aborted/i;
 addEventListener("unhandledrejection", (e) => {
   e.preventDefault();
-  reportEscaped(String(e.reason?.message ?? e.reason));
+  const reason = e.reason;
+  const message = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason?.message ?? reason);
+  if (reason instanceof Error && FATAL.test(message)) reportEscaped(message);
+  else console.warn("unhandled rejection (ignored):", reason);
 });
 
 onmessage = async (e) => {

@@ -2,7 +2,7 @@
 // large title, search, swipe actions, long-press context menu.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { basename, dirname, type Entry, fs, haptic, join } from "./host";
-import { ChevronLeft, ChevronRight, DocPlus, Duplicate, Ellipsis, FileIcon, FolderIcon, FolderPlus, Pencil, Search, Sort, Trash } from "./Icons";
+import { ChevronLeft, ChevronRight, DocPlus, Duplicate, Ellipsis, FileIcon, FolderIcon, FolderPlus, Gear, Pencil, Search, Sort, Trash } from "./Icons";
 import { Menu, type MenuSection } from "./ui/Menu";
 
 interface Props {
@@ -13,6 +13,8 @@ interface Props {
   onOpenFile: (path: string) => void;
   onRenamed: (from: string, to: string) => void;
   onDeleted: (path: string) => void;
+  onFind: () => void;
+  onSettings: () => void;
 }
 
 const SORT_KEY = "pyslopnista.sort";
@@ -142,7 +144,8 @@ function Row(props: {
 
 // -- the browser ---------------------------------------------------------------------------
 
-export function FileBrowser({ dir, currentFile, refreshKey, onOpenDir, onOpenFile, onRenamed, onDeleted }: Props) {
+export function FileBrowser(props: Props) {
+  const { dir, currentFile, refreshKey, onOpenDir, onOpenFile, onRenamed, onDeleted } = props;
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -256,6 +259,10 @@ export function FileBrowser({ dir, currentFile, refreshKey, onOpenDir, onOpenFil
         [
           { label: `Sort by Name${sort === "name" ? " ✓" : ""}`, icon: <Sort size={19} />, onSelect: () => { setSort("name"); localStorage.setItem(SORT_KEY, "name"); } },
           { label: `Sort by Date${sort === "date" ? " ✓" : ""}`, icon: <Sort size={19} />, onSelect: () => { setSort("date"); localStorage.setItem(SORT_KEY, "date"); } },
+        ],
+        [
+          { label: `Find in ${dir ? basename(dir) : "Files"}…`, icon: <Search size={19} />, onSelect: props.onFind },
+          { label: "Settings…", icon: <Gear size={19} />, onSelect: props.onSettings },
         ],
       ],
     });

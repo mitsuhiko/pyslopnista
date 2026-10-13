@@ -7,18 +7,31 @@ import "./styles.css";
 // software keyboard (WKWebView does not resize the layout viewport).
 function trackViewport() {
   const vv = window.visualViewport;
-  const update = () => {
+  let frame = 0;
+  let last = "";
+  const apply = () => {
+    frame = 0;
+    // A zoomed viewport is not a keyboard: leave the layout alone.
+    if (vv && Math.abs(vv.scale - 1) > 0.01) return;
     const height = vv ? vv.height : window.innerHeight;
+    const top = vv ? vv.offsetTop : 0;
+    const key = `${height}:${top}:${window.innerHeight}`;
+    if (key === last) return; // nothing changed: do not touch the layout
+    last = key;
     document.documentElement.style.setProperty("--vvh", `${height}px`);
-    document.documentElement.style.setProperty("--vv-top", `${vv ? vv.offsetTop : 0}px`);
+    document.documentElement.style.setProperty("--vv-top", `${top}px`);
     // A visual viewport much shorter than the layout viewport means the keyboard is up.
     document.documentElement.classList.toggle("keyboard-open", window.innerHeight - height > 120);
-    window.scrollTo(0, 0);
+    if (window.scrollY !== 0) window.scrollTo(0, 0);
+  };
+  // At most once per frame, after the browser has settled.
+  const update = () => {
+    if (!frame) frame = requestAnimationFrame(apply);
   };
   vv?.addEventListener("resize", update);
   vv?.addEventListener("scroll", update);
   window.addEventListener("resize", update);
-  update();
+  apply();
 }
 
 trackViewport();

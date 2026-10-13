@@ -6,11 +6,12 @@ import WebKit
 /// WKWebView's content view. It also replaces the default prev/next/done bar.
 ///
 /// The web app tells us which kind of field has focus (`keyboard.mode`):
-/// "code" (editor) and "console" (>>>) show the keys, "plain" shows nothing
-/// (no prev/next/done bar either).
+/// "code" (editor) and "console" (>>>, input()) show the keys and get plain
+/// keyboard traits (no capitalization, autocorrect or smart punctuation);
+/// "plain" (file search, UI apps) shows nothing and keeps the element's traits.
 @MainActor
 final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
-    /// code: the editor (keys + code actions), console: the >>> field (keys), plain: anything else.
+    /// code: the editor (keys + code actions), console: >>> and input() (keys), plain: anything else.
     enum Mode: String { case code, console, plain }
 
     struct Key {
@@ -84,6 +85,14 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
             return cls.perform(sel)?.takeUnretainedValue() as? NSObject
         }()
         if via == "keyboard" { notes.append(impl == nil ? "no UIKeyboardImpl" : "UIKeyboardImpl") }
+        // The traits the keyboard sees (BrowserEngineKit or legacy).
+        for name in ["extendedTraitsDelegate", "textInputTraits"] {
+            let sel = NSSelectorFromString(name)
+            guard content.responds(to: sel), let traits = content.perform(sel)?.takeUnretainedValue() as? NSObject else { continue }
+            let get = { (key: String) in (traits.value(forKey: key) as? Int).map(String.init) ?? "?" }
+            notes.append("traits(\(name)) autocap=\(get("autocapitalizationType")) autocorrect=\(get("autocorrectionType")) quotes=\(get("smartQuotesType"))")
+            break
+        }
         for ch in text {
             if let impl, impl.responds(to: NSSelectorFromString("addInputString:")) {
                 impl.perform(NSSelectorFromString("addInputString:"), with: String(ch))
@@ -115,10 +124,45 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
             }
             let selector = #selector(getter: UIResponder.inputAccessoryView)
             class_addMethod(created, selector, imp_implementationWithBlock(block), "@@:")
+            Self.addPlainTraits(to: created, base: base)
             objc_registerClassPair(created)
             subclass = created
         }
         if let subclass { object_setClass(content, subclass) }
+    }
+
+    /// Code fields (editor, >>>, input()) get no auto-capitalization, autocorrection,
+    /// spell checking or smart punctuation, whatever WebKit derived from the
+    /// element: WKContentView builds the keyboard traits in _updateTextInputTraits:
+    /// (legacy and BrowserEngineKit traits alike), so we adjust them after it.
+    private static func addPlainTraits(to subclass: AnyClass, base: AnyClass) {
+        let selector = sel_getUid("_updateTextInputTraits:")
+        guard let method = class_getInstanceMethod(base, selector) else {
+            Coordinator.appendDocument(".probe-log.txt", "[keyboard] _updateTextInputTraits: not found\n")
+            return
+        }
+        typealias Original = @convention(c) (AnyObject, Selector, AnyObject) -> Void
+        let original = unsafeBitCast(method_getImplementation(method), to: Original.self)
+        let block: @convention(block) (AnyObject, AnyObject) -> Void = { me, traits in
+            original(me, selector, traits)
+            guard MainActor.assumeIsolated({ KeyboardAccessory.shared.mode != .plain }), let traits = traits as? NSObject else { return }
+            let values: [(String, Int)] = [
+                ("autocapitalizationType", UITextAutocapitalizationType.none.rawValue),
+                ("autocorrectionType", UITextAutocorrectionType.no.rawValue),
+                ("spellCheckingType", UITextSpellCheckingType.no.rawValue),
+                ("smartQuotesType", UITextSmartQuotesType.no.rawValue),
+                ("smartDashesType", UITextSmartDashesType.no.rawValue),
+                ("smartInsertDeleteType", UITextSmartInsertDeleteType.no.rawValue),
+            ]
+            for (key, value) in values {
+                let setter = sel_getUid("set\(key.prefix(1).uppercased())\(key.dropFirst()):")
+                guard traits.responds(to: setter) else { continue }
+                // Only write a changed value: setting a trait can make UIKit ask for
+                // the traits again, which must not turn into a loop.
+                if (traits.value(forKey: key) as? Int) != value { traits.setValue(value, forKey: key) }
+            }
+        }
+        class_addMethod(subclass, selector, imp_implementationWithBlock(block), method_getTypeEncoding(method))
     }
 
     /// Let element.focus() from JavaScript show the keyboard without a tap (for

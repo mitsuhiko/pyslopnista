@@ -11,6 +11,9 @@ final class CodeWebView: WKWebView {
         let jump = UIAction(title: "Jump to Definition", image: UIImage(systemName: "arrow.forward.to.line")) { [weak self] _ in
             self?.evaluateJavaScript("window.__pyslopKey?.('definition')")
         }
-        builder.insertChild(UIMenu(options: .displayInline, children: [jump]), atStartOfMenu: .root)
+        let info = UIAction(title: "Show Info", image: UIImage(systemName: "info.circle")) { [weak self] _ in
+            self?.evaluateJavaScript("window.__pyslopKey?.('info')")
+        }
+        builder.insertChild(UIMenu(options: .displayInline, children: [jump, info]), atStartOfMenu: .root)
     }
 }
