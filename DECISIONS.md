@@ -145,7 +145,7 @@ through the same mechanism (not done yet).
 
 ## D13: Use the wasm-GC call trampoline and enable JSPI; keep Atomics for our own blocking calls
 
-2026-10-13 - Accepted (pending device check, Q12)
+2026-10-13 - Accepted (device check passed on iPhone 14 Pro / iOS 27, `spikes/device-perf/`)
 
 The JSPI "hang" was not a WebKit bug. CPython's Emscripten build sniffs the
 iOS user agent and falls back to a JavaScript call trampoline (gh-130418, for
@@ -185,6 +185,22 @@ version. No special headers are required: without cross-origin isolation the
 app runs without SharedArrayBuffer (no `input()`, no Stop), which UI apps don't
 need. Offline support and self-hosted Pyodide come later.
 
+## D16: Python stays in Web Workers; an escaped error counts as a crash
+
+2026-10-13 - Accepted
+
+On devices, WebKit worker threads have a 512 KB native stack (about 544 wasm
+frames). The main thread has only about 2x more on iOS (simulators overstate
+this, since they use macOS's 8 MB main-thread stack). Recursion through C code
+(e.g. `json.loads` of deeply nested data, `repr`, recursion via `map`)
+overflows the native stack after 100-1,000 levels and Pyodide dies with a
+fatal `RangeError`, because CPython's guard only measures Emscripten's
+linear-memory stack. Moving Python to a main thread would cost JSPI-only
+blocking and a more complex Stop for 2-4x more depth, so workers stay (D6).
+Any error escaping the worker ends the run as "Python crashed" and the worker
+is replaced. Making CPython raise `RecursionError` in time is Q14. Evidence:
+`spikes/device-perf/`.
+
 ## Proposed (not yet decided)
 
 - **P1:** The editor is CodeMirror 6. (Implied by D4; confirm after testing it on a device.)
@@ -194,13 +210,12 @@ need. Offline support and self-hosted Pyodide come later.
 ## Open questions
 
 - **Q2:** Can WebKit evict `app://` web storage? It survives relaunch and reinstall, but `persist()` is denied (`spikes/ios-host/`).
-- **Q3:** Blocking-style worker → Swift call cost on a real device. Simulator: about 0.1 ms for all paths (`spikes/ios-host/`).
 - **Q4:** Should the agent run locally, in the cloud, or both, given background suspension?
-- **Q5:** Pyodide on a real phone: cold and warm start, memory ceiling, speed compared to native CPython. Simulator: boot about 770 ms, 1 GB allocation OK, 1.4-3x slower than native CPython (`spikes/pyodide-worker/`).
-- **Q12:** Is WebKit bug 293113 (wasm-GC `ref.cast` failing in hot functions, device only) fixed on iOS 27 devices? Run a heavy workload with the wasm-GC trampoline (`gc=1`) on a real iPhone. This decides D13 vs. D10.
-- **Q13:** File the upstream reports listed in `spikes/jspi-repro/README.md` (CPython UA check, Pyodide lost `SuspendError`, WebKit `Suspending` callable).
-- **Q6:** Can Python run when triggered from App Intents / Shortcuts while the app is in the background?
+- **Q6:** Can Python run when triggered from App Intents / Shortcuts while the app is in the background? (Known: a running script is paused while the app is in the background and resumes afterwards, `spikes/device-perf/`.)
 - **Q7:** Do Pyodide's packages cover typical teaching material? Does PyPI accept Emscripten wheels? (Pyodide's version numbers now follow CPython: 314.x is 3.14, 315 is in alpha; 357 packages; wheels tagged `pyemscripten_2026_0_wasm32`.)
 - **Q8:** JSPI support in Chrome and Firefox (matters for published apps).
 - **Q9:** App Review: guideline 2.5.2 (learning-to-code exception), 4.7 (gallery of user apps), 1.2 (user-generated content).
 - **Q10:** Model access for learners: hosted gateway, billing, in-app purchase rules.
+- **Q13:** File the upstream reports listed in `spikes/jspi-repro/README.md` (CPython UA check, Pyodide lost `SuspendError`, WebKit `Suspending` callable).
+- **Q14:** Make CPython raise `RecursionError` before the worker's native stack overflows, e.g. by lowering `c_stack_soft_limit` to match the measured native capacity, or report it to Pyodide/CPython (`spikes/device-perf/`).
+- **Q15:** Memory: iOS kills WebContent at about 1.9 GB (iPhone 14 Pro) without a `MemoryError`. Cap the wasm heap below the jetsam limit, and have the host recover from WebContent termination (recreate the web view, report "out of memory").

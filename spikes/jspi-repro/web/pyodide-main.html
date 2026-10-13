@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pyodide on the main thread: C recursion limits</title>
+<pre id="out">running</pre>
+<script type="module">
+// Same cases as pyodide-worker's "crec" steps, but with Pyodide on the page's
+// main thread (fresh instance per case, since a stack overflow is fatal).
+const out = document.getElementById("out");
+const bridge = window.webkit?.messageHandlers?.bridge
+  ? (op, value) => window.webkit.messageHandlers.bridge.postMessage({ op, value })
+  : (op, value) => fetch("/__bridge", { method: "POST", body: JSON.stringify({ op, value }) });
+const { loadPyodide } = await import("/pyodide/pyodide.mjs");
+const cases = {
+  json: (n) => `import json\njson.loads('[' * ${n} + ']' * ${n})`,
+  repr: (n) => `x = []\nfor _ in range(${n}): x = [x]\nrepr(x)`,
+  map: (n) => `import sys\nsys.setrecursionlimit(1000000)\ndef f(n): return 0 if n == 0 else sum(map(f, [n - 1])) + 1\nf(${n})`,
+};
+const results = { ua: navigator.userAgent };
+for (const [name, code] of Object.entries(cases)) {
+  for (const n of [250, 1000, 5000, 20000, 100000]) {
+    let r;
+    try {
+      const py = await loadPyodide({ indexURL: new URL("/pyodide/", location.href).href });
+      try { py.runPython(code(n)); r = "ok"; }
+      catch (e) { r = String(e.message).includes("RecursionError") ? "RecursionError" : "error: " + String(e.message).split("\n").slice(-2).join(" ").slice(0, 80); }
+    } catch (e) { r = "fatal: " + String(e.message ?? e).slice(0, 80); }
+    results[`${name}_${n}`] = r;
+    out.textContent += `\n${name} ${n}: ${r}`;
+    bridge("log", `${name} ${n}: ${r}`);
+    if (r !== "ok") break;
+  }
+}
+await bridge("result", JSON.stringify(results, null, 2));
+</script>

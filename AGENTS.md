@@ -20,7 +20,7 @@ Spike queue (update the status here). The pi-durable agent always comes last
 1. [x] `ios-host`: Swift host, WKWebView, `app://` scheme handler; probe inside it (Q1 answered: D9; Q2/Q3 narrowed)
 2. [x] `pyodide-worker`: bundled Pyodide in a worker: console, `input()`, interrupt, restart, package cache (D10-D12; open: PyPI offline cache, Q11)
 3. [x] `ui-toolkit`: declarative Python UI in the app and exported as a static site (D14, D15)
-4. [ ] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, App Intents, wasm-GC trampoline check (Q3, Q5, Q6, Q12)
+4. [x] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, wasm-GC trampoline check (D13 confirmed, D16; open: App Intents Q6, Q14, Q15)
 5. [ ] `agent` (last): pi-durable in the web view, with a SQLite bridge adapter, `python` tool and proxied providers (D7, Q4)
 
 Done:
@@ -36,3 +36,4 @@ Done:
   the simulator. Prefer the app over Safari for automated runs; driving Safari
   with `simctl openurl` reuses tabs and is unreliable.
 - Never claim a result from the simulator or Safari applies to a real device or to WKWebView; say which one was tested.
+- Device runs: `spikes/device-perf/run.sh` (paired iPhone 14 Pro, personal team `ZRL6J4P42H`). The phone must be unlocked; ask the user first.

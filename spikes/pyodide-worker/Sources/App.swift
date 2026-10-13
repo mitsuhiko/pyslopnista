@@ -23,6 +23,11 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     )
 
     func makeWebView() -> WKWebView {
+        // Device runs are read back with devicectl; clear old results first.
+        if CommandLine.arguments.contains("--selftest") {
+            try? FileManager.default.removeItem(at: Self.documentURL("probe-result.json"))
+            try? FileManager.default.removeItem(at: Self.documentURL("probe-log.txt"))
+        }
         let config = WKWebViewConfiguration()
         config.setURLSchemeHandler(schemeHandler, forURLScheme: AppSchemeHandler.scheme)
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "bridge")
@@ -77,6 +82,12 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if CommandLine.arguments.contains("--selftest") {
+            // Reloading would restart the self-test forever; record the crash instead.
+            Self.appendDocument("probe-log.txt", "[host] web content process terminated\n")
+            Self.writeDocument("probe-result.json", #"{"webContentTerminated": true}"#)
+            return
+        }
         Self.appendDocument("probe-log.txt", "[host] web content process terminated; reloading\n")
         webView.reload()
     }

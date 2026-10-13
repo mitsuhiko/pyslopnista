@@ -16,7 +16,7 @@ export async function selftest({ pool, runCode, append, stop, only }) {
   const log = (msg) => bridge("log", msg);
 
   async function step(name, code, opts = {}) {
-    if (only && !only.includes(name)) return;
+    if (only && !only.some((o) => name === o || name.startsWith(`${o}_`))) return;
     captured = "";
     append("system", `\n--- ${name} ---\n`);
     const t0 = performance.now();
@@ -130,6 +130,78 @@ export async function selftest({ pool, runCode, append, stop, only }) {
     "t = time.perf_counter(); n = len(re.findall(r'\\w+@\\w+\\.com', ' foo@bar.com x' * 200_000)); f = time.perf_counter() - t",
     "print(f'fib30 {a:.3f}  sumsq10M {b:.3f}  dict2M {c:.3f}  json300k {e:.3f}  regex {f:.3f}')",
   ].join("\n"));
+
+  // Hammers C function-pointer calls (they all go through CPython's call
+  // trampoline) for 8 s so hot functions reach WebKit's optimizing tiers
+  // (WebKit bug 293113 only showed in hot code on devices).
+  await step("trampoline_stress", [
+    "import time, json, re, functools, operator",
+    "t0 = time.perf_counter(); rounds = 0; acc = 0",
+    "while time.perf_counter() - t0 < 8:",
+    "    d = {}",
+    "    for i in range(20000):",
+    "        s = str(i); d[s] = len(s); d.get(s); [].append(i); abs(-i); max(i, 3); isinstance(i, int)",
+    "    acc += sum(sorted(d.values(), key=abs)[:10])",
+    "    acc += len(json.dumps(list(d.items())[:200]))",
+    "    acc += len(re.findall(r'[0-9]+', ' '.join(d)))",
+    "    acc += functools.reduce(operator.add, range(1000))",
+    "    rounds += 1",
+    "print('rounds', rounds, 'acc', acc)",
+  ].join("\n"));
+
+  // Device probes (not part of the default run; select them explicitly).
+  if (only) {
+    await step("recursion_depth", [
+      "import sys",
+      "def f(n): return 0 if n == 0 else f(n - 1) + 1",
+      "print('default limit', sys.getrecursionlimit())",
+      "res = {}",
+      "for depth in (500, 1000, 2000, 4000, 8000, 16000, 32000):",
+      "    sys.setrecursionlimit(depth + 200)",
+      "    try:",
+      "        f(depth); res[depth] = 'ok'",
+      "    except RecursionError:",
+      "        res[depth] = 'RecursionError'",
+      "    except BaseException as e:",
+      "        res[depth] = f'{type(e).__name__}: {str(e)[:60]}'",
+      "print(res)",
+    ].join("\n"));
+    // One step (= one fresh worker) per case, since a native stack overflow
+    // kills the interpreter. Select with "crec".
+    const crecCases = {
+      json: (n) => `import json\njson.loads('[' * ${n} + ']' * ${n})`,
+      repr: (n) => `x = []\nfor _ in range(${n}): x = [x]\nrepr(x)`,
+      deepcopy: (n) => `import copy\nx = []\nfor _ in range(${n}): x = [x]\ncopy.deepcopy(x)`,
+      map: (n) => `import sys\nsys.setrecursionlimit(100000)\ndef f(n): return 0 if n == 0 else sum(map(f, [n - 1])) + 1\nf(${n})`,
+    };
+    for (const [name, code] of Object.entries(crecCases)) {
+      for (const n of [100, 250, 500, 1000, 2000, 5000]) {
+        await step(`crec_${name}_${n}`, `${code(n)}\nprint('ok')`);
+        if (r[`crec_${name}_${n}`] && !r[`crec_${name}_${n}`].ok) break;
+      }
+    }
+    await step("fatal_stack_overflow", "import json\njson.loads('[' * 5000 + ']' * 5000)\nprint('survived')");
+    await step("after_fatal", "print('next run works')");
+    await step("memory_ceiling", [
+      "import host",
+      "chunks = []; mb = 0",
+      "try:",
+      "    while True:",
+      "        chunks.append(bytearray(64 * 1024 * 1024)); mb += 64",
+      "        host.call_sync('log', f'memory_ceiling: {mb} MB')",
+      "except MemoryError:",
+      "    print('MemoryError after', mb, 'MB')",
+    ].join("\n"));
+    await step("background_ticks", [
+      "import time, host",
+      "t0 = time.monotonic(); last = t0; gaps = []",
+      "for i in range(int(host.call_sync('echo', 75))):",
+      "    time.sleep(1)",
+      "    now = time.monotonic(); gaps.append(round(now - last, 2)); last = now",
+      "    host.call_sync('log', f'tick {i} t={now - t0:.1f} gap={gaps[-1]}')",
+      "print('max gap', max(gaps), 'total', round(last - t0, 1), 'big gaps', [g for g in gaps if g > 1.5])",
+    ].join("\n"));
+  }
 
   await step("memory_1gb", `x = bytearray(1024 * 1024 * 1024)\nprint(len(x) // 2**20, "MB")`);
 

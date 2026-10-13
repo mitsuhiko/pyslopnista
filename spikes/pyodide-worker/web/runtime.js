@@ -17,14 +17,17 @@ export const bridge = window.webkit?.messageHandlers?.bridge
       return reply.value;
     };
 
-/** Options default to the in-app setup; query parameters jspi=1 / gc=1 toggle JSPI. */
+/**
+ * Options default to the in-app setup: wasm-gc trampoline + JSPI (D13).
+ * Query parameters jspi=0 / gc=0 switch back to the JS trampoline without JSPI.
+ */
 export function defaultOptions() {
   const params = new URLSearchParams(location.search);
   return {
     indexURL: new URL("/pyodide/", location.href).href,
     packageBaseUrl: new URL("/pkgs/", location.href).href,
-    jspi: params.get("jspi") === "1",
-    gcTrampoline: params.get("gc") === "1",
+    jspi: params.get("jspi") !== "0",
+    gcTrampoline: params.get("gc") !== "0",
     files: {},
   };
 }
@@ -79,6 +82,17 @@ export class PyWorker {
       case "done":
         this.finish(msg);
         break;
+      case "worker-error": {
+        // An error escaped Pyodide (typically a native stack overflow, which
+        // Pyodide treats as fatal). The interpreter is unusable: end the run
+        // and kill the worker; the pool hands out a fresh one next time.
+        const hint = /call stack/i.test(msg.error)
+          ? " (recursion too deep for the worker's native stack)"
+          : "";
+        this.onOutput("stderr", `Python crashed: ${msg.error}${hint}\n`);
+        this.terminate(`crashed: ${msg.error}${hint}`);
+        break;
+      }
     }
   }
 
@@ -159,6 +173,7 @@ export class PyWorker {
   }
 
   terminate(reason = "terminated") {
+    this.dead = true;
     this.worker.terminate();
     this.finish({ ok: false, error: reason, ms: 0, killed: true });
   }

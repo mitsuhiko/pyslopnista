@@ -129,6 +129,11 @@ async function run({ code, filename }) {
   }
 }
 
+// Surface anything that escapes (e.g. Pyodide fatal errors thrown from
+// callbacks) instead of silently hanging the run.
+addEventListener("error", (e) => postMessage({ type: "worker-error", error: String(e.message ?? e) }));
+addEventListener("unhandledrejection", (e) => postMessage({ type: "worker-error", error: String(e.reason?.message ?? e.reason) }));
+
 onmessage = async (e) => {
   const msg = e.data;
   switch (msg.type) {

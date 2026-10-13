@@ -104,7 +104,24 @@ async function viaPath(path, { sig = false } = {}) {
   return expect(await WebAssembly.promising(exports.direct)(null, resolvedLater(8, "timer")), 8);
 }
 
+async function maxDepth(fn) {
+  let lo = 0, hi = 1 << 22;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    try { fn(mid); lo = mid; } catch { hi = mid - 1; }
+  }
+  return lo;
+}
+
 export const tests = {
+  stack_depth: async () => {
+    const e = (await WebAssembly.instantiate(await compile("stack.wasm"), {})).exports;
+    const jsRec = (n) => (n === 0 ? 0 : 1 + jsRec(n - 1));
+    const wasm = await maxDepth(e.rec);
+    const wasmFat = await maxDepth(e.fat);
+    const js = await maxDepth(jsRec);
+    return { ok: true, value: `wasm=${wasm} wasmFat=${wasmFat} js=${js}` };
+  },
   path_streaming: () => viaPath("streaming"),
   path_bytes: () => viaPath("bytes"),
   path_sync_instance: () => viaPath("sync_instance"),
