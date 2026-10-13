@@ -116,6 +116,9 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
         guard let content = contentView else { return }
         Self.allowProgrammaticFocus(contentClass: object_getClass(content)!)
         let base: AnyClass = object_getClass(content)!
+        // install runs again after each navigation: the view may already be ours
+        // (subclassing it again would chain every override twice).
+        if NSStringFromClass(base).hasSuffix("_PyslopAccessory") { return }
         let name = "\(NSStringFromClass(base))_PyslopAccessory"
         var subclass: AnyClass? = NSClassFromString(name)
         if subclass == nil, let created = objc_allocateClassPair(base, name, 0) {

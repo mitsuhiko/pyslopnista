@@ -45,6 +45,7 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
         }
 
         let config = WKWebViewConfiguration()
+        Self.renderAtDisplayRate(config.preferences)
         config.setURLSchemeHandler(schemeHandler, forURLScheme: AppSchemeHandler.scheme)
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "bridge")
 
@@ -259,6 +260,25 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     }
 
     // MARK: helpers
+
+    /// WebKit renders pages (requestAnimationFrame, CSS animations, scrolling
+    /// updates) near 60 fps by default, even on 120 Hz displays. Turn that off
+    /// through the experimental-features SPI (WKPreferencesPrivate.h) so the app
+    /// runs at the display's rate; together with CADisableMinimumFrameDurationOnPhone.
+    private static func renderAtDisplayRate(_ preferences: WKPreferences) {
+        let featuresSel = NSSelectorFromString("_features")
+        let setSel = NSSelectorFromString("_setEnabled:forFeature:")
+        guard WKPreferences.responds(to: featuresSel), preferences.responds(to: setSel),
+              let features = WKPreferences.perform(featuresSel)?.takeUnretainedValue() as? [NSObject],
+              let feature = features.first(where: { ($0.value(forKey: "key") as? String) == "PreferPageRenderingUpdatesNear60FPSEnabled" })
+        else {
+            appendDocument(".probe-log.txt", "[display] PreferPageRenderingUpdatesNear60FPSEnabled not found\n")
+            return
+        }
+        typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        let set = unsafeBitCast(preferences.method(for: setSel), to: SetEnabled.self)
+        set(preferences, setSel, false, feature)
+    }
 
     static func documentURL(_ name: String) -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(name)

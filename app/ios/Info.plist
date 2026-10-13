@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged with the keys Xcode generates (GENERATE_INFOPLIST_FILE, INFOPLIST_KEY_*). -->
+<plist version="1.0">
+<dict>
+	<!-- Without it, iPhones with ProMotion run the app's animations and scrolling at 60 Hz. -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<!-- Documents shows up in the Files app ("On My iPhone"). Xcode does not
+	     generate this one from INFOPLIST_KEY_UIFileSharingEnabled. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+</dict>
+</plist>

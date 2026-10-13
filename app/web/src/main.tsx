@@ -34,7 +34,30 @@ function trackViewport() {
   apply();
 }
 
+// Containers with overflow: hidden only hide their scrollbars: focusing or
+// revealing something they clip (the off-screen page, a hidden sheet)
+// scrolls them anyway, and nothing scrolls them back. Undo that right away.
+function pinClippedScrollers() {
+  const clipped = new WeakMap<Element, boolean>();
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      const el = e.target;
+      if (!(el instanceof HTMLElement)) return;
+      let pinned = clipped.get(el);
+      if (pinned === undefined) {
+        const style = getComputedStyle(el);
+        pinned = style.overflowX === "hidden" && style.overflowY === "hidden";
+        clipped.set(el, pinned);
+      }
+      if (pinned && (el.scrollLeft || el.scrollTop)) el.scrollTo(0, 0);
+    },
+    { capture: true, passive: true },
+  );
+}
+
 trackViewport();
+pinClippedScrollers();
 await seedExamples();
 
 let resolveController: (c: AppController) => void;

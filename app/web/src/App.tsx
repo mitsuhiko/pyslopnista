@@ -976,29 +976,70 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
   );
   const webKeyBar = !isNative && (editorFocused || location.hash.includes("keybar")) && <KeyBar editor={focusedEditor} onDismiss={() => focusedEditor.current?.blur()} />;
 
-  // Edge swipe from the left goes back to the file list (iPhone).
-  const edgeStart = useRef<{ x: number; id: number } | null>(null);
-  const edgeHandlers = {
-    onPointerDown: (e: React.PointerEvent) => {
-      if (e.clientX < 22 && e.pointerType !== "mouse") {
-        edgeStart.current = { x: e.clientX, id: e.pointerId };
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      }
-    },
-    onPointerMove: (e: React.PointerEvent) => {
-      if (edgeStart.current) setEdgeDrag(Math.max(0, e.clientX - edgeStart.current.x));
-    },
-    onPointerUp: (e: React.PointerEvent) => {
-      if (!edgeStart.current) return;
-      const dx = e.clientX - edgeStart.current.x;
-      edgeStart.current = null;
-      setEdgeDrag(null);
-      if (dx > window.innerWidth * 0.33) {
-        void flush();
-        setPage("files");
-      }
-    },
+  // Edge swipe from the left goes back to the file list (iPhone). Touch
+  // events, not pointer events: a non-passive touchmove can claim the gesture
+  // with preventDefault before the browser starts panning, which would cancel
+  // pointer events half-way (and left the pages pinned mid-swipe). Taps are
+  // never captured, so the "<" of the back button and the gutter keep working.
+  const editorPageRef = useRef<HTMLDivElement>(null);
+  const goBackRef = useRef<() => void>(() => {});
+  goBackRef.current = () => {
+    void flush();
+    setPage("files");
   };
+  useEffect(() => {
+    const el = editorPageRef.current;
+    if (!el) return;
+    let start: { x: number; y: number; id: number; swiping: boolean } | null = null;
+    const find = (list: TouchList) => [...list].find((t) => t.identifier === start?.id);
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches.length === 1 ? e.touches[0] : null;
+      start = t && t.clientX < 22 ? { x: t.clientX, y: t.clientY, id: t.identifier, swiping: false } : null;
+    };
+    const onMove = (e: TouchEvent) => {
+      const t = start && find(e.changedTouches);
+      if (!start || !t) return;
+      const dx = t.clientX - start.x;
+      const dy = Math.abs(t.clientY - start.y);
+      if (!start.swiping) {
+        if (dy > 10 && dy > dx) {
+          start = null; // a vertical scroll, not a swipe
+          return;
+        }
+        if (dx < 8) return;
+        start.swiping = true;
+      }
+      e.preventDefault();
+      setEdgeDrag(Math.max(0, dx));
+    };
+    const onEnd = (e: TouchEvent) => {
+      const t = start && find(e.changedTouches);
+      if (!start || !t) return;
+      const done = e.type === "touchend" && start.swiping && t.clientX - start.x > window.innerWidth * 0.33;
+      start = null;
+      setEdgeDrag(null);
+      if (done) goBackRef.current();
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
+    };
+  }, [wide]); // the narrow layout (with this page) mounts when the window narrows
+  // Whatever happens to a swipe, a page change must never keep the pages
+  // pinned (the inline transform would override every later transition).
+  useEffect(() => {
+    setEdgeDrag(null);
+    // Nothing on the off-screen editor page keeps focus: WebKit refocuses the
+    // last focused element when the app comes back, which would reveal it.
+    const active = document.activeElement;
+    if (page === "files" && !wide && active instanceof HTMLElement && editorPageRef.current?.contains(active)) active.blur();
+  }, [page]);
 
   const overlays = (
     <>
@@ -1069,7 +1110,7 @@ export function App({ onReady }: { onReady?: (c: AppController) => void }) {
       <div
         className={`page editor-page ${editorShown ? "active" : "ahead"} ${edgeDrag !== null ? "dragging" : ""}`}
         style={edgeDrag !== null ? { transform: `translateX(${edgeDrag}px)` } : undefined}
-        {...edgeHandlers}
+        ref={editorPageRef}
       >
         {editorNav}
         <div className="editor-stage">

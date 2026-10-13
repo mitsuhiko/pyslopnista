@@ -106,7 +106,9 @@ input { font: inherit; letter-spacing: inherit; }
 [hidden] { display: none !important; }
 *:focus-visible { outline: 2px solid var(--tint); outline-offset: 2px; }
 
-.app { position: relative; height: 100%; overflow: hidden; }
+/* clip, not hidden: a hidden overflow can still be scrolled, e.g. when focus
+   lands on the off-screen page, which then leaves both pages shifted. */
+.app { position: relative; height: 100%; overflow: clip; }
 
 /* -- pages & navigation (iPhone push transition) -- */
 .page { position: absolute; inset: 0; display: flex; flex-direction: column; transition: transform 0.42s var(--ease); will-change: transform; }
