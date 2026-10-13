@@ -19,6 +19,7 @@ export type RunStatus = "running" | "ok" | "error" | "stopped" | "crashed";
 export interface Run {
   id: number;
   file: string | null; // null: console input
+  dir: string; // the folder the interpreter runs in (resolves traceback paths)
   startedAt: number;
   endedAt: number | null;
   status: RunStatus;
@@ -187,7 +188,8 @@ export class Session {
 
   private startRun(file: string | null) {
     this.flushOutput();
-    const run: Run = { id: this.nextId++, file, startedAt: Date.now(), endedAt: null, status: "running" };
+    const dir = file ? dirname(file) : this.workerDir;
+    const run: Run = { id: this.nextId++, file, dir, startedAt: Date.now(), endedAt: null, status: "running" };
     this.currentRun = run.id;
     this.stopRequested = false;
     this.set({ runs: { ...this.state.runs, [run.id]: run }, runCounter: this.state.runCounter + 1 });
@@ -503,7 +505,8 @@ export class Session {
 export function cleanTraceback(text: string): string {
   const dep = /_pyslop\.DependencyError: ([\s\S]*)$/.exec(text.trim());
   if (dep) return `Dependency error: ${dep[1]}`;
-  const lines = text.replace(/\n+$/, "").split("\n");
+  // Project files are shown relative to the program's folder (its cwd).
+  const lines = text.replace(/\n+$/, "").replaceAll(`File "${PROJECT_ROOT}/`, 'File "').split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];

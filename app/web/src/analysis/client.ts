@@ -1,5 +1,5 @@
 // Main-thread client for the analysis worker (ruff + ty).
-import type { AnalysisRequest, CompletionItem, Problem } from "./protocol";
+import type { AnalysisRequest, CompletionItem, DefinitionTarget, Problem } from "./protocol";
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
@@ -57,6 +57,22 @@ class AnalysisClient {
 
   hover(path: string, text: string, line: number, column: number) {
     return this.request<string | null>({ type: "hover", path, text, line, column });
+  }
+
+  definition(path: string, text: string, line: number, column: number) {
+    return this.request<DefinitionTarget[]>({ type: "definition", path, text, line, column });
+  }
+
+  source(path: string) {
+    return this.request<string>({ type: "source", path });
+  }
+
+  state() {
+    return this.request<{ root: string | null; files: string[]; startedAt: number }>({ type: "state" });
+  }
+
+  setRoot(dir: string) {
+    return this.request<null>({ type: "setRoot", dir });
   }
 
   format(text: string) {

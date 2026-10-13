@@ -26,12 +26,24 @@ iPad. Swift host + web app (D4), Python in Pyodide workers (D2, D6).
   checked. An unresolved import offers "Add “x” to dependencies", which writes
   the block. PyPI goes through the host's cache (offline after the first
   install).
+- **Tabs and split view**:
+  - Every pane has tabs; opening a file adds a tab after the current one, up
+    to 10 per pane (the least recently used one closes).
+  - Long-press a tab for Close, Close Others and Open in Split View.
+  - On iPad, split view shows two panes with a draggable divider. Each pane
+    has its own tabs, and the same file in both panes stays in sync.
+  - Tabs come back after a relaunch. On iPhone the tab strip appears once
+    two files are open.
+- **Go to definition** (ty): "Jump to Definition" in the text selection menu
+  (next to Copy/Paste), in the ⋯ menu, on F12 or with ⌘-click. It works across
+  the program's folder (sibling modules) and into the standard library and the
+  `ui` module, which open as read-only tabs.
 - **Run / Stop**: the file's folder is copied into the interpreter as the
   working directory, so `open()` and imports of sibling modules work. Files the
   program creates or changes are written back. Stop raises `KeyboardInterrupt`
   and kills the program after 1.5 s (D11).
 - **Console**: streaming output, `input()`, tracebacks without Pyodide's
-  internal frames, inline matplotlib plots (`plt.show()`), and a `>>>` prompt
+  internal frames whose `File "x.py", line N` entries open that line, inline matplotlib plots (`plt.show()`), and a `>>>` prompt
   that runs in the program's globals after it finishes (last expression is
   shown, top-level `await` works).
 - **Debugger** (D23):
@@ -77,6 +89,7 @@ app/
                           python (worker pool), host (bridge + browser mock), selftest
     src/analysis/         ruff + ty worker, client, CodeMirror lint/completions/fixes
     src/debug/            breakpoints store, CodeMirror gutter/paused line/inspect, debugger views
+                          (App: panes and tabs, TabBar, navigation for links into files)
 ```
 
 ## Running
@@ -87,23 +100,25 @@ app/
 ./run.sh --device                         # on the paired iPhone (unlocked)
 ./run.sh --device --selftest
 SIM=<udid> ./run.sh                       # a specific simulator (e.g. an iPad)
-FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, run, pane, focus, keybar
+FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, split=<path>, run, pane, focus, keybar
 FRAGMENT="selftest&only=debugger" ./run.sh --selftest   # a subset of the checks
 cd web && npm run dev                     # desktop browser; files in localStorage
 ```
 
 ## Status (2026-10-13)
 
-`./run.sh --selftest` passes all 24 checks in the iPhone 17 simulator. The 19
-checks without the debugger also pass on the iPhone 14 Pro (`--device`). The
-checks are: examples seeded, edit → autosave → run,
+`./run.sh --selftest` passes all 31 checks in the iPhone 17 and iPad Pro 11
+simulators (2026-10-13). An earlier set of 19 also passed on the iPhone 14 Pro
+(`--device`). The checks are: examples seeded, edit → autosave → run,
 `input()`, traceback cleanup, `>>>` console, file write-back, sibling
 imports, inline plot, Stop, UI app, crash recovery, ruff/ty startup,
 diagnostics (F401, invalid-argument-type, unresolved-reference), completions,
 formatting, Pyodide imports not flagged, add-dependency quick fix + install
 from PyPI, cached rerun, requires-python, debugger (breakpoint → evaluate →
 assignment → step → continue, Pause + Stop, breakpoint added while running,
-Inspect after an error, `breakpoint()`).
+Inspect after an error, `breakpoint()`), traceback links, go to definition
+(project and stdlib), tabs, split view (iPad), and typing into the console
+fields through UIKit's text input.
 
 On the iPhone 14 Pro: ruff/ty start in 120-140 ms, the first check of a file
 takes about 400 ms, completions 44 ms, formatting 57 ms; installing a small
@@ -113,13 +128,14 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
 
 - Run results from UI apps that write files after the script returns are not
   written back.
-- The iOS form accessory bar (prev/next/done) still appears above our key bar
-  with the software keyboard.
-- No tabs or multiple open files on iPad; no find-in-project; no settings
-  (font size, wrapping).
+- No find-in-project, go to line or outline; no settings (font size,
+  wrapping); no hardware-keyboard shortcuts for run, stop and the debugger.
+- Typing into the console fields was reported broken on a device (not
+  reproduced yet). Focusing a field from code (`input()`) may not bring up the
+  keyboard by itself.
 - No package UI beyond the script block (imports of Pyodide packages
   auto-load; `micropip` works from the console). No lock files yet.
 - ty has no type information for installed third-party packages (it only
   knows the standard library); their imports are simply not flagged.
-- Hover (type info) and go-to-definition exist in ty but are not wired up for
-  touch yet.
+- Hover (type info) exists in ty but is not wired up for touch yet. "Jump to
+  Definition" in the selection menu has not been tried on a device yet.

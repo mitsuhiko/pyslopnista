@@ -67,6 +67,10 @@ class BreakpointStore {
     if (this.data[path]) this.commit({ ...this.data, [path]: [] });
   }
 
+  clearAll() {
+    if (Object.keys(this.data).length) this.commit({});
+  }
+
   /** A file or folder was renamed. */
   rename(from: string, to: string) {
     const next: Data = {};

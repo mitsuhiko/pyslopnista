@@ -1,7 +1,8 @@
 // Console: runs as blocks (header + output), inline input() right where the
 // program asked, ANSI colors, inline images, and the >>> prompt.
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { basename } from "./host";
+import { basename, join } from "./host";
+import { navigation } from "./navigation";
 import { PausedBlock } from "./debug/DebugViews";
 import { CheckCircle, Error as ErrorIcon, Inspect, PauseCircle, StopCircle, Terminal, Trash } from "./Icons";
 import type { Line, Run, SessionState } from "./session";
@@ -75,6 +76,48 @@ function renderAnsi(text: string): ReactNode {
   }
   push(text.slice(last));
   return out;
+}
+
+// -- tracebacks --------------------------------------------------------------------------
+
+const PROJECT_ROOT = "/home/pyodide/project/";
+const FRAME_LINE = /^(\s*)(File "([^"]+)", line (\d+))(.*)$/;
+
+/** The app path of a traceback's file, if it is one of the project's files. */
+function projectPath(dir: string, filename: string): string | null {
+  if (filename.startsWith("<")) return null;
+  if (filename.startsWith(PROJECT_ROOT)) return join(dir, filename.slice(PROJECT_ROOT.length));
+  if (filename.startsWith("/")) return null; // stdlib, site-packages, runtime
+  return join(dir, filename);
+}
+
+/** stderr with `File "x.py", line 3` turned into links to that line. */
+function renderTraceback(text: string, dir: string): ReactNode {
+  if (text.includes("\x1b") || !text.includes('File "')) return renderAnsi(text);
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    const m = FRAME_LINE.exec(line);
+    const path = m && projectPath(dir, m[3]);
+    const nl = i < lines.length - 1 ? "\n" : "";
+    if (!m || !path) return <Fragment key={i}>{line}{nl}</Fragment>;
+    return (
+      <Fragment key={i}>
+        {m[1]}
+        <span
+          className="tb-link"
+          role="link"
+          tabIndex={0}
+          onClick={() => navigation.open(path, Number(m[4]))}
+          onKeyDown={(e) => e.key === "Enter" && navigation.open(path, Number(m[4]))}
+          title={`Show ${basename(path)}, line ${m[4]}`}
+        >
+          {m[2]}
+        </span>
+        {m[5]}
+        {nl}
+      </Fragment>
+    );
+  });
 }
 
 // -- run headers --------------------------------------------------------------------------
@@ -159,7 +202,7 @@ function InlineInput() {
 
 // -- console -----------------------------------------------------------------------------
 
-function renderLine(line: Line) {
+function renderLine(line: Line, dir: string) {
   return (
     <Fragment key={line.id}>
       {line.kind === "run" ? null : line.kind === "image" ? (
@@ -167,7 +210,7 @@ function renderLine(line: Line) {
       ) : line.kind === "prompt" ? (
         <span className="console-prompt-line">{line.text}{"\n"}</span>
       ) : (
-        <span className={`out ${line.kind}`}>{renderAnsi(line.text)}</span>
+        <span className={`out ${line.kind}`}>{line.kind === "stderr" ? renderTraceback(line.text, dir) : renderAnsi(line.text)}</span>
       )}
     </Fragment>
   );
@@ -277,11 +320,11 @@ export function Console({ state, header }: { state: SessionState; header?: React
                 />
               )}
               <div className="run-body">
-                {before.map(renderLine)}
+                {before.map((l) => renderLine(l, run?.dir ?? ""))}
                 {state.awaitingInput && g.runId === lastRunId && <InlineInput key={state.lines.length} />}
               </div>
               {split !== Infinity && <PausedBlock debug={paused!} />}
-              {after.length > 0 && <div className="run-body paused-output">{after.map(renderLine)}</div>}
+              {after.length > 0 && <div className="run-body paused-output">{after.map((l) => renderLine(l, run?.dir ?? ""))}</div>}
             </section>
           );
         })}

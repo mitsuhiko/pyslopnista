@@ -30,7 +30,7 @@ export async function selftest(app: AppController) {
   const only = new URLSearchParams(location.hash.slice(1)).get("only");
 
   async function step(name: string, fn: () => Promise<Record<string, unknown> | void>) {
-    if (only && !name.includes(only)) return;
+    if (only && !new RegExp(only).test(name)) return;
     const t0 = performance.now();
     try {
       r[name] = { ok: true, ...(await fn()), ms: Math.round(performance.now() - t0) };
@@ -44,7 +44,7 @@ export async function selftest(app: AppController) {
   async function runFile(path: string, code?: string) {
     await app.openFile(path);
     // Wait for React to render the newly opened file into the editor.
-    await until(() => app.currentFile() === path && app.editor()?.view());
+    await until(() => app.currentFile() === path && app.editor()?.currentPath() === path);
     if (code !== undefined) {
       const view = app.editor()!.view()!;
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
@@ -55,6 +55,10 @@ export async function selftest(app: AppController) {
     await until(() => session.getSnapshot().status !== "idle" || performance.now() - t0 > 3000);
     return { done, t0 };
   }
+
+  // Breakpoints live in the web view's storage, which --reset does not clear.
+  breakpoints.clearAll();
+  app.setSplit(false); // a split view restored from the last session
 
   await step("examples_seeded", async () => {
     const names = (await fs.list("Examples")).map((e) => e.name);
@@ -170,7 +174,7 @@ export async function selftest(app: AppController) {
   async function openWith(path: string, code: string) {
     await fs.writeText(path, code);
     await app.openFile(path);
-    await until(() => app.currentFile() === path && app.editor()?.view());
+    await until(() => app.currentFile() === path && app.editor()?.currentPath() === path);
     const view = app.editor()!.view()!;
     if (view.state.doc.toString() !== code) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
     return view;
@@ -341,6 +345,76 @@ export async function selftest(app: AppController) {
     session.resume("continue");
     await until(idle);
     if (!consoleText().includes("x is 42")) throw new Error(consoleText());
+  });
+
+  // -- navigation: traceback links, go to definition, tabs, split view --------------
+
+  const cursorLine = () => {
+    const view = app.editor()?.view();
+    return view ? view.state.doc.lineAt(view.state.selection.main.head).number : -1;
+  };
+
+  await step("traceback_link", async () => {
+    await fs.mkdir("Tests").catch(() => {});
+    await fs.mkdir("Tests/nav").catch(() => {});
+    await fs.writeText("Tests/nav/helper.py", "def average(xs):\n    total = sum(xs)\n    return total / len(xs)\n");
+    await fs.writeText("Tests/nav/main.py", "from helper import average\n\nprint(average([1, 2]))\nprint(average([]))\n");
+    const { done } = await runFile("Tests/nav/main.py");
+    await done;
+    await until(idle);
+    const link = await until(() => [...document.querySelectorAll<HTMLElement>(".tb-link")].find((a) => a.textContent?.includes('"helper.py", line 3')));
+    link.click();
+    await until(() => app.editor()?.currentPath() === "Tests/nav/helper.py" && cursorLine() === 3);
+    return { links: document.querySelectorAll(".tb-link").length };
+  });
+
+  await step("go_to_definition", async () => {
+    await app.openFile("Tests/nav/main.py");
+    await until(() => app.editor()?.currentPath() === "Tests/nav/main.py");
+    const view = app.editor()!.view()!;
+    const line3 = view.state.doc.line(3);
+    view.dispatch({ selection: { anchor: line3.from + line3.text.indexOf("average") + 2 } });
+    const t0 = performance.now();
+    const asked = await app.goToDefinition();
+    try {
+      await until(() => app.editor()?.currentPath() === "Tests/nav/helper.py" && cursorLine() === 1, 5000);
+    } catch {
+      throw new Error(`went to ${app.editor()?.currentPath()}:${cursorLine()} (${JSON.stringify(asked)})`);
+    }
+    const projectMs = Math.round(performance.now() - t0);
+    await app.openFile("Tests/nav/main.py");
+    await until(() => app.editor()?.currentPath() === "Tests/nav/main.py");
+    const v2 = app.editor()!.view()!;
+    v2.dispatch({ selection: { anchor: v2.state.doc.line(3).from + 2 } }); // print
+    await app.goToDefinition();
+    await until(() => app.editor()?.currentPath()?.endsWith("builtins.pyi"));
+    const v3 = app.editor()!.view()!;
+    if (!v3.state.readOnly || !v3.state.doc.lineAt(v3.state.selection.main.head).text.startsWith("def print(")) throw new Error("not at def print");
+    app.closeTab(app.currentFile()!);
+    return { projectMs };
+  });
+
+  await step("tabs", async () => {
+    const pane = () => app.panes().find((p) => p.active === app.currentFile()) ?? app.panes()[0];
+    const tabs = pane().tabs;
+    if (!tabs.includes("Tests/nav/main.py") || !tabs.includes("Tests/nav/helper.py")) throw new Error(JSON.stringify(tabs));
+    if (tabs.some((t) => t.startsWith("ext:"))) throw new Error("closed tab still open");
+    app.closeTab("Tests/nav/helper.py");
+    await until(() => !pane().tabs.includes("Tests/nav/helper.py"));
+    return { open: pane().tabs.length };
+  });
+
+  await step("split_view", async () => {
+    if (!matchMedia("(min-width: 768px)").matches) return { skipped: "iPhone" };
+    await app.openFile("Tests/nav/main.py");
+    app.setSplit(true);
+    await until(() => document.querySelectorAll(".editor-pane").length === 2);
+    await app.openFile("Tests/nav/helper.py"); // opens in the focused (right) pane
+    await until(() => app.panes()[1]?.active === "Tests/nav/helper.py");
+    // The same file in both panes stays in sync.
+    await app.openLocation("Tests/nav/main.py");
+    app.setSplit(false);
+    await until(() => document.querySelectorAll(".editor-pane").length === 1);
   });
 
   // -- typing through iOS text input (native only) ---------------------------------

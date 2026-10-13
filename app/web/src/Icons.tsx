@@ -54,6 +54,11 @@ export const StopCircle = fill(<path d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0
 export const Sidebar = stroke(<><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M9.5 4.5v15M5.5 8h2M5.5 11h2" /></>);
 export const Sort = stroke(<path d="M7 4.5v15M4 16.5l3 3 3-3M17 19.5v-15M14 7.5l3-3 3 3" />);
 
+export const Lock = fill(<path d="M7.5 10V7.5a4.5 4.5 0 0 1 9 0V10h.5A2 2 0 0 1 19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zm2 0h5V7.5a2.5 2.5 0 0 0-5 0z" />);
+export const SplitView = stroke(<><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M12 4.5v15" /></>);
+export const JumpTo = stroke(<><path d="M4 12h12M12 7l5 5-5 5" /><path d="M20 5v14" /></>, 2);
+export const Back = stroke(<path d="M15 4.5 7.5 12l7.5 7.5" />, 2.2);
+
 // Debugger
 export const PauseCircle = fill(<path d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19zM9.6 8h.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-.8a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zm4 0h.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-.8a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />);
 export const Pause = fill(<><rect x="6" y="5" width="4.2" height="14" rx="1.3" /><rect x="13.8" y="5" width="4.2" height="14" rx="1.3" /></>);

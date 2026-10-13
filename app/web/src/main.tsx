@@ -31,7 +31,7 @@ void controller.then((c) => ((window as any).__app = c)); // debugging / UI test
 void import("./session").then((m) => ((window as any).__session = m.session));
 void import("./debug/breakpoints").then((m) => ((window as any).__breakpoints = m.breakpoints));
 
-// Launch hooks for screenshots/debugging: #open=<path>[&bp=<line>,…][&run][&pane=files|editor|console]
+// Launch hooks for screenshots/debugging: #open=<path>[&bp=<line>,…][&split=<path>][&run][&pane=files|editor|console]
 const hook = new URLSearchParams(location.hash.slice(1));
 if (hook.has("open") || hook.has("pane")) {
   const c = await controller;
@@ -40,6 +40,11 @@ if (hook.has("open") || hook.has("pane")) {
     breakpoints.set(hook.get("open")!, hook.get("bp")!.split(",").map((line) => ({ line: Number(line), enabled: true })));
   }
   if (hook.get("open")) await c.openFile(hook.get("open")!);
+  if (hook.get("split")) {
+    c.setSplit(true);
+    await new Promise((r) => setTimeout(r, 300));
+    await c.openFile(hook.get("split")!);
+  }
   if (hook.has("run")) {
     await new Promise((r) => setTimeout(r, 300));
     void c.run();

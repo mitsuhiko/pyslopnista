@@ -5,13 +5,16 @@ import initRuff, { type Diagnostic as RuffDiagnostic, PositionEncoding as RuffEn
 import ruffWasmUrl from "@astral-sh/ruff-wasm-web/ruff_wasm_bg.wasm?url";
 import initTy, { type FileHandle, Position, PositionEncoding, Severity, Workspace as TyWorkspace } from "ty_wasm";
 import tyWasmUrl from "ty_wasm/ty_wasm_bg.wasm?url";
-import type { AnalysisRequest, CompletionItem, Problem } from "./protocol";
+import type { AnalysisRequest, CompletionItem, DefinitionTarget, Problem } from "./protocol";
 
 const ROOT = "/project";
+const STARTED_AT = Date.now();
 const STUBS = "/pyslop-stubs";
 let ruff: RuffWorkspace;
 let ty: TyWorkspace;
 const handles = new Map<string, FileHandle>();
+const stubHandles = new Map<string, FileHandle>();
+let root: string | null = null;
 const texts = new Map<string, string>();
 let ready: Promise<{ ruff: string; tyMs: number; ruffMs: number }> | null = null;
 
@@ -33,8 +36,8 @@ async function init() {
   // the directory only exists once a file is in it.
   try {
     const ui = await (await fetch("/runtime/python/ui.py")).text();
-    ty.openFile(`${STUBS}/ui.py`, ui);
-    ty.updateOptions({ environment: { "python-version": "3.14", "extra-paths": [STUBS] } });
+    stubHandles.set(`${STUBS}/ui.py`, ty.openFile(`${STUBS}/ui.py`, ui));
+    setRoot("");
   } catch {
     // without it, `import ui` is simply not type checked
   }
@@ -101,6 +104,57 @@ function check(path: string, text: string): Problem[] {
   return problems;
 }
 
+/**
+ * Programs run with their folder as cwd, so its modules import as top-level
+ * ones: the folder is an extra search path. ty rejects paths that do not exist
+ * in its file system yet, so it is applied once a file from it is open.
+ */
+let wantedRoot = "";
+let appliedPaths = "";
+function setRoot(dir: string) {
+  wantedRoot = dir;
+  applyRoot();
+}
+function applyRoot() {
+  const extra = stubHandles.size ? [STUBS] : [];
+  if (wantedRoot && [...handles.keys()].some((p) => p.startsWith(`${wantedRoot}/`))) extra.push(`${ROOT}/${wantedRoot}`);
+  const key = extra.join("\n");
+  if (key === appliedPaths) return;
+  ty.updateOptions({ environment: { "python-version": "3.14", "extra-paths": extra } });
+  appliedPaths = key;
+  root = wantedRoot;
+}
+
+function definition(path: string, text: string, line: number, column: number): DefinitionTarget[] {
+  const handle = sync(path, text);
+  const out: DefinitionTarget[] = [];
+  for (const link of ty.gotoDefinition(handle, new Position(line, column))) {
+    const range = link.selection_range ?? link.full_range;
+    const target = link.path;
+    const inProject = target.startsWith(`${ROOT}/`);
+    out.push({
+      path: inProject ? target.slice(ROOT.length + 1) : `ext:${target}`,
+      external: !inProject,
+      start: { line: range.start.line, column: range.start.column },
+      end: { line: range.end.line, column: range.end.column },
+    });
+    link.free();
+  }
+  return out;
+}
+
+function source(path: string): string {
+  const target = path.replace(/^ext:/, "");
+  const stub = stubHandles.get(target);
+  if (stub) return ty.sourceText(stub);
+  const handle = ty.getVendoredFile(target.replace(/^vendored:\/\//, ""));
+  try {
+    return ty.sourceText(handle);
+  } finally {
+    handle.free();
+  }
+}
+
 function complete(path: string, text: string, line: number, column: number): CompletionItem[] {
   const handle = sync(path, text);
   const position = new Position(line, column);
@@ -133,6 +187,7 @@ self.onmessage = async (e: MessageEvent<AnalysisRequest & { id: number }>) => {
         break;
       case "sync":
         for (const f of req.files) sync(f.path, f.text);
+        applyRoot();
         result = null;
         break;
       case "check":
@@ -146,6 +201,19 @@ self.onmessage = async (e: MessageEvent<AnalysisRequest & { id: number }>) => {
         break;
       case "format":
         result = ruff.format(req.text);
+        break;
+      case "definition":
+        result = definition(req.path, req.text, req.line, req.column);
+        break;
+      case "source":
+        result = source(req.path);
+        break;
+      case "state":
+        result = { root, files: [...handles.keys()], startedAt: STARTED_AT };
+        break;
+      case "setRoot":
+        setRoot(req.dir);
+        result = null;
         break;
     }
     self.postMessage({ id, result });

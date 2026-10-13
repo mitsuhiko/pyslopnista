@@ -120,7 +120,7 @@ export function analysisLinter(getPath: () => string | null): Extension {
   return linter(
     async (view: EditorView): Promise<Diagnostic[]> => {
       const path = getPath();
-      if (!path?.endsWith(".py")) return [];
+      if (!path?.endsWith(".py") || path.startsWith("ext:")) return []; // library files are read-only
       const text = view.state.doc.toString();
       let problems: Problem[];
       try {

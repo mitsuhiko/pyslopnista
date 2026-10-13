@@ -6,10 +6,12 @@ import WebKit
 /// WKWebView's content view. It also replaces the default prev/next/done bar.
 ///
 /// The web app tells us which kind of field has focus (`keyboard.mode`):
-/// "code" shows the keys, "plain" shows nothing (no prev/next/done bar either).
+/// "code" (editor) and "console" (>>>) show the keys, "plain" shows nothing
+/// (no prev/next/done bar either).
 @MainActor
 final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
-    enum Mode: String { case code, plain }
+    /// code: the editor (keys + code actions), console: the >>> field (keys), plain: anything else.
+    enum Mode: String { case code, console, plain }
 
     struct Key {
         let label: String
@@ -55,7 +57,7 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
     var enableInputClicksWhenVisible: Bool { true }
 
     /// What WKContentView's inputAccessoryView returns.
-    var currentView: UIView? { mode == .code ? codeBar : nil }
+    var currentView: UIView? { mode == .plain ? nil : codeBar }
 
     func setMode(_ mode: Mode) {
         guard mode != self.mode else { return }

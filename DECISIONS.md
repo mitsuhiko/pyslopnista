@@ -326,6 +326,33 @@ UI, aimed at staying out of the way:
 - **UI apps:** a stop inside a callback hides the app view until the program
   continues.
 
+## D24: Panes with tabs, one way to open a place in a file
+
+2026-10-13 - Accepted
+
+- **Panes:** the editor area is one pane (iPhone) or two (iPad split view).
+  Each pane has its own tabs and its own CodeMirror view. Edits to a file
+  that is open in both panes are mirrored as remote transactions, which are
+  not saved twice or added to the other pane's undo history.
+- **Opening a place:** traceback links, go to definition and the debugger all
+  use `openLocation(path, line)`. It focuses the pane where the file is
+  already shown, otherwise adds a tab to the focused pane, and flashes the
+  line.
+- **Tab limit:** a pane keeps at most 10 tabs; the least recently used one
+  closes.
+- **Library files:** the standard library and our runtime stubs (ty's
+  vendored files) open as read-only tabs (`ext:` paths) and are not linted.
+- **Analysis root:** ty gets the running program's folder as an extra search
+  path, so sibling modules resolve as they do at run time. That path is only
+  applied once ty has a file from that folder, because it rejects search
+  paths that don't exist in its in-memory file system.
+- **Jump to Definition on touch:** a `WKWebView` subclass adds it to the text
+  selection menu through `buildMenu(with:)`, which WebKit consults for that
+  menu. It shows only while the editor (not `>>>`) has focus.
+- **Loading:** an editor never shows a file before its text is loaded. It
+  would otherwise create an empty document that saving writes back, which
+  happened with restored tabs.
+
 ## Proposed (not yet decided)
 
 (none)

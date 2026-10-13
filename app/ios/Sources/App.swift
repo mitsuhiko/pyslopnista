@@ -43,7 +43,7 @@ final class Coordinator: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
         config.setURLSchemeHandler(schemeHandler, forURLScheme: AppSchemeHandler.scheme)
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "bridge")
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = CodeWebView(frame: .zero, configuration: config)
         webView.isInspectable = true
         webView.navigationDelegate = self
         webView.uiDelegate = self
