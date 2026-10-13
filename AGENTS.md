@@ -5,6 +5,9 @@ app, a thin Swift host and a pi-durable coding agent. Early research phase.
 
 ## Where things live
 
+- `app/`: the real app (see `app/README.md`). Build and test with `app/run.sh`
+  (`--selftest`, `--device`). Keep `./run.sh --selftest` passing.
+
 - `GOALS.md`: the feature set, tagged [core]/[later]/[maybe]. Update it when scope changes.
 - `DECISIONS.md`: decisions D<n> (append-only), proposals P<n>, open questions Q<n>.
   When a spike answers a question, add a decision or note that cites the spike,
@@ -13,6 +16,10 @@ app, a thin Swift host and a pi-durable coding agent. Early research phase.
   question, how to run it, the results and the date. Spikes are never production code.
 
 ## Current work
+
+App (`app/`): first usable IDE is in place (files, editor, run, console,
+UI apps). Next: device check of editing/typing, then the gaps in
+`app/README.md`.
 
 Spike queue (update the status here). The pi-durable agent always comes last
 (D8); never start agent work before the spikes ahead of it are done.

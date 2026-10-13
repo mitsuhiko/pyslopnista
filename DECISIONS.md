@@ -201,11 +201,43 @@ Any error escaping the worker ends the run as "Python crashed" and the worker
 is replaced. Making CPython raise `RecursionError` in time is Q14. Evidence:
 `spikes/device-perf/`.
 
+## D17: The editor is CodeMirror 6
+
+2026-10-13 - Accepted (was P1)
+
+CodeMirror 6 with lang-python, soft wrapping with a hanging indent, our own
+key bar above the keyboard, and one cached EditorState per open file (undo
+history survives file switches). Works in WKWebView on the simulator. Real
+typing on a device still needs to be tried.
+
+## D18: The web app is React + Vite + TypeScript
+
+2026-10-13 - Accepted (was P3)
+
+Same stack as pi-mobile. The Python worker, `_pyslop.py` and `ui.py` are served
+as static files (`public/runtime/`), not bundled. `npm run dev` runs the app in
+a desktop browser with a localStorage mock of the host bridge.
+
+## D19: The Xcode project is hand-written, no generator
+
+2026-10-13 - Accepted (replaces P4)
+
+A minimal `project.pbxproj` (objectVersion 77, synchronized source folder,
+generated Info.plist, automatic signing) is small enough to maintain by hand.
+`run.sh` drives `xcodebuild`, `simctl` and `devicectl`.
+
+## D20: Product code lives in `app/`; projects live in Documents
+
+2026-10-13 - Accepted
+
+`app/` holds the real app; spikes stay frozen as evidence. User projects are
+plain files in the app's Documents folder (shown in the Files app). Running a
+file copies its folder into the interpreter as the working directory and
+writes new or changed files back afterwards.
+
 ## Proposed (not yet decided)
 
-- **P1:** The editor is CodeMirror 6. (Implied by D4; confirm after testing it on a device.)
-- **P3:** The web UI is built with React and Vite, like pi-mobile.
-- **P4:** The Xcode project is generated with XcodeGen.
+(none)
 
 ## Open questions
 
