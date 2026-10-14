@@ -1,0 +1,208 @@
+import SwiftUI
+import UIKit
+import WebKit
+
+/// The app (D31): files and editor in a navigation stack on iPhone, a split
+/// view with the files in the sidebar on iPad; ui apps on top (D30).
+struct RootView: View {
+    @State private var model = AppModel()
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ZStack {
+            // The engine page is never shown, but stays in the window.
+            WebViewHost(webView: model.engineView)
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            Group {
+                if sizeClass == .regular {
+                    WideLayout()
+                } else {
+                    NarrowLayout()
+                }
+            }
+            if model.ui.visible {
+                UIAppRoot(store: model.ui.store)
+                    .transition(.move(edge: .bottom))
+                    .zIndex(1)
+            }
+        }
+        .overlay(alignment: .top) { ToastView(text: model.toast) }
+        .background { ShortcutButtons() }
+        .sheet(item: $model.activeSheet) { sheet in
+            Group {
+                switch sheet {
+                case .find: FindView()
+                case .settings: SettingsView()
+                case .problems: ProblemsView()
+                case .jump(let initial): JumpView(initial: initial)
+                }
+            }
+            .environment(model)
+        }
+        .confirmationDialog(
+            model.breakpointMenu.map { "Breakpoint on line \($0.line)" } ?? "",
+            isPresented: Binding(get: { model.breakpointMenu != nil }, set: { if !$0 { model.breakpointMenu = nil } }),
+            titleVisibility: .visible, presenting: model.breakpointMenu
+        ) { menu in
+            if menu.enabled {
+                Button("Disable Breakpoint") { model.setBreakpointEnabled(menu.path, line: menu.line, false) }
+            } else {
+                Button("Enable Breakpoint") { model.setBreakpointEnabled(menu.path, line: menu.line, true) }
+            }
+            Button("Remove Breakpoint", role: .destructive) { model.removeBreakpoint(menu.path, line: menu.line) }
+            if menu.count > 1 {
+                Button("Remove All \(menu.count) in File", role: .destructive) { model.clearBreakpoints(menu.path) }
+            }
+        }
+        .onChange(of: sizeClass, initial: true) { _, size in
+            let wide = size == .regular
+            model.wide = wide
+            if wide {
+                model.route.removeAll { $0 == .editor }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { model.appWillResignActive() }
+        }
+        .environment(model)
+        .onAppear {
+            model.host.presenter = {
+                var vc = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
+                while let presented = vc?.presentedViewController { vc = presented }
+                return vc
+            }
+        }
+    }
+}
+
+/// iPhone: files, then the editor (with the console as a panel at the bottom).
+private struct NarrowLayout: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationStack(path: $model.route) {
+            FileBrowserView(dir: "")
+                .navigationDestination(for: Route.self) { route in
+                    switch route {
+                    case .folder(let dir): FileBrowserView(dir: dir)
+                    case .editor: EditorScreen()
+                    }
+                }
+        }
+    }
+}
+
+/// iPad: files in the sidebar; editors (one or two panes) and the console.
+private struct WideLayout: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationSplitView(columnVisibility: Binding(
+            get: { model.sidebarVisible ? .all : .detailOnly },
+            set: { model.sidebarVisible = $0 != .detailOnly }
+        )) {
+            NavigationStack(path: $model.route) {
+                FileBrowserView(dir: "")
+                    .navigationDestination(for: Route.self) { route in
+                        if case .folder(let dir) = route { FileBrowserView(dir: dir) }
+                    }
+            }
+            .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 400)
+        } detail: {
+            NavigationStack { WorkspaceView() }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+}
+
+/// Puts a page's web view into SwiftUI (the same instance moves between screens).
+struct WebViewHost: UIViewRepresentable {
+    let webView: WKWebView
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .clear
+        attach(to: container)
+        return container
+    }
+
+    func updateUIView(_ container: UIView, context: Context) {
+        if webView.superview !== container { attach(to: container) }
+    }
+
+    private func attach(to container: UIView) {
+        webView.removeFromSuperview()
+        webView.frame = container.bounds
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(webView)
+    }
+}
+
+private struct ToastView: View {
+    let text: String?
+    var body: some View {
+        if let text {
+            Text(text)
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .background(.regularMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+/// Hardware keyboard shortcuts (Xcode's and VS Code's where they do not clash).
+private struct ShortcutButtons: View {
+    @Environment(AppModel.self) private var model
+
+    private static func function(_ n: Int) -> KeyEquivalent {
+        KeyEquivalent(Character(UnicodeScalar(0xF703 + n)!))
+    }
+
+    var body: some View {
+        let debug = model.session.debug
+        let stepping = debug != nil && debug?.postMortem == false
+        VStack {
+            Button("Run") { Task { await model.run() } }.keyboardShortcut("r", modifiers: .command)
+            Button("Stop") { model.stop() }.keyboardShortcut(".", modifiers: .command)
+            Button("Go to Line") { model.activeSheet = .jump(":") }.keyboardShortcut("l", modifiers: .command)
+            Button("Go to Symbol") { model.activeSheet = .jump("") }.keyboardShortcut("o", modifiers: [.command, .shift])
+            Button("Find in Folder") { model.activeSheet = .find }.keyboardShortcut("f", modifiers: [.command, .shift])
+            Button("Settings") { model.activeSheet = .settings }.keyboardShortcut(",", modifiers: .command)
+            Button("Close Tab") { if let f = model.file { Task { await model.closeTab(f) } } }.keyboardShortcut("w", modifiers: .command)
+            Button("Split View") { if model.wide { Task { await model.setSplit(!model.split) } } }.keyboardShortcut("\\", modifiers: .command)
+            Button("Previous Tab") { cycle(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
+            Button("Next Tab") { cycle(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
+            Button("Toggle Breakpoint") { Task { await model.toggleBreakpointAtCursor() } }.keyboardShortcut(Self.function(9), modifiers: [])
+            Button("Run or Continue") {
+                if stepping { model.resume("continue") } else { Task { await model.run() } }
+            }.keyboardShortcut(Self.function(5), modifiers: [])
+            if stepping {
+                Button("Step Over") { model.resume("next") }.keyboardShortcut(Self.function(6), modifiers: [])
+                Button("Step Into") { model.resume("stepIn") }.keyboardShortcut(Self.function(7), modifiers: [])
+                Button("Step Out") { model.resume("stepOut") }.keyboardShortcut(Self.function(8), modifiers: [])
+                Button("Continue") { model.resume("continue") }.keyboardShortcut("y", modifiers: [.command, .control])
+            }
+        }
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func cycle(_ step: Int) {
+        let pane = model.panes[model.focused]
+        guard pane.tabs.count > 1, let active = pane.active, let i = pane.tabs.firstIndex(of: active) else { return }
+        let next = pane.tabs[(i + step + pane.tabs.count) % pane.tabs.count]
+        Task { await model.selectTab(next, pane: model.focused) }
+    }
+}

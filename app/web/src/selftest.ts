@@ -1,29 +1,79 @@
 // End-to-end checks for the app (run with #selftest): edit, run, input, plots,
-// file write-back, console, UI apps, crash recovery. Reports via the bridge.
-import type { AppController } from "./App";
-import { forEachDiagnostic } from "@codemirror/lint";
+// file write-back, console, UI apps, crash recovery. Runs in the engine page
+// (D31) and drives the native app through the host (`app`), the focused
+// editor page through the host as well. Reports via the bridge.
 import { analysis } from "./analysis/client";
-import { base64ToBytes, call, fs, isNative, locations } from "./host";
+import { base64ToBytes, call, fs, locations } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import { session } from "./session";
 import { turtleScenes } from "./turtle";
+import navigationExample from "../../../uikit/examples/Navigation.py?raw";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function until<T>(fn: () => T | undefined | null | false, timeout = 15000): Promise<T> {
+async function until<T>(fn: () => T | undefined | null | false | Promise<T | undefined | null | false>, timeout = 15000): Promise<T> {
   const t0 = performance.now();
   for (;;) {
-    const v = fn();
+    const v = await fn();
     if (v) return v;
     if (performance.now() - t0 > timeout) throw new Error("timed out");
     await sleep(50);
   }
 }
 
+// The native UI app (D30), as the host's renderer sees it.
+interface NativeNode {
+  i: number;
+  t: string;
+  p: Record<string, any>;
+  c?: NativeNode[];
+}
+
+const nativeTree = () =>
+  call<{ visible: boolean; tree: NativeNode; sheets: number[]; dialogs: { id: number; kind: string }[] }>("test.ui", { action: "tree" });
+const nativeRenderStats = () => call<{ ops: number; ms: number }>("test.ui", { action: "stats" });
+const nativeEvent = (id: number, event: string, args: unknown[] = []) => call("test.ui", { action: "event", id, event, args });
+
+function findNodes(node: NativeNode, pred: (n: NativeNode) => boolean, out: NativeNode[] = []): NativeNode[] {
+  if (pred(node)) out.push(node);
+  for (const c of node.c ?? []) findNodes(c, pred, out);
+  return out;
+}
+
+const untilNode = (pred: (n: NativeNode) => boolean) =>
+  until(async () => {
+    const t = await nativeTree();
+    return t.visible ? findNodes(t.tree, pred)[0] : undefined;
+  });
+
+/** The native app, through the host's self-test hooks (SelfTest.swift). */
+const appCall = <T = any>(method: string, ...args: unknown[]) => call<T>("app", { method, args });
+const editorCall = <T = any>(method: string, ...args: unknown[]) => appCall<T>("editor", method, args);
+
+const app = {
+  openFile: (path: string) => appCall("openFile", path),
+  openLocation: (path: string, line?: number, column?: number) => appCall("openLocation", path, line ?? null, column ?? null),
+  currentFile: () => appCall<string | null>("currentFile"),
+  editorPath: () => editorCall<string | null>("path"),
+  run: () => appCall("run"),
+  format: () => appCall("format"),
+  goToDefinition: () => appCall("goToDefinition"),
+  panes: () => appCall<{ tabs: string[]; active: string | null }[]>("panes"),
+  setSplit: (on: boolean) => appCall("setSplit", on),
+  closeTab: (path: string) => appCall("closeTab", path),
+  showPane: (pane: string) => appCall("showPane", pane),
+  wide: () => appCall<boolean>("wide"),
+  tapTraceback: (text: string) => appCall<number>("tapTraceback", text),
+  focusField: (field: "console" | "input") => appCall("focusField", field),
+  fieldValue: (field: "console" | "input") => appCall<string>("fieldValue", field),
+  submitField: (field: "console" | "input") => appCall("submitField", field),
+  blurFields: () => appCall("blurFields"),
+};
+
 const consoleText = () => session.getSnapshot().lines.filter((l) => l.kind !== "image" && l.kind !== "turtle").map((l) => l.text).join("");
 const idle = () => session.getSnapshot().status === "idle";
 
-export async function selftest(app: AppController) {
+export async function selftest() {
   const r: Record<string, unknown> = {};
   const log = (m: string) => call("log", m).catch(() => {});
 
@@ -44,22 +94,20 @@ export async function selftest(app: AppController) {
 
   async function runFile(path: string, code?: string) {
     await app.openFile(path);
-    // Wait for React to render the newly opened file into the editor.
-    await until(() => app.currentFile() === path && app.editor()?.currentPath() === path);
-    if (code !== undefined) {
-      const view = app.editor()!.view()!;
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
-    }
+    await until(async () => (await app.currentFile()) === path && (await app.editorPath()) === path);
+    if (code !== undefined) await editorCall("setText", code);
     session.clear();
     const t0 = performance.now();
-    const done = app.run();
+    await app.run();
     await until(() => session.getSnapshot().status !== "idle" || performance.now() - t0 > 3000);
+    const done = until(idle, 120000);
+    done.catch(() => {});
     return { done, t0 };
   }
 
   // Breakpoints live in the web view's storage, which --reset does not clear.
   breakpoints.clearAll();
-  app.setSplit(false); // a split view restored from the last session
+  await app.setSplit(false); // a split view restored from the last session
 
   await step("examples_seeded", async () => {
     const names = (await fs.list("Examples")).map((e) => e.name);
@@ -143,15 +191,10 @@ export async function selftest(app: AppController) {
   // -- turtle graphics (D29) ----------------------------------------------------------
 
   const lastScene = () => [...turtleScenes.values()].at(-1);
-  /** Where turtle coordinates (x, y) are on screen, and the canvas pixel there. */
-  const turtlePoint = (canvas: HTMLCanvasElement, x: number, y: number) => {
-    const { w, h } = lastScene()!.info;
-    const r = canvas.getBoundingClientRect();
-    const s = r.width / w;
-    const px = (x + w / 2) / w, py = (-y + h / 2) / h;
-    const pixel = canvas.getContext("2d")!.getImageData(Math.round(px * canvas.width), Math.round(py * canvas.height), 1, 1).data;
-    return { clientX: r.left + (x + w / 2) * s, clientY: r.top + (-y + h / 2) * s, rgb: [...pixel.slice(0, 3)] };
-  };
+  /** The native turtle view: the color at turtle coordinates (x, y), and taps there. */
+  const turtlePixel = (x: number, y: number) => call<number[]>("test.turtle", { action: "pixel", key: lastScene()!.key, x, y });
+  const turtleTap = (x: number, y: number) => call("test.turtle", { action: "tap", key: lastScene()!.key, x, y });
+  const turtleKey = (key: string) => call("test.turtle", { action: "key", key: lastScene()!.key, name: key });
 
   await step("turtle_draw_and_events", async () => {
     await fs.mkdir("Tests").catch(() => {});
@@ -179,19 +222,15 @@ export async function selftest(app: AppController) {
     ].join("\n"));
     const { done } = await runFile("Tests/turtle_check.py");
     await until(() => consoleText().includes("ready"));
-    const canvas = await until(() => document.querySelector<HTMLCanvasElement>(".turtle-canvas"));
-    await sleep(300); // a frame or two
-    const inside = turtlePoint(canvas, 50, 50).rgb;
-    const outside = turtlePoint(canvas, -150, -150).rgb;
+    await until(() => lastScene()?.listening.keys);
+    await sleep(300); // the host has the ops
+    const inside = await turtlePixel(50, 50);
+    const outside = await turtlePixel(-150, -150);
     if (!(inside[0] > 200 && inside[1] > 200 && inside[2] < 80)) throw new Error(`not yellow inside the square: ${inside}`);
     if (!outside.every((c) => c > 240)) throw new Error(`not white outside: ${outside}`);
-    const tap = turtlePoint(canvas, -120, 80);
-    const pointer = { clientX: tap.clientX, clientY: tap.clientY, bubbles: true, pointerId: 1, button: 0, isPrimary: true };
-    canvas.dispatchEvent(new PointerEvent("pointerdown", pointer));
-    canvas.dispatchEvent(new PointerEvent("pointerup", pointer));
+    await turtleTap(-120, 80);
     await until(() => consoleText().includes("click -120 80"), 5000);
-    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
-    canvas.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", bubbles: true }));
+    await turtleKey("Up");
     await until(() => consoleText().includes("after done"), 5000);
     await done;
     await until(idle);
@@ -225,7 +264,6 @@ export async function selftest(app: AppController) {
 
   await step("turtle_catch_example", async () => {
     await runFile("Examples/Catch the Turtle.py");
-    const canvas = await until(() => document.querySelector<HTMLCanvasElement>(".turtle-canvas"));
     const scene = await until(() => lastScene()?.listening.pointer && lastScene());
     const score = () => [...scene.items.values()].filter((i) => i.type === "text").map((i) => i.o.text).join();
     await until(() => score().includes("Score: 0"));
@@ -233,10 +271,7 @@ export async function selftest(app: AppController) {
     for (let i = 0; i < 5 && !score().includes("Score: 1"); i++) {
       const shell = [...scene.items.values()].find((it) => it.type === "polygon" && it.o.fill === "#006400")!;
       const xs = shell.xy.filter((_, j) => j % 2 === 0), ys = shell.xy.filter((_, j) => j % 2 === 1);
-      const p = turtlePoint(canvas, xs.reduce((a, b) => a + b) / xs.length, -ys.reduce((a, b) => a + b) / ys.length);
-      const pointer = { clientX: p.clientX, clientY: p.clientY, bubbles: true, pointerId: 1, button: 0, isPrimary: true };
-      canvas.dispatchEvent(new PointerEvent("pointerdown", pointer));
-      canvas.dispatchEvent(new PointerEvent("pointerup", pointer));
+      await turtleTap(xs.reduce((a, b) => a + b) / xs.length, -ys.reduce((a, b) => a + b) / ys.length);
       await sleep(400);
     }
     if (!score().includes("Score: 1")) throw new Error(`score: ${score()}`);
@@ -248,14 +283,16 @@ export async function selftest(app: AppController) {
   await step("ui_app", async () => {
     await runFile("Examples/Counter App.py");
     await until(() => session.getSnapshot().uiOpen);
-    const plus = await until(() => [...document.querySelectorAll<HTMLButtonElement>(".ui-button")].find((b) => b.textContent === "+1"));
+    const plus = await untilNode((n) => n.t === "Button" && n.p.label === "+1");
     for (let i = 0; i < 5; i++) {
-      plus.click();
+      await nativeEvent(plus.i, "click");
       await sleep(30);
     }
-    await until(() => document.querySelector(".ui-text-largeTitle")?.textContent === "5");
-    (document.querySelector(".ui-app-close") as HTMLButtonElement).click();
+    await untilNode((n) => n.t === "Text" && n.p.font === "largeTitle" && n.p.text === "5");
+    const { ops, ms } = await nativeRenderStats();
+    await call("test.ui", { action: "close" });
     await until(() => !session.getSnapshot().uiOpen);
+    return { lastRender: { ops, ms } };
   });
 
   await step("ui_todo", async () => {
@@ -263,18 +300,17 @@ export async function selftest(app: AppController) {
     // while the app keeps running (the worker flushes files when idle).
     for (const f of ["todos.db", "todos.db-journal", "todos.json"]) if (await fs.exists(`Examples/${f}`)) await fs.remove(`Examples/${f}`);
     await runFile("Examples/Todo App.py");
-    const q = (sel: string) => [...document.querySelectorAll<HTMLElement>(sel)];
-    const inbox = await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox")));
-    inbox.querySelector<HTMLElement>(".ui-row-inner")!.click();
-    const top = () => q(".ui-nav > .ui-screen").at(-1)!;
-    await until(() => q(".ui-nav > .ui-screen").length === 2 && top().querySelector(".ui-screen-title")?.textContent === "Inbox");
-    const input = top().querySelector<HTMLInputElement>(".ui-textfield input")!;
-    input.value = "Selftest to-do";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await until(() => [...top().querySelectorAll(".ui-row")].some((r) => r.textContent?.includes("Selftest to-do")));
-    top().querySelector<HTMLElement>(".ui-navbar-back")!.click();
-    await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox"))?.querySelector(".ui-row-detail")?.textContent === "2");
+    const inboxRow = (n: NativeNode) => n.t === "Row" && n.p.title === "Inbox";
+    await nativeEvent((await untilNode(inboxRow)).i, "click");
+    const stack = () => nativeTree().then((t) => findNodes(t.tree, (n) => n.t === "NavigationStack")[0]);
+    const top = async () => (await stack())?.c?.at(-1);
+    await until(async () => (await stack())?.c?.length === 2 && (await top())?.p.title === "Inbox");
+    const field = findNodes((await top())!, (n) => n.t === "TextField" && n.p.placeholder === "New To-Do")[0];
+    await nativeEvent(field.i, "change", ["Selftest to-do"]);
+    await nativeEvent(field.i, "submit", ["Selftest to-do"]);
+    await until(async () => findNodes((await top())!, (n) => n.t === "Row" && n.p.title === "Selftest to-do").length > 0);
+    await nativeEvent((await top())!.i, "back");
+    await untilNode((n) => inboxRow(n) && String(n.p.detail) === "2");
     // SQLite stores short text as is, so the title shows up in the file's bytes.
     const saved = async () =>
       (await fs.exists("Examples/todos.db")) &&
@@ -285,18 +321,55 @@ export async function selftest(app: AppController) {
     if (!(await saved())) throw new Error("todos.db not written back while the app runs");
     const savedMs = Math.round(performance.now() - t0);
     if (!session.getSnapshot().uiOpen) throw new Error("the app closed");
-    (document.querySelector(".ui-app-close") as HTMLButtonElement).click();
+    await call("test.ui", { action: "close" });
     await until(() => !session.getSnapshot().uiOpen);
     await sleep(300);
     if (await fs.exists("Examples/todos.db-journal")) throw new Error("a journal was left behind");
     // A second run reads the database back.
     await runFile("Examples/Todo App.py");
-    await until(() => q(".ui-row").find((r) => r.textContent?.includes("Inbox"))?.querySelector(".ui-row-detail")?.textContent === "2");
-    (document.querySelector(".ui-app-close") as HTMLButtonElement).click();
+    await untilNode((n) => inboxRow(n) && String(n.p.detail) === "2");
+    await call("test.ui", { action: "close" });
     await until(() => !session.getSnapshot().uiOpen);
     await sleep(300);
     await fs.remove("Examples/todos.db");
     return { savedMs };
+  });
+
+  await step("ui_navigation", async () => {
+    // Native navigation, dialogs and sheets (D30), driven through the host's renderer.
+    const slow = location.hash.includes("slow") ? 2500 : 0;
+    await fs.writeText("Tests/Navigation.py", navigationExample);
+    await runFile("Tests/Navigation.py");
+    const ada = await untilNode((n) => n.t === "Row" && n.p.title === "Ada Lovelace");
+    await sleep(slow);
+    await nativeEvent(ada.i, "click");
+    const stack = () => nativeTree().then((t) => findNodes(t.tree, (n) => n.t === "NavigationStack")[0]);
+    const top = async () => (await stack())?.c?.at(-1);
+    await until(async () => (await stack())?.c?.length === 2 && (await top())?.p.title === "Ada Lovelace");
+    await sleep(slow);
+    const rename = findNodes((await top())!, (n) => n.t === "Button" && n.p.label === "Rename…")[0];
+    await nativeEvent(rename.i, "click");
+    await until(async () => (await nativeTree()).dialogs?.[0]?.kind === "prompt");
+    await sleep(slow);
+    await call("test.ui", { action: "dialog", value: "Ada L." });
+    await until(async () => (await top())?.p.title === "Ada L.");
+    await nativeEvent((await top())!.i, "back");
+    await until(async () => (await stack())?.c?.length === 1);
+    const add = await untilNode((n) => n.t === "Button" && n.p.a11y === "Add");
+    await nativeEvent(add.i, "click");
+    await until(async () => (await nativeTree()).sheets?.length === 1);
+    const sheet = await untilNode((n) => n.t === "Sheet" && n.p.open === true);
+    const [name] = findNodes(sheet, (n) => n.t === "TextField");
+    await nativeEvent(name.i, "change", ["Margaret Hamilton"]);
+    await sleep(slow);
+    const save = findNodes(sheet, (n) => n.t === "Button" && n.p.label === "Save")[0];
+    await until(async () => findNodes((await nativeTree()).tree, (n) => n.i === save.i && !n.p.disabled).length > 0);
+    await nativeEvent(save.i, "click");
+    await until(async () => (await nativeTree()).sheets?.length === 0);
+    await untilNode((n) => n.t === "Row" && n.p.title === "Margaret Hamilton");
+    await sleep(slow);
+    await call("test.ui", { action: "close" });
+    await until(() => !session.getSnapshot().uiOpen);
   });
 
   await step("linked_folder", async () => {
@@ -340,20 +413,14 @@ export async function selftest(app: AppController) {
 
   // -- code intelligence and dependencies -------------------------------------------
 
-  const diagnostics = () => {
-    const out: { source: string; message: string; actions: string[] }[] = [];
-    const view = app.editor()?.view();
-    if (view) forEachDiagnostic(view.state, (d) => out.push({ source: d.source ?? "", message: d.message, actions: (d.actions ?? []).map((a) => a.name) }));
-    return out;
-  };
+  const diagnostics = () => editorCall<{ source: string; message: string; actions: string[] }[]>("diagnostics");
+  const editorText = () => editorCall<string>("text");
 
   async function openWith(path: string, code: string) {
     await fs.writeText(path, code);
     await app.openFile(path);
-    await until(() => app.currentFile() === path && app.editor()?.currentPath() === path);
-    const view = app.editor()!.view()!;
-    if (view.state.doc.toString() !== code) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
-    return view;
+    await until(async () => (await app.currentFile()) === path && (await app.editorPath()) === path);
+    if ((await editorText()) !== code) await editorCall("setText", code);
   }
 
   await step("analysis_ready", async () => {
@@ -364,7 +431,7 @@ export async function selftest(app: AppController) {
   await step("lint_and_types", async () => {
     await openWith("Tests/lint.py", 'import os\n\n\ndef add(a: int, b: int) -> int:\n    return a + b\n\n\nadd(1, "two")\nprint(undefined_name)\n');
     const t0 = performance.now();
-    const ds = await until(() => { const d = diagnostics(); return d.length >= 3 && d; }, 20000);
+    const ds = await until(async () => { const d = await diagnostics(); return d.length >= 3 && d; }, 20000);
     const sources = ds.map((d) => d.source.replace(" ", ":"));
     for (const w of ["ruff:F401", "ty:invalid-argument-type", "ty:unresolved-reference"]) if (!sources.includes(w)) throw new Error(`missing ${w}: ${sources}`);
     const f401Actions = ds.find((d) => d.source === "ruff F401")!.actions;
@@ -374,7 +441,7 @@ export async function selftest(app: AppController) {
   await step("pyodide_imports_not_flagged", async () => {
     await openWith("Tests/np.py", "import numpy as np\nimport matplotlib.pyplot as plt\nprint(np.pi, plt)\n");
     await sleep(1500);
-    const unresolved = diagnostics().filter((d) => d.source.includes("unresolved-import"));
+    const unresolved = (await diagnostics()).filter((d) => d.source.includes("unresolved-import"));
     if (unresolved.length) throw new Error(JSON.stringify(unresolved));
   });
 
@@ -387,24 +454,17 @@ export async function selftest(app: AppController) {
   });
 
   await step("format", async () => {
-    const view = await openWith("Tests/fmt.py", "x=[1,2,\n3]\ndef f( a ):\n  return a\n");
+    await openWith("Tests/fmt.py", "x=[1,2,\n3]\ndef f( a ):\n  return a\n");
     await app.format();
-    const out = view.state.doc.toString();
+    const out = await editorText();
     if (out !== "x = [1, 2, 3]\n\n\ndef f(a):\n    return a\n") throw new Error(JSON.stringify(out));
   });
 
   await step("add_dependency_quickfix_and_run", async () => {
-    const view = await openWith("Tests/cow.py", 'import cowsay\n\ncowsay.cow("moo from PyPI")\n');
-    const d = await until(() => diagnostics().find((x) => x.source.includes("unresolved-import")), 20000);
-    let applied = false;
-    forEachDiagnostic(view.state, (diag, from, to) => {
-      const action = diag.actions?.find((a) => a.name.includes("cowsay"));
-      if (action && !applied) {
-        action.apply(view, from, to);
-        applied = true;
-      }
-    });
-    const text = view.state.doc.toString();
+    await openWith("Tests/cow.py", 'import cowsay\n\ncowsay.cow("moo from PyPI")\n');
+    const d = await until(async () => (await diagnostics()).find((x) => x.source.includes("unresolved-import")), 20000);
+    if (!(await editorCall("applyFixNamed", "cowsay"))) throw new Error("no quick fix");
+    const text = await editorText();
     if (!text.startsWith('# /// script\n# dependencies = [\n#     "cowsay",\n# ]\n# ///')) throw new Error(text);
     session.clear();
     const t0 = performance.now();
@@ -525,10 +585,7 @@ export async function selftest(app: AppController) {
 
   // -- navigation: traceback links, go to definition, tabs, split view --------------
 
-  const cursorLine = () => {
-    const view = app.editor()?.view();
-    return view ? view.state.doc.lineAt(view.state.selection.main.head).number : -1;
-  };
+  const editorInfo = () => editorCall<{ path: string | null; readOnly: boolean; line: number; lineText: string }>("info");
 
   await step("traceback_link", async () => {
     await fs.mkdir("Tests").catch(() => {});
@@ -538,59 +595,58 @@ export async function selftest(app: AppController) {
     const { done } = await runFile("Tests/nav/main.py");
     await done;
     await until(idle);
-    const link = await until(() => [...document.querySelectorAll<HTMLElement>(".tb-link")].find((a) => a.textContent?.includes('"helper.py", line 3')));
-    link.click();
-    await until(() => app.editor()?.currentPath() === "Tests/nav/helper.py" && cursorLine() === 3);
-    return { links: document.querySelectorAll(".tb-link").length };
+    const links = await app.tapTraceback('File "helper.py", line 3');
+    if (!links) throw new Error("no link");
+    await until(async () => { const i = await editorInfo(); return i.path === "Tests/nav/helper.py" && i.line === 3; });
+    return { links };
   });
 
   await step("go_to_definition", async () => {
     await app.openFile("Tests/nav/main.py");
-    await until(() => app.editor()?.currentPath() === "Tests/nav/main.py");
-    const view = app.editor()!.view()!;
-    const line3 = view.state.doc.line(3);
-    view.dispatch({ selection: { anchor: line3.from + line3.text.indexOf("average") + 2 } });
+    await until(async () => (await app.editorPath()) === "Tests/nav/main.py");
+    await editorCall("setCursor", 3, 1 + "print(".length + 2); // in "average"
     const t0 = performance.now();
     const asked = await app.goToDefinition();
     try {
-      await until(() => app.editor()?.currentPath() === "Tests/nav/helper.py" && cursorLine() === 1, 5000);
+      await until(async () => { const i = await editorInfo(); return i.path === "Tests/nav/helper.py" && i.line === 1; }, 5000);
     } catch {
-      throw new Error(`went to ${app.editor()?.currentPath()}:${cursorLine()} (${JSON.stringify(asked)})`);
+      throw new Error(`went to ${JSON.stringify(await editorInfo())} (${JSON.stringify(asked)})`);
     }
     const projectMs = Math.round(performance.now() - t0);
     await app.openFile("Tests/nav/main.py");
-    await until(() => app.editor()?.currentPath() === "Tests/nav/main.py");
-    const v2 = app.editor()!.view()!;
-    v2.dispatch({ selection: { anchor: v2.state.doc.line(3).from + 2 } }); // print
+    await until(async () => (await app.editorPath()) === "Tests/nav/main.py");
+    await editorCall("setCursor", 3, 3); // print
     await app.goToDefinition();
-    await until(() => app.editor()?.currentPath()?.endsWith("builtins.pyi"));
-    const v3 = app.editor()!.view()!;
-    if (!v3.state.readOnly || !v3.state.doc.lineAt(v3.state.selection.main.head).text.startsWith("def print(")) throw new Error("not at def print");
-    app.closeTab(app.currentFile()!);
+    await until(async () => (await app.editorPath())?.endsWith("builtins.pyi"));
+    const info = await editorInfo();
+    if (!info.readOnly || !info.lineText.startsWith("def print(")) throw new Error(`not at def print: ${JSON.stringify(info)}`);
+    await app.closeTab((await app.currentFile())!);
     return { projectMs };
   });
 
   await step("tabs", async () => {
-    const pane = () => app.panes().find((p) => p.active === app.currentFile()) ?? app.panes()[0];
-    const tabs = pane().tabs;
+    const pane = async () => {
+      const [panes, current] = [await app.panes(), await app.currentFile()];
+      return panes.find((p) => p.active === current) ?? panes[0];
+    };
+    const tabs = (await pane()).tabs;
     if (!tabs.includes("Tests/nav/main.py") || !tabs.includes("Tests/nav/helper.py")) throw new Error(JSON.stringify(tabs));
     if (tabs.some((t) => t.startsWith("ext:"))) throw new Error("closed tab still open");
-    app.closeTab("Tests/nav/helper.py");
-    await until(() => !pane().tabs.includes("Tests/nav/helper.py"));
-    return { open: pane().tabs.length };
+    await app.closeTab("Tests/nav/helper.py");
+    await until(async () => !(await pane()).tabs.includes("Tests/nav/helper.py"));
+    return { open: (await pane()).tabs.length };
   });
 
   await step("split_view", async () => {
-    if (!matchMedia("(min-width: 768px)").matches) return { skipped: "iPhone" };
+    if (!(await app.wide())) return { skipped: "iPhone" };
     await app.openFile("Tests/nav/main.py");
-    app.setSplit(true);
-    await until(() => document.querySelectorAll(".editor-pane").length === 2);
+    await app.setSplit(true);
+    await until(async () => (await app.panes()).length === 2);
     await app.openFile("Tests/nav/helper.py"); // opens in the focused (right) pane
-    await until(() => app.panes()[1]?.active === "Tests/nav/helper.py");
-    // The same file in both panes stays in sync.
+    await until(async () => (await app.panes())[1]?.active === "Tests/nav/helper.py");
     await app.openLocation("Tests/nav/main.py");
-    app.setSplit(false);
-    await until(() => document.querySelectorAll(".editor-pane").length === 1);
+    await app.setSplit(false);
+    await until(async () => (await app.panes()).length === 1);
   });
 
   // -- HTTP through the host's proxy (D25) -------------------------------------------
@@ -625,74 +681,63 @@ export async function selftest(app: AppController) {
     return { ms: Math.round(performance.now() - t0) };
   });
 
-  // -- typing through iOS text input (native only) ---------------------------------
+  // -- typing through iOS text input into the native console fields ------------------
 
-  const via = new URLSearchParams(location.hash.slice(1)).get("via") ?? "insert";
-  const typeNative = (text: string) => call<string>("test.type", { text, via });
-  const pressEnter = () =>
-    document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-  const replInput = () => document.querySelector<HTMLInputElement>(".repl input");
+  const typeNative = (text: string) => call<string>("test.type", { text });
 
   await step("typing_console", async () => {
-    if (!isNative) return { skipped: "browser" };
     await fs.writeText("Tests/typing.py", "x = 1\n");
     const { done } = await runFile("Tests/typing.py");
     await done;
     await until(idle);
-    app.showPane("console");
-    const input = await until(replInput);
-    input.focus();
+    await app.showPane("console");
+    await app.focusField("console");
     await sleep(600);
     const responder = await typeNative("x + 41");
     await sleep(300);
-    const value = replInput()?.value;
-    if (value !== "x + 41") throw new Error(`typed "x + 41", field has ${JSON.stringify(value)} (${responder}, active ${document.activeElement?.tagName}.${document.activeElement?.className})`);
-    pressEnter();
+    const value = await app.fieldValue("console");
+    if (value !== "x + 41") throw new Error(`typed "x + 41", field has ${JSON.stringify(value)} (${responder})`);
+    await app.submitField("console");
     await until(() => consoleText().includes("42"));
   });
 
   await step("typing_plain_traits", async () => {
-    if (!isNative) return { skipped: "browser" };
-    app.showPane("console");
-    const input = await until(replInput);
-    input.focus();
+    await app.showPane("console");
+    await app.focusField("console");
     await sleep(800);
     const notes = await typeNative("");
     // UITextAutocapitalizationType.none = 0, UITextAutocorrectionType.no = 1, UITextSmartQuotesType.no = 1
     if (!/autocap=0 autocorrect=1 quotes=1/.test(notes)) throw new Error(notes);
-    input.blur();
+    await app.blurFields();
     return { notes };
   });
 
   await step("typing_input", async () => {
-    if (!isNative) return { skipped: "browser" };
     await runFile("Examples/Hello.py");
     await until(() => session.getSnapshot().awaitingInput);
-    await sleep(600);
+    await sleep(800);
     const responderInput = await typeNative("Armin");
     await sleep(300);
-    const value = document.querySelector<HTMLInputElement>(".inline-input")?.value;
-    if (value !== "Armin") throw new Error(`typed "Armin", field has ${JSON.stringify(value)} (${responderInput}, active ${document.activeElement?.tagName}.${document.activeElement?.className})`);
-    pressEnter();
+    const value = await app.fieldValue("input");
+    if (value !== "Armin") throw new Error(`typed "Armin", field has ${JSON.stringify(value)} (${responderInput})`);
+    await app.submitField("input");
     await until(idle);
     if (!consoleText().includes("Hello, Armin!")) throw new Error(consoleText());
   });
 
   await step("typing_debugger_console", async () => {
-    if (!isNative) return { skipped: "browser" };
     await fs.writeText("Tests/typing2.py", "def f(a):\n    b = a * 2\n    return b\n\nprint(f(21))\n");
     breakpoints.set("Tests/typing2.py", [{ line: 3, enabled: true }]);
     await runFile("Tests/typing2.py");
     await until(stopped());
-    app.showPane("console");
-    const input = await until(replInput);
-    input.focus();
+    await app.showPane("console");
+    await app.focusField("console");
     await sleep(600);
     await typeNative("b + 1");
     await sleep(300);
-    const value = replInput()?.value;
-    if (value !== "b + 1") throw new Error(`typed "b + 1", field has ${JSON.stringify(value)} (active ${document.activeElement?.tagName}.${document.activeElement?.className})`);
-    pressEnter();
+    const value = await app.fieldValue("console");
+    if (value !== "b + 1") throw new Error(`typed "b + 1", field has ${JSON.stringify(value)}`);
+    await app.submitField("console");
     await until(() => consoleText().includes("43"));
     breakpoints.clear("Tests/typing2.py");
     session.resume("continue");

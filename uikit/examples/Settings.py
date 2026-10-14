@@ -33,14 +33,14 @@ def Settings():
         ui.Section(ui.Picker(["Light", "Auto", "Dark"], theme), header="Appearance"),
         ui.Section(ui.TextArea(bio, placeholder="About you"), header="Bio"),
         ui.Card(
-            ui.Label("Summary", icon="info", font_weight=600),
+            ui.Label("Summary", icon="info", font_weight="semibold"),
             ui.Text(lambda: f"{name()} · born {birthday():%d %b %Y} · likes {lang()}", font="subheadline"),
             ui.Text(lambda: f"notify={notify()} volume={volume():.0%} size={size()} theme={theme()}",
                     font="footnote", mono=True),
             ui.Text(lambda: bio() or "(no bio)", font="footnote", lines=2),
             ui.HStack(ui.Text("Accent"), ui.Spacer(),
                       ui.Text("", width=24, height=24, corner_radius=12, background=color)),
-            border=lambda: f"2px solid {color()}",
+            border=lambda: (2, color()),
             font_size=lambda: size() + 3,
         ),
     )

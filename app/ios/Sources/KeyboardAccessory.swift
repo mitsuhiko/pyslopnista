@@ -141,7 +141,7 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
     private static func addPlainTraits(to subclass: AnyClass, base: AnyClass) {
         let selector = sel_getUid("_updateTextInputTraits:")
         guard let method = class_getInstanceMethod(base, selector) else {
-            Coordinator.appendDocument(".probe-log.txt", "[keyboard] _updateTextInputTraits: not found\n")
+            WebHost.appendDocument(".probe-log.txt", "[keyboard] _updateTextInputTraits: not found\n")
             return
         }
         typealias Original = @convention(c) (AnyObject, Selector, AnyObject) -> Void
@@ -180,10 +180,10 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
             let names = (class_copyMethodList(contentClass, &count).map { list in
                 (0..<Int(count)).map { NSStringFromSelector(method_getName(list[$0])) }
             } ?? []).filter { $0.contains("lementDidFocus") }
-            Coordinator.appendDocument(".probe-log.txt", "[keyboard] focus selector not found; candidates: \(names)\n")
+            WebHost.appendDocument(".probe-log.txt", "[keyboard] focus selector not found; candidates: \(names)\n")
             return
         }
-        Coordinator.appendDocument(".probe-log.txt", "[keyboard] programmatic focus enabled\n")
+        WebHost.appendDocument(".probe-log.txt", "[keyboard] programmatic focus enabled\n")
         focusPatched = true
         // WebKit: _elementDidFocus:(const FocusedElementInformation&) userIsInteracting:(BOOL)
         //   blurPreviousNode:(BOOL) activityStateChanges:(OptionSet<ActivityState>) userObject:(id)

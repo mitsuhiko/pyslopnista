@@ -1,23 +1,15 @@
-// App settings (editor font size, line wrapping), kept in localStorage.
+// Editor settings (font size, line wrapping). The native host owns and
+// persists them (D31) and sends them to each editor page.
 export interface Settings {
   fontSize: number; // px
   wrap: boolean;
 }
 
-const KEY = "pyslopnista.settings";
 const DEFAULTS: Settings = { fontSize: 15, wrap: true };
 export const FONT_SIZES = { min: 11, max: 24 };
 
-function load(): Settings {
-  try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
-  } catch {
-    return DEFAULTS;
-  }
-}
-
 class SettingsStore {
-  private data = load();
+  private data = DEFAULTS;
   private listeners = new Set<() => void>();
 
   constructor() {
@@ -34,7 +26,6 @@ class SettingsStore {
   update(patch: Partial<Settings>) {
     this.data = { ...this.data, ...patch };
     this.data.fontSize = Math.max(FONT_SIZES.min, Math.min(FONT_SIZES.max, Math.round(this.data.fontSize)));
-    localStorage.setItem(KEY, JSON.stringify(this.data));
     this.apply();
     for (const fn of this.listeners) fn();
   }

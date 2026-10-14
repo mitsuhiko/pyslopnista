@@ -2,7 +2,8 @@
 
 A modern replacement for Pythonista. People use it to **learn Python, build things
 with it, and publish what they build**. A coding agent helps them along the way.
-iOS comes first; the same web app also runs in desktop and mobile browsers.
+iOS comes first, as a native SwiftUI app (D31). What people build with it also
+publishes to the web.
 
 Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on research or demand
 
@@ -30,7 +31,8 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 
 ## Editor
 
-- [core] CodeMirror 6 editor tuned for touch and for hardware keyboards
+- [core] CodeMirror 6 editor tuned for touch and for hardware keyboards (in a web view inside the native app)
+- [maybe] A native editor (TextKit 2 or Runestone with tree-sitter) instead of CodeMirror
 - [core] Python syntax highlighting, indentation, bracket matching, comment toggling
 - [core] Bar of extra keys above the on-screen keyboard (tab, brackets, quotes, `:`, `_`, `#`, cursor keys)
 - [core] Swipe on the keyboard bar to move the cursor
@@ -76,9 +78,10 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 
 - [core] Pythonic declarative UI API: views, layouts, inputs, lists, navigation, sheets/alerts
 - [core] Event-driven callbacks; updates rendered as diffs; Python runs in a worker
-- [core] Components that look iOS-native by default; themes; dark mode
+- [core] Native SwiftUI views inside our app (D30); iOS-like HTML in published web apps; themes; dark mode
 - [core] Apps run full screen in our app and as standalone web pages
-- [core] Lower-level escape hatches: raw DOM through Pyodide's `js` module, canvas, HTML
+- [core] Canvas drawing (the browser's canvas API, drawn natively in the app)
+- [later] More native components: search bar, pull to refresh, context menus, maps, video
 - [later] 2D graphics and games API (scene/sprite-style), with touch and motion input
 - [later] pygame-ce support (pygbag)
 - [maybe] Streamlit-compatible mode (stlite)
@@ -106,7 +109,7 @@ browser APIs (or graceful degradation) in published web apps.
 
 ## iOS integration
 
-- [core] Thin Swift host: WKWebView, `app://` file serving, native bridge
+- [core] Native SwiftUI app; Python and analysis in a web view without UI (`app://` file serving, native bridge)
 - [later] Shortcuts / App Intents: run a script with inputs and return its outputs
 - [later] Share extension: send text, URLs or files to a script
 - [later] Home screen widgets fed by scripts
@@ -140,9 +143,9 @@ Built last (D8), on top of everything above.
 ## Platforms
 
 - [core] iPhone and iPad (iOS 26+)
-- [core] The same web app in desktop browsers (storage on OPFS, the browser's file storage)
-- [later] Android (WebView host)
-- [later] macOS (Catalyst, or simply the web version)
+- [later] macOS (SwiftUI)
+- [maybe] Android (would need its own native UI)
+- Dropped: the IDE in desktop browsers (D31). Published apps still run in any browser.
 
 ## Accounts, models, billing
 

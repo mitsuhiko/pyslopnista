@@ -126,12 +126,14 @@ export class Session {
   constructor() {
     this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
     breakpoints.subscribe(() => this.syncBreakpoints());
-    // A UI app may be killed while in the background: save what it wrote.
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden && this.state.uiOpen && this.worker && !this.state.debug) {
-        void this.worker.syncFiles().then((changed) => this.writeBack(changed, this.workerDir));
-      }
-    });
+  }
+
+  /** The app goes to the background: a UI app may be killed there, so save
+   * what it wrote (the host calls this). */
+  async syncInBackground() {
+    if (this.state.uiOpen && this.worker && !this.state.debug) {
+      await this.worker.syncFiles().then((changed) => this.writeBack(changed, this.workerDir));
+    }
   }
 
   subscribe = (fn: () => void) => {
@@ -157,8 +159,7 @@ export class Session {
       this.flushScheduled = false;
       this.flushOutput();
     };
-    if (typeof requestAnimationFrame === "function" && document.visibilityState === "visible") requestAnimationFrame(flush);
-    else setTimeout(flush, 16);
+    setTimeout(flush, 16);
   }
 
   /** Apply queued output now (also used before state changes that depend on it). */

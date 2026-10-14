@@ -1,0 +1,72 @@
+// Engine page entry (D31): a web view without UI that runs Python (Pyodide
+// workers, D6) and code analysis (ruff + ty, D21) for the native app. The host
+// sends commands through window.__engine.command and gets state and events
+// through the bridge.
+import { analysis as client } from "../analysis/client";
+import { analysis, setAnalysis } from "../analysis/api";
+import { breakpoints } from "../debug/breakpoints";
+import { seedExamples } from "../examples";
+import { call } from "../host";
+import { session } from "../session";
+import { turtleScenes, turtleSync, type TurtleEvent } from "../turtle";
+import { startStateSync } from "./state";
+
+setAnalysis(client);
+
+// UI apps (D26) are drawn natively (D30); ops go to the host as they come.
+session.attachUI((json) => void call("ui.render", { json }).catch(() => {}));
+(window as any).__pyslopUI = {
+  event: (id: string, args: string) => session.sendUIEvent(id, args),
+  close: () => session.closeUI(),
+};
+
+// Turtle screens are drawn natively too; the scenes here keep the events.
+turtleSync.ops = (scene, ops) => void call("turtle.ops", { key: scene.key, ops: JSON.stringify(ops) }).catch(() => {});
+turtleSync.state = (scene) =>
+  void call("turtle.state", { key: scene.key, live: scene.live, active: scene.active, pointer: scene.listening.pointer, keys: scene.listening.keys }).catch(() => {});
+
+session.onFilesChanged = (paths) => void call("files.changed", { paths }).catch(() => {});
+breakpoints.onChange = (data) => void call("breakpoints.changed", { data }).catch(() => {});
+
+type Command = (args: any) => unknown;
+const commands: Record<string, Command> = {
+  // Runs end much later; the host follows them through the session state.
+  runFile: ({ path, code }) => void session.runFile(path, code),
+  runConsole: ({ source }) => void session.runConsole(source),
+  submitInput: ({ text }) => session.submitInput(text),
+  stop: () => session.stop(),
+  pause: () => session.pause(),
+  resume: ({ op }) => session.resume(op),
+  selectFrame: ({ index }) => session.selectFrame(index),
+  debugVariables: ({ ref }) => session.debugVariables(ref),
+  debugEvaluate: ({ expr }) => session.debugEvaluate(expr),
+  debugConsole: ({ source }) => session.debugConsole(source),
+  inspectError: () => void session.inspectError(),
+  clear: () => session.clear(),
+  closeUI: () => session.closeUI(),
+  uiEvent: ({ id, args }) => session.sendUIEvent(id, args),
+  background: () => session.syncInBackground(),
+  setBreakpoints: ({ data }) => breakpoints.replaceAll(data ?? {}),
+  analysis: ({ method, args }) => (analysis as any)[method](...(args ?? [])),
+  turtle: ({ key, event }: { key: string; event: TurtleEvent }) => turtleScenes.get(key)?.push(event),
+};
+
+(window as any).__engine = {
+  command: async (name: string, args: unknown) => {
+    const fn = commands[name];
+    if (!fn) throw new Error(`unknown engine command ${name}`);
+    const result = await fn(args ?? {});
+    return result === undefined ? null : result;
+  },
+};
+(window as any).__session = session; // debugging aid
+
+await seedExamples();
+startStateSync();
+void client.init().catch(() => {}); // start ruff + ty in the background
+await call("engine.ready", {});
+
+if (location.hash.startsWith("#selftest")) {
+  const { selftest } = await import("../selftest");
+  await selftest();
+}

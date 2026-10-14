@@ -2,8 +2,10 @@
 
 2026-10-13. The standard library for building UI apps in Python: fine-grained
 reactivity in the style of SolidJS, replacing D14's re-render model (D26).
-This folder is the source of truth; `scripts/install.sh` copies it into the
-app.
+Inside the app the elements are native SwiftUI views (D30,
+`app/ios/Sources/UIRenderer/`); published web apps draw the same tree with the
+HTML renderer in `web/`. This folder is the source of truth;
+`scripts/install.sh` copies `ui.py` into the app.
 
 ```python
 import ui
@@ -40,21 +42,33 @@ purpose without the hint.
 | State | `signal`, `computed`, `effect`, `batch`, `untrack`, `store` (deep reactive dicts and lists, `todo.done = True`), `bind(store, key)` (two-way), `unwrap` |
 | Lifecycle | `on_cleanup`, `on_mount`, `interval`, `timeout` (cancelled with their component), `resource(fetcher, source)` (async data with `.loading()` and `.error()`) |
 | Control flow | `Show(when, *children, fallback=)`, `For(each, render, key=, fallback=)` (keyed, minimal moves, `render(item, index)`), any `lambda` child |
-| App | `run(app, theme=, tint=)`, `css(text)`, `navigation()`, `await alert/confirm/prompt/choose(...)`, `toast(...)` |
+| App | `run(app, theme=, tint=)`, `navigation()`, `await alert/confirm/prompt/choose(...)`, `toast(...)` |
 | Layout | `VStack`, `HStack`, `ZStack`, `Grid`, `ScrollView`, `Spacer`, `Divider`, `Card` |
 | Navigation | `NavigationStack(root)` with `.push(Screen, *args)` / `.pop()` (and edge swipe), `Screen(title, ..., leading=, trailing=)`, `TabView`/`Tab`, `Sheet(open=signal)` |
 | Lists | `Section(header=, footer=)`, `Row(title, subtitle=, detail=, icon=, accessory=, checked=, on_click=, on_delete=)` (swipe to delete) |
-| Content | `Text(font=)`, `Label`, `Icon` (built-in set or emoji), `Image` (URL, project file, bytes, PIL image, matplotlib figure), `ProgressView`, `Link`, `Html` |
+| Content | `Text(font=)`, `Label`, `Icon` (SF Symbol names in the app, a built-in set on the web, or emoji), `Image` (URL, project file, bytes, PIL image, matplotlib figure), `ProgressView`, `Link` |
 | Inputs | `Button(kind=)`, `TextField`, `TextArea`, `Toggle`, `Slider`, `Stepper`, `Picker` (segmented or menu), `DatePicker` (`datetime.date`), `ColorPicker`. Pass a signal as `value` and it is kept in sync both ways |
-| Drawing | `Canvas(draw, width=, height=, on_frame=, on_pointer_down/move/up=)`: the browser's canvas 2D API in snake_case, redrawn when signals change. `on_frame(dt)` is a game loop |
-| Escape hatches | `h(tag, *children, **attrs)` for any HTML/SVG element and any DOM event (`on_keydown=lambda e: e.key`), `Html`, `css`, `Element.focus()` |
+| Drawing | `Canvas(draw, width=, height=, on_frame=, on_pointer_down/move/up=)`: the browser's canvas 2D API in snake_case (drawn with Core Graphics in the app), redrawn when signals change. `on_frame(dt)` is a game loop |
 
-Every element accepts `on_<event>` for any DOM event it doesn't handle itself
-(e.g. `on_click` on a `Card`). Every element also takes layout and style keywords, static or live: `padding`,
-`margin`, `width`, `height`, `min_*`/`max_*`, `flex`, `background`, `color`,
-`font_size`, `font_weight`, `text_align`, `corner_radius`, `border`,
-`opacity`, `shadow`, `hidden`, `disabled`, `style={...}`, `class_`,
-`aria_label`.
+Every element accepts `on_click` (e.g. on a `Card`) and `Element.focus()`.
+Every element also takes layout and style keywords, static or live. They are
+plain values that each renderer translates (SwiftUI modifiers in the app, CSS
+on the web):
+
+| Keyword | Value |
+|---|---|
+| `padding`, `margin` | points, `(vertical, horizontal)` or `(top, right, bottom, left)` |
+| `width`, `height`, `min_*`, `max_*` | points, or `"fill"` |
+| `flex` | a number: grow along the parent stack |
+| `background`, `color`, `tint` | `"#rrggbb"`, `"rgb(...)"`, a CSS name, a system color (`red`, `orange`, ..., `gray`) or a semantic one (`primary`, `secondary`, `tertiary`, `tint`, `background`, `separator`, `fill`) |
+| `font_size`, `font_weight` | points; a weight name (`"semibold"`) or number |
+| `text_align` | `leading`, `center`, `trailing` |
+| `corner_radius`, `opacity`, `shadow` | numbers (`shadow=True` for a default) |
+| `border` | a color, or `(width, color)` |
+| `hidden`, `disabled`, `accessibility_label` | |
+
+There are no web-only escape hatches (`h()`, `Html`, `css()` were removed,
+D30): an app looks the same in the app and on the web.
 
 Event handlers can take the event value or nothing (`lambda: ...` or
 `def f(value)`), and can be `async` (dialogs are awaited). Handlers run batched,
@@ -65,8 +79,8 @@ confirm), Todo App (the complete Reminders-style app shipped in the app:
 smart lists, search, sorting, due dates, priorities, notes, autosave to
 an SQLite database, `todos.db`), Navigation (push, sheet, prompt, toast, `bind`), Settings (every
 input), Tabs (tabs, a stack per tab, badge, a stopwatch whose interval belongs
-to an effect), Paint (pointer events), Bounce (game loop), Escape Hatches
-(`h`, `css`, `resource`, SVG), Plot (live matplotlib).
+to an effect), Paint (pointer events), Bounce (game loop),
+Async Data (`resource`, a spinner, modifiers), Plot (live matplotlib).
 
 ## How it works
 
@@ -82,8 +96,10 @@ to an effect), Paint (pointer events), Bounce (game loop), Escape Hatches
     only rows that are off the longest increasing run (LIS).
   - **Flushing.** Ops are batched per event handler, or per event-loop tick
     for timers and async tasks, and go to the page as one message.
+- **Renderers.** In the app, `app/ios/Sources/UIRenderer/` mirrors the tree
+  as observable SwiftUI nodes (D30). For published apps:
 - `web/renderer.js`: `new UIRenderer(root, sendEvent)`, `.render(json)`,
-  `.clear()`, which is the same interface as `app/web/src/uiRenderer.js`.
+  `.clear()`.
   - It keeps an id → DOM node map and one builder per element type.
   - Animations live here: push/pop, sheets, swipe gestures, segmented control.
   - Inputs echo nothing: Python records the value the page reported, so
@@ -94,11 +110,12 @@ to an effect), Paint (pointer events), Bounce (game loop), Escape Hatches
 - `web/ui.css`: iOS styling, light and dark mode, safe areas. Same class names
   as before for the app selftest (`.ui-button`, `.ui-text-largeTitle`).
 
-Protocol: Python calls `_uihost.render('{"seq": n, "ops": [...]}')`. The page
-calls the dispatcher with `("<id>:<event>", json_args)`. Ops are `mount`,
-`move`, `unmount`, `set`, `call`, `config`, `css`, `dialog`, `toast`, `frame`
-and `reset` (documented at the top of `renderer.js`). Only the worker's
-existing two `_uihost` functions are used.
+Protocol: Python calls `_uihost.render('{"seq": n, "ops": [...]}')`. The
+renderer calls the dispatcher with `("<id>:<event>", json_args)`. Ops are
+`mount`, `move`, `unmount`, `set`, `call`, `config`, `dialog`, `toast`,
+`frame` and `reset` (documented at the top of `renderer.js` and of
+`UIStore.swift`). Only the worker's existing two `_uihost` functions are used.
+A protocol change needs both renderers.
 
 ## Running
 
@@ -129,7 +146,7 @@ nothing was run on a device.
 | Reverse 1,000 rows (999 moves, nodes reused) | 3 ms | 31-34 ms |
 | Canvas game loop (`on_frame`, 8+ balls) | 60 fps | 60 fps |
 | Todo App walkthrough (lists, add, check off, detail edit, move, search, delete list, saved JSON) | pass | pass |
-| Todos, navigation/sheet/dialogs/edge swipe, every input, tabs/badge/stopwatch, paint, `h()`/SVG/resource, resync of a second renderer, handler errors + hint, live matplotlib | pass | pass |
+| Todos, navigation/sheet/dialogs/edge swipe, every input, tabs/badge/stopwatch, paint, resource (then `h()`/SVG, now Async Data), resync of a second renderer, handler errors + hint, live matplotlib | pass | pass |
 
 Earlier D14 numbers for comparison: 0.24 ms per tap and 23-26 ms for
 re-rendering 1,000 rows, since the whole tree was resent and diffed on every
@@ -137,32 +154,35 @@ change.
 
 ## In the app
 
-`scripts/install.sh` copies `python/ui.py`, `web/renderer.js`, `web/ui.css`
-and `examples/Todo App.py` into `app/web`. The app's copies are generated:
-edit them here. The app side:
-- `UIAppView` gives the renderer a full-size root. It sets
-  `--ui-host-inset-right` so nav bar buttons stay clear of the Done button.
-- The session no longer replays messages, because each renderer resyncs.
+`scripts/install.sh` copies `python/ui.py` and `examples/Todo App.py` into
+`app/web`. The app's copies are generated: edit them here. The app side:
+- The engine page forwards the op stream to the host, which applies it to the
+  native renderer (D30). Events go back through the engine to the worker.
+- The app view is shown while a ui app runs, except while the debugger is
+  paused. Each time it appears it asks for a full snapshot (`resync`).
 - Files the app writes are written back while it idles (within about a
-  second, D27), and on Done and when the app goes to the background (`sync`
-  message, D26).
-- `examples.ts` updates seeded examples the user hasn't edited (by hash).
-- App selftests: `ui_app` (Counter App) and `ui_todo` (Todo App: open the
-  Inbox, type a to-do, go back, find it in `todos.db` in Documents while the
-  app still runs (D27), Done, run again and read it back). Both pass in
-  WKWebView in the iPhone 17 simulator.
+  second, D27), and on Done and when the app goes to the background.
+- App selftests (iPhone 17 simulator, native views): `ui_app` (Counter App),
+  `ui_todo` (Todo App: open the Inbox, add a to-do, go back, find it in
+  `todos.db` while the app still runs, read it back in a second run) and
+  `ui_navigation` (push, prompt dialog, back, sheet with a text field).
 
 ## Not covered yet
 
 - On a device: touch gestures (edge swipe, swipe to delete), the software
   keyboard with text fields, IME composition (handled on `compositionend`,
   not tried), safe areas.
-- Long lists are not virtualized (1,000 rows are fine; 10,000 not measured).
+- Long lists are not virtualized on the web (1,000 rows are fine; 10,000 not
+  measured). The app's lists are lazy SwiftUI `List`s.
 - Canvas resends the whole command list on each redraw. Transferring an
   OffscreenCanvas to the worker is the upgrade path for heavy drawing.
 - Images from files are sent inline as data URLs; big photos inflate messages.
 - Missing components: search bar, pull to refresh, context menus, swipe
-  actions other than delete, maps, video. A transition/animation API beyond
-  CSS. Accessibility beyond native controls.
+  actions other than delete, maps, video (all have native counterparts the
+  app could use now). A transition/animation API. Accessibility beyond
+  native controls.
+- The native renderer has no tests of its own beyond the app's selftests;
+  the layout of free content (stacks, `flex`, cards) differs from the web in
+  details. `Element.scroll_into_view()` does nothing in the app yet.
 - Published apps (D15): the export needs these three files instead of the
   spike's.

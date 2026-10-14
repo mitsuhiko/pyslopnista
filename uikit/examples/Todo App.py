@@ -286,11 +286,10 @@ def SmartCard(title, icon, color, count, open_screen):
             ui.Spacer(),
             ui.Text(lambda: str(count()), font="title2"),
         ),
-        ui.Text(title, font="subheadline", color="var(--secondary)", font_weight=600),
+        ui.Text(title, font="subheadline", color="secondary", font_weight="semibold"),
         padding=12,
         spacing=6,
         on_click=lambda: ui.navigation().push(open_screen),
-        style={"cursor": "pointer"},
     )
 
 
@@ -317,7 +316,7 @@ def ListRow(lst):
         accessory="chevron",
         on_click=open_list,
         on_delete=delete,
-        style=lambda: {"--tint": lst.color},
+        tint=lambda: lst.color,
     )
 
 

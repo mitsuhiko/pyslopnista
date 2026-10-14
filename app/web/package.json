@@ -19,15 +19,10 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
     "@lezer/highlight": "^1.2.5",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
     "smol-toml": "^1.9.1",
     "ty_wasm": "file:../vendor/ty_wasm"
   },
   "devDependencies": {
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
   }

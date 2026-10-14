@@ -261,27 +261,27 @@ def test_date_picker_round_trips_dates(h):
 
 def test_modifiers_and_reactive_style(h):
     wide = ui.signal(False)
-    dom = h.run(lambda: ui.Text("x", padding=(4, 8), width=lambda: 200 if wide() else 100,
-                                style={"font_size": 20, "opacity": 0.5}))
+    dom = h.run(lambda: ui.Text("x", padding=(4, 8), width=lambda: 200 if wide() else 100, opacity=0.5,
+                                font_weight="semibold", border=lambda: (2, "red") if wide() else "separator",
+                                shadow=True, text_align="right", accessibility_label="Ex"))
     p = dom.find("Text")["p"]
-    assert p["style:padding"] == "4px 8px"
-    assert p["style:width"] == "100px"
-    assert p["style"] == {"font-size": "20px", "opacity": "0.5"}
+    assert p["padding"] == [4, 8]
+    assert p["width"] == 100
+    assert p["opacity"] == 0.5 and p["font_weight"] == 600 and p["shadow"] == 12
+    assert p["border"] == [1, "separator"] and p["text_align"] == "trailing" and p["a11y"] == "Ex"
     wide.set(True)
     h.flush()
-    assert dom.find("Text")["p"]["style:width"] == "200px"
+    p = dom.find("Text")["p"]
+    assert p["width"] == 200 and p["border"] == [2, "red"]
 
 
-def test_h_elements_and_events(h):
-    got = []
-    dom = h.run(lambda: ui.h("div", ui.h("input", value="x", on_input=lambda e: got.append(e.value)),
-                             "text", class_="box", data_role="main", hidden=False))
-    div = dom.find("h", tag="div")
-    assert div["p"]["class"] == "box" and div["p"]["attr:data-role"] == "main"
-    inp = dom.find("h", tag="input")
-    assert inp["p"]["prop:value"] == "x" and inp["p"]["on_input"] is True
-    h.fire(inp, "input", {"value": "hello"})
-    assert got == ["hello"]
+def test_color_none_clears(h):
+    fav = ui.signal(True)
+    dom = h.run(lambda: ui.Icon("star", color=lambda: "orange" if fav() else None))
+    assert dom.find("Icon")["p"]["color"] == "orange"
+    fav.set(False)
+    h.flush()
+    assert dom.find("Icon")["p"]["color"] is None
 
 
 def test_navigation_stack(h):

@@ -1,5 +1,7 @@
 // Breakpoints per file (D23). They live in app state, never in the source, and
 // follow the file through edits (the editor maps them), renames and deletes.
+// The native host owns and persists them (D31); the engine keeps this copy
+// for runs and tells the host about changes it makes (the self-test does).
 export interface Breakpoint {
   line: number;
   enabled: boolean;
@@ -7,22 +9,13 @@ export interface Breakpoint {
 
 type Data = Record<string, Breakpoint[]>;
 
-const KEY = "pyslopnista.breakpoints";
-
-function load(): Data {
-  try {
-    const data = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    return data && typeof data === "object" ? data : {};
-  } catch {
-    return {};
-  }
-}
-
 const EMPTY: Breakpoint[] = [];
 
 class BreakpointStore {
-  private data: Data = load();
+  private data: Data = {};
   private listeners = new Set<() => void>();
+  /** Called after a change made here (not for replaceAll from the host). */
+  onChange: (data: Data) => void = () => {};
 
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -35,11 +28,17 @@ class BreakpointStore {
     return (path && this.data[path]) || EMPTY;
   }
 
-  private commit(next: Data) {
+  private commit(next: Data, fromHost = false) {
     for (const [path, list] of Object.entries(next)) if (!list.length) delete next[path];
     this.data = next;
-    localStorage.setItem(KEY, JSON.stringify(next));
+    if (!fromHost) this.onChange(next);
     for (const fn of this.listeners) fn();
+  }
+
+  /** The host's breakpoints (it owns them). */
+  replaceAll(data: Data) {
+    if (JSON.stringify(data) === JSON.stringify(this.data)) return;
+    this.commit({ ...data }, true);
   }
 
   set(path: string, list: Breakpoint[]) {

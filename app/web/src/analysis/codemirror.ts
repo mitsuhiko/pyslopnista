@@ -6,7 +6,7 @@ import { type Action, type Diagnostic, linter } from "@codemirror/lint";
 import type { EditorState, Extension, Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { parse as parseToml } from "smol-toml";
-import { analysis } from "./client";
+import { analysis } from "./api";
 import type { LineCol, Problem } from "./protocol";
 
 // -- positions ---------------------------------------------------------------------

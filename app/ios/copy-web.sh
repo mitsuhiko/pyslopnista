@@ -7,7 +7,7 @@ APP_DIR="${PROJECT_DIR}/.."
 DIST="$APP_DIR/web/dist"
 VENDOR="$APP_DIR/vendor/pyodide-314.0.7"
 DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/web"
-[ -f "$DIST/index.html" ] || { echo "error: $DIST missing; run npm run build in app/web" >&2; exit 1; }
+[ -f "$DIST/engine.html" ] || { echo "error: $DIST missing; run npm run build in app/web" >&2; exit 1; }
 [ -d "$VENDOR" ] || { echo "error: $VENDOR missing; run app/scripts/fetch-pyodide.sh" >&2; exit 1; }
 rm -rf "$DEST"
 mkdir -p "$DEST/pyodide"

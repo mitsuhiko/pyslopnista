@@ -11,10 +11,14 @@
 //   ["unmount", id]                                      remove (and forget the subtree)
 //   ["set", id, {prop: value}]                           update props
 //   ["call", id, method, args]                           focus(), blur(), ...
-//   ["config", {theme, tint, title}]  ["css", text]  ["dialog", n, spec]
+//   ["config", {theme, tint, title}]  ["dialog", n, spec]
 //   ["toast", text, seconds]  ["frame", canvasId]  ["reset"]
 // Events go back as sendEvent("<id>:<event>", JSON args). A new renderer asks
 // for a full snapshot ("0:resync"), so it can attach to a running app.
+//
+// This renderer is what published web apps use; inside the Pyslopnista app the
+// same op stream drives native SwiftUI views (app/ios/Sources/UIRenderer).
+// Modifiers arrive as plain values (points, color names) and become CSS here.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -36,8 +40,6 @@ export class UIRenderer {
     Object.assign(this.content, { __uid: 0, __t: "#root", __p: {} });
     this.content.replaceChildren();
     this.layer.querySelectorAll(".ui-sheet-backdrop").forEach((n) => n.remove());
-    this.styles?.remove();
-    this.styles = null;
     this.nodes = new Map([[0, this.content]]);
   }
 
@@ -112,10 +114,6 @@ export class UIRenderer {
       case "config":
         this.configure(op[1] ?? {});
         break;
-      case "css":
-        if (!this.styles) this.styles = this.root.appendChild(document.createElement("style"));
-        this.styles.textContent += op[1] + "\n";
-        break;
       case "dialog":
         showDialog(this, op[1], op[2]);
         break;
@@ -134,7 +132,7 @@ export class UIRenderer {
   configure({ theme, tint, title }) {
     if (theme === "light" || theme === "dark") this.root.dataset.theme = theme;
     else delete this.root.dataset.theme;
-    if (tint) this.root.style.setProperty("--tint", tint);
+    if (tint) this.root.style.setProperty("--tint", cssColor(tint));
     else this.root.style.removeProperty("--tint");
     this.title = title ?? null;
   }
@@ -179,37 +177,9 @@ export class UIRenderer {
   setProp(el, k, v) {
     const old = el.__p[k];
     el.__p[k] = v;
-    if (k.startsWith("style:")) {
-      (el.__style ?? el).style?.setProperty(k.slice(6), v ?? "");
+    if (k in MODIFIERS) {
+      MODIFIERS[k]((el.__style ?? el), v, el);
       return;
-    }
-    if (k.startsWith("attr:")) {
-      const target = el.__style ?? el;
-      if (v == null || v === false) target.removeAttribute(k.slice(5));
-      else target.setAttribute(k.slice(5), v === true ? "" : v);
-      return;
-    }
-    if (k.startsWith("prop:")) {
-      const name = k.slice(5);
-      if (el[name] !== v) el[name] = v;
-      return;
-    }
-    switch (k) {
-      case "style": {
-        const target = (el.__style ?? el).style;
-        for (const name in old ?? {}) if (!(name in (v ?? {}))) target.removeProperty(name);
-        for (const name in v ?? {}) target.setProperty(name, v[name]);
-        return;
-      }
-      case "class": {
-        const target = el.__style ?? el;
-        if (old) target.classList.remove(...old.split(/\s+/).filter(Boolean));
-        if (v) target.classList.add(...v.split(/\s+/).filter(Boolean));
-        return;
-      }
-      case "hidden":
-        (el.__style ?? el).hidden = !!v;
-        return;
     }
     const b = BUILDERS[el.__t];
     if (k.startsWith("on_")) {
@@ -229,6 +199,50 @@ export class UIRenderer {
     b?.set?.(el, k, v, old, this);
   }
 }
+
+// -- modifiers ----------------------------------------------------------------------
+
+// iOS system colors (light mode values; the semantic ones follow the theme).
+const SYSTEM_COLORS = {
+  red: "var(--red)", green: "var(--green)", orange: "#ff9500", yellow: "#ffcc00", mint: "#00c7be", teal: "#30b0c7",
+  cyan: "#32ade6", blue: "#007aff", indigo: "#5856d6", purple: "#af52de", pink: "#ff2d55", brown: "#a2845e", gray: "#8e8e93",
+  primary: "var(--label)", label: "var(--label)", secondary: "var(--secondary)", tertiary: "var(--tertiary)",
+  tint: "var(--tint)", accent: "var(--tint)", background: "var(--bg)", secondary_background: "var(--cell)",
+  separator: "var(--separator)", fill: "var(--fill)", clear: "transparent",
+};
+
+export function cssColor(v) {
+  if (v == null || v === "") return "";
+  return SYSTEM_COLORS[v] ?? v;
+}
+
+const edges = (v) => (v == null ? "" : Array.isArray(v) ? v.map((x) => `${x}px`).join(" ") : `${v}px`);
+const size = (v) => (v == null ? "" : v === "fill" ? "100%" : `${v}px`);
+const style = (prop, fn) => (target, v) => target.style?.setProperty(prop, fn(v));
+
+const MODIFIERS = {
+  padding: style("padding", edges),
+  margin: style("margin", edges),
+  width: style("width", size),
+  height: style("height", size),
+  min_width: style("min-width", size),
+  max_width: style("max-width", size),
+  min_height: style("min-height", size),
+  max_height: style("max-height", size),
+  flex: style("flex", (v) => (v == null ? "" : `${v} 1 0%`)),
+  background: style("background", cssColor),
+  color: style("color", cssColor),
+  tint: style("--tint", cssColor),
+  font_size: style("font-size", (v) => (v == null ? "" : `${v}px`)),
+  font_weight: style("font-weight", (v) => (v == null ? "" : String(v))),
+  text_align: style("text-align", (v) => ({ leading: "start", trailing: "end" })[v] ?? v ?? ""),
+  corner_radius: style("border-radius", (v) => (v == null ? "" : `${v}px`)),
+  border: style("border", (v) => (v ? `${v[0]}px solid ${cssColor(v[1])}` : "")),
+  opacity: style("opacity", (v) => (v == null ? "" : String(v))),
+  shadow: style("box-shadow", (v) => (v ? `0 2px ${v}px rgba(0,0,0,0.12)` : "")),
+  a11y: (target, v) => (v == null ? target.removeAttribute?.("aria-label") : target.setAttribute?.("aria-label", v)),
+  hidden: (target, v) => (target.hidden = !!v),
+};
 
 // -- helpers ------------------------------------------------------------------------
 
@@ -412,8 +426,6 @@ const UNKNOWN = {
   create: (r, tree) => h("div", "ui-unknown", `unknown element ${tree.t}`),
 };
 
-const SVG_TAGS = new Set(["svg", "path", "circle", "rect", "g", "line", "polyline", "polygon", "ellipse", "text", "tspan", "defs", "linearGradient", "radialGradient", "stop", "use", "clipPath", "mask"]);
-
 function eventPayload(e) {
   const t = e.currentTarget;
   const out = { type: e.type };
@@ -431,7 +443,7 @@ function listen(el, event, r) {
   el.__events ??= new Set();
   if (el.__events.has(event)) return;
   el.__events.add(event);
-  if (event === "click" && el.__t !== "h") (el.__style ?? el).classList.add("ui-tappable");
+  if (event === "click") (el.__style ?? el).classList.add("ui-tappable");
   el.addEventListener(event, (e) => {
     if (event === "submit") e.preventDefault();
     r.emit(el, event, eventPayload(e));
@@ -974,12 +986,6 @@ const BUILDERS = {
       else if (k === "url") el.href = v ?? "";
     },
   },
-  Html: {
-    create: () => h("div", "ui-html"),
-    set(el, k, v) {
-      if (k === "html" && el.innerHTML !== v) el.innerHTML = v ?? "";
-    },
-  },
   Canvas: {
     emits: ["frame", "pointer_down", "pointer_move", "pointer_up"],
     create(r) {
@@ -1093,13 +1099,6 @@ const BUILDERS = {
     },
     unmount(el) {
       el.__stopped = true;
-    },
-  },
-
-  h: {
-    create(r, tree) {
-      const tag = tree.p?.tag ?? "div";
-      return SVG_TAGS.has(tag) ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
     },
   },
 

@@ -1,7 +1,8 @@
 # Pyslopnista
 
-A demo of a Pythonista-style Python IDE for iPhone and iPad, built on
-[Pyodide](https://pyodide.org/) running inside a `WKWebView`.
+A demo of a Pythonista-style Python IDE for iPhone and iPad: a native SwiftUI
+app, with [Pyodide](https://pyodide.org/) running Python in a `WKWebView`
+behind it.
 
 > **This is a demo and research project.** It shows one way to run Pyodide
 > (CPython compiled to WebAssembly) on iOS and build a usable IDE on top of it.
@@ -20,7 +21,7 @@ A demo of a Pythonista-style Python IDE for iPhone and iPad, built on
   <img src="docs/screenshots/ipad-split.png" width="49%" alt="iPad: split view with a turtle drawing in the console">
 </p>
 
-<sub>iPhone 17 and iPad Pro 13" simulators (iOS 27).</sub>
+<sub>iPhone 17 and iPad Pro 13" simulators (iOS 27), the native SwiftUI app.</sub>
 
 ## What's in it
 
@@ -40,8 +41,9 @@ A demo of a Pythonista-style Python IDE for iPhone and iPad, built on
 - **A visual debugger**: breakpoints, stepping, variables and post-mortem
   inspection on top of `bdb`'s new `sys.monitoring` backend in Python 3.14.
 - **A UI toolkit** (`uikit/`): a `ui` module with SolidJS-style signals that
-  lets Python scripts build iOS-looking apps (navigation stacks, lists,
-  sheets, inputs, canvas). There is a complete Reminders-style todo app
+  lets Python scripts build apps (navigation stacks, lists, sheets, inputs,
+  canvas). In the app they are native SwiftUI views; published as web pages
+  they are iOS-looking HTML. There is a complete Reminders-style todo app
   backed by SQLite in the examples.
 - **HTTP without CORS limits**: `requests`, `httpx`, `urllib` and `pyfetch`
   are routed through the native host, which makes the real request with
@@ -76,7 +78,6 @@ cd app
 ./run.sh                 # build and launch in the booted simulator
 ./run.sh --selftest      # end-to-end checks in the simulator, prints JSON
 ./run.sh --device        # on a paired, unlocked iPhone
-cd web && npm run dev    # the same web app in a desktop browser
 
 cd ../uikit
 ./run.sh                 # ui playground at http://127.0.0.1:18770/playground/
@@ -90,14 +91,14 @@ cd ../uikit
 ## How it fits together
 
 ```
-┌───────────────────────── Swift host (thin) ──────────────────────────┐
-│ WKWebView · app:// scheme handler (COOP/COEP) · package + PyPI cache │
-│ HTTP proxy (URLSession) · files, bookmarks, native dialogs           │
-│  ┌─────────────────────── web app (React + TS) ────────────────────┐ │
-│  │ CodeMirror editor · console · file browser · debugger UI        │ │
-│  │   ├── Python worker(s): Pyodide, one interpreter per run        │ │
-│  │   └── analysis worker: ruff + ty (wasm)                         │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
+┌──────────────────────────── SwiftUI app ─────────────────────────────┐
+│ files · tabs · console · debugger · find/go to · ui apps (native)    │
+│ app:// scheme handler (COOP/COEP) · package + PyPI cache · HTTP      │
+│  ┌──── engine web view (no UI) ────┐  ┌── editor web view(s) ──────┐ │
+│  │ session, debugger protocol      │  │ CodeMirror, one per pane   │ │
+│  │ ├── Python workers: Pyodide     │  │ lint/completions go to the │ │
+│  │ └── analysis worker: ruff + ty  │◄─┤ engine through the host    │ │
+│  └─────────────────────────────────┘  └────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -107,7 +108,7 @@ cd ../uikit
   [`uikit/README.md`](uikit/README.md).
 - `spikes/`: frozen experiments that serve as evidence for the decisions.
 - [`GOALS.md`](GOALS.md): the intended feature set.
-- [`DECISIONS.md`](DECISIONS.md): every design decision (D1-D28) with its
+- [`DECISIONS.md`](DECISIONS.md): every design decision (D1-D31) with its
   reasoning and evidence, plus open questions.
 
 ## Tradeoffs, and why
@@ -139,15 +140,18 @@ What it costs:
 - Background: a running script is paused while the app is in the background.
 - Python versions follow Pyodide releases, not CPython's.
 
-### A web app in a thin Swift host (D4, D18, D19)
+### A native app with web views for Python and the editor (D30, D31)
 
-The IDE is React + TypeScript; Swift only serves files, caches packages,
-proxies HTTP and exposes a small native bridge (files, folder bookmarks,
-dialogs). One codebase runs on iOS and in a desktop browser (`npm run dev`
-with a mocked bridge), and what the user builds runs the same way outside the
-app. The cost is that native polish (keyboard behavior, text selection menus,
-hardware shortcuts) has to be fought for through WebKit; a few things, like
-"Jump to Definition" in the selection menu, need a `WKWebView` subclass.
+The IDE started as a React app in a thin Swift host (D4, D18), which ran the
+same in a desktop browser. Native polish (keyboard behavior, selection menus,
+hardware shortcuts, lists, sheets) had to be fought for through WebKit, so
+the IDE is now SwiftUI. Pyodide still needs WebKit: an engine web view
+without UI runs the Python workers and ruff/ty, and the editor stays
+CodeMirror in one web view per pane. The host talks to both through a bridge
+with replies. `ui` apps are native SwiftUI views driven by the same op
+stream the web renderer uses for published apps. The cost: no IDE in the
+browser any more, three WebContent processes, and an IPC hop for every
+editor and engine call.
 
 ### `app://` with cross-origin isolation and a `SharedArrayBuffer` polyfill (D9)
 
@@ -218,9 +222,10 @@ stops.
 
 The first version re-ran a `view()` function and diffed the whole tree on
 every change, like React. Signals turned out to be both faster (one change
-sends one DOM op, instead of re-rendering 1,000 rows in about 25 ms) and
-easier to explain ("the lambda is what updates"), and text fields keep focus
-and caret without special care.
+sends one op, instead of re-rendering 1,000 rows in about 25 ms) and easier
+to explain ("the lambda is what updates"), and text fields keep focus and
+caret without special care. The same fine-grained ops map directly onto one
+observable SwiftUI node per element in the app (D30).
 
 ### HTTP through the host (D25)
 
@@ -232,8 +237,9 @@ than streamed.
 
 ## Status
 
-As of 2026-10-13: the app's selftest passes in the iPhone 17 simulator, and an
-earlier set of checks passed on a real iPhone 14 Pro. Many features have only
+As of 2026-10-14: the native app's selftest passes in the iPhone 17 and iPad
+Pro 13" simulators; an earlier set of checks of the web-based app passed on a
+real iPhone 14 Pro. Many features have only
 been tried in the simulator; `app/README.md` lists what has and hasn't been
 tested on a device. A built-in coding agent based on pi-durable is planned
 but not started (D8).
@@ -262,8 +268,8 @@ This project is mostly glue. The hard parts were done by others:
   `urllib` and `requests` to work in Pyodide.
 - **[matplotlib](https://matplotlib.org/)**, **numpy**, **pandas** and the
   rest of the scientific Python stack, built for Pyodide.
-- **[React](https://react.dev/)**, **[Vite](https://vite.dev/)** and
-  **[TypeScript](https://www.typescriptlang.org/)** for the web app,
+- **[Vite](https://vite.dev/)** and
+  **[TypeScript](https://www.typescriptlang.org/)** for the web pages,
   and [smol-toml](https://github.com/squirrelchat/smol-toml) for parsing
   `pyproject.toml`.
 - **[jsDelivr](https://www.jsdelivr.com/)**, which serves Pyodide packages

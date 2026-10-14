@@ -347,17 +347,15 @@ ui.run(App)
     return { fps, points, pixel: [...pixel] };
   });
 
-  await step("escapeHatches", async () => {
-    await pg.loadExample("Escape Hatches");
+  await step("asyncData", async () => {
+    await pg.loadExample("Async Data");
     await until(() => q(".ui-spinner") && !q(".ui-spinner").hidden, "loading spinner");
     await until(() => qa(".ui-text-title3").some((t) => t.textContent === "Simple is better than complex."), "first quote");
     byText(".ui-button", "Next quote").click();
     await until(() => qa(".ui-text-title3").some((t) => t.textContent === "Readability counts."), "second quote");
-    assert(q("span.pill.on"), "reactive class on h()");
-    const input = q("input[placeholder^='Type here']");
-    for (const key of "hi") input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-    await until(() => qa(".ui-text").some((t) => t.textContent === "Last keys: hi"), "keys");
-    assert(q("circle").getAttribute("r") === "26", `svg r ${q("circle").getAttribute("r")}`);
+    const pill = qa(".ui-text").find((t) => t.textContent === "odd");
+    assert(pill, "reactive text");
+    assert(pill.style.background === "var(--tint)" && pill.style.borderRadius === "12px", `modifiers ${pill.style.cssText}`);
   });
 
   await step("resync", async () => {

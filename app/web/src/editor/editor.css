@@ -1,0 +1,114 @@
+/* The editor page (D31): just CodeMirror and the problem bar. iOS colors, light and dark. */
+:root {
+  --tint: #007aff;
+  --red: #ff3b30;
+  --orange: #ff9500;
+  --label: #000;
+  --secondary: rgba(60, 60, 67, 0.6);
+  --tertiary: rgba(60, 60, 67, 0.3);
+  --grouped-bg: #f2f2f7;
+  --cell-bg: #fff;
+  --fill: rgba(120, 120, 128, 0.12);
+  --glass-strong: rgba(250, 250, 252, 0.9);
+  --shadow: 0 10px 40px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --editor-bg: #fff;
+  --active-line: rgba(0, 122, 255, 0.045);
+  --selection: rgba(0, 122, 255, 0.22);
+  --bracket-match: rgba(0, 122, 255, 0.16);
+  --bp: #3a7cf5;
+  --pc-line: rgba(52, 199, 89, 0.17);
+  --pc: #248a3d;
+  --syn-keyword: #ad3da4;
+  --syn-string: #c41a16;
+  --syn-number: #1c00cf;
+  --syn-comment: #707f8c;
+  --syn-def: #0f68a0;
+  --syn-call: #326d74;
+  --syn-self: #ad3da4;
+  --syn-class: #0b4f79;
+  --syn-meta: #643820;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --editor-font-size: 15px;
+  --bottom-inset: 0px;
+  color-scheme: light dark;
+  font: 17px/1.29 -apple-system, system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tint: #0a84ff;
+    --red: #ff453a;
+    --orange: #ff9f0a;
+    --label: #fff;
+    --secondary: rgba(235, 235, 245, 0.6);
+    --tertiary: rgba(235, 235, 245, 0.3);
+    --grouped-bg: #000;
+    --cell-bg: #1c1c1e;
+    --fill: rgba(120, 120, 128, 0.24);
+    --glass-strong: rgba(28, 28, 30, 0.9);
+    --shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --editor-bg: #1c1c1e;
+    --active-line: rgba(255, 255, 255, 0.04);
+    --selection: rgba(10, 132, 255, 0.35);
+    --bracket-match: rgba(10, 132, 255, 0.3);
+    --bp: #2f74e8;
+    --pc-line: rgba(48, 209, 88, 0.16);
+    --pc: #30d158;
+    --syn-keyword: #fc5fa3;
+    --syn-string: #fc6a5d;
+    --syn-number: #d0bf69;
+    --syn-comment: #7f8c98;
+    --syn-def: #41a1c0;
+    --syn-call: #67b7a4;
+    --syn-self: #fc5fa3;
+    --syn-class: #5dd8ff;
+    --syn-meta: #fd8f3f;
+  }
+}
+
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--editor-bg); color: var(--label); overscroll-behavior: none; }
+button { font: inherit; border: 0; background: none; color: inherit; cursor: pointer; padding: 0; }
+.editor { position: absolute; inset: 0; }
+.editor .cm-editor { height: 100%; }
+.editor .cm-gutters { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+/* The diagnostic under the cursor, floating at the bottom. */
+.problem-bar {
+  position: absolute; left: 10px; right: 10px; bottom: calc(8px + var(--bottom-inset)); z-index: 3;
+  padding: 10px 12px; border-radius: 16px; background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; font-size: 15px; letter-spacing: -0.2px;
+}
+.problem-bar[hidden] { display: none; }
+.problem-text { display: flex; gap: 8px; align-items: flex-start; }
+.problem-icon { flex: none; font-size: 14px; margin-top: 1px; }
+.problem-message { flex: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.problem-source { color: var(--secondary); font: 12px var(--mono); letter-spacing: 0; white-space: nowrap; }
+.problem-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.problem-actions button { color: var(--tint); background: color-mix(in srgb, var(--tint) 12%, transparent); padding: 6px 12px; border-radius: 14px; font-size: 14px; font-weight: 600; letter-spacing: 0; }
+.problem-actions button.secondary { color: var(--secondary); background: var(--fill); }
+
+/* Breakpoints: an Xcode-style tag behind the line number (D23). */
+.cm-lineNumbers .cm-gutterElement { position: relative; isolation: isolate; }
+.cm-lineNumbers .cm-gutterElement.cm-bp { color: #fff; font-weight: 600; }
+.cm-lineNumbers .cm-gutterElement.cm-bp::before {
+  content: ""; position: absolute; z-index: -1; left: 1px; right: -5px; top: 1px; height: calc(1.5em - 2px);
+  background: var(--bp); border-radius: 3px 0 0 3px; clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 50%, calc(100% - 6px) 100%, 0 100%);
+}
+.cm-lineNumbers .cm-gutterElement.cm-bp-off { color: var(--bp); }
+.cm-lineNumbers .cm-gutterElement.cm-bp-off::before { background: color-mix(in srgb, var(--bp) 22%, transparent); }
+/* The paused line. */
+.cm-debug-line { background: var(--pc-line) !important; box-shadow: inset 3px 0 0 var(--pc); }
+.cm-lineNumbers .cm-gutterElement.cm-debug-gutter:not(.cm-bp) { color: var(--pc); font-weight: 700; }
+.cm-content.cm-paused { cursor: default; }
+.inspecting-error .cm-debug-line { background: color-mix(in srgb, var(--red) 13%, transparent) !important; box-shadow: inset 3px 0 0 var(--red); }
+.inspecting-error .cm-lineNumbers .cm-gutterElement.cm-debug-gutter:not(.cm-bp) { color: var(--red); }
+.cm-content.cm-paused .cm-activeLine:not(.cm-debug-line) { background: transparent; }
+
+/* A line we jumped to. */
+.cm-flash-line { animation: flash-line 1.4s ease-out; }
+@keyframes flash-line { from { background: color-mix(in srgb, var(--tint) 24%, transparent); } to { background: transparent; } }
+
+.cm-panel.cm-panel-lint ul { max-height: 30vh; font-family: -apple-system, system-ui; font-size: 14px; }

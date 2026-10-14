@@ -75,9 +75,6 @@ class FakeDOM:
     def op_config(self, config):
         self.config = config
 
-    def op_css(self, text):
-        self.calls.append(("css", text))
-
     def op_dialog(self, i, spec):
         self.calls.append(("dialog", i, spec))
 

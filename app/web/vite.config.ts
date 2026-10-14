@@ -1,6 +1,5 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 const PYODIDE_VERSION = "314.0.7";
@@ -91,9 +90,16 @@ function hostShim(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), hostShim()],
+  plugins: [hostShim()],
   base: "/",
-  build: { outDir: "dist", target: "es2023", sourcemap: true },
+  // Two pages, no UI framework (D31): the engine (Python + analysis, no UI)
+  // and the editor (one CodeMirror pane). Everything else is native.
+  build: {
+    outDir: "dist",
+    target: "es2023",
+    sourcemap: true,
+    rollupOptions: { input: { engine: join(import.meta.dirname, "engine.html"), editor: join(import.meta.dirname, "editor.html") } },
+  },
   server: {
     proxy: {
       "/pkgs": {

@@ -22,9 +22,10 @@ store, bind, resource, interval, timeout.
 Control flow: Show, For.
 Elements: layout (VStack, HStack, ZStack, Grid, ScrollView, Spacer, Divider,
 Card), navigation (NavigationStack, Screen, TabView, Tab, Sheet), lists
-(Section, Row), content (Text, Label, Icon, Image, ProgressView, Link, Html,
-Canvas), inputs (Button, TextField, TextArea, Toggle, Slider, Stepper, Picker,
-DatePicker, ColorPicker) and raw HTML with ``h(tag, ...)``.
+(Section, Row), content (Text, Label, Icon, Image, ProgressView, Link, Canvas)
+and inputs (Button, TextField, TextArea, Toggle, Slider, Stepper, Picker,
+DatePicker, ColorPicker). Inside the Pyslopnista app they are native SwiftUI
+views; in a published web app the same tree is drawn with HTML.
 Dialogs: alert, confirm, prompt, choose, toast (async, use ``await``).
 """
 
@@ -51,7 +52,7 @@ __all__ = [
     # control flow
     "Show", "For",
     # app
-    "run", "css", "navigation", "alert", "confirm", "prompt", "choose", "toast",
+    "run", "navigation", "alert", "confirm", "prompt", "choose", "toast",
     "Element", "Event",
     # layout
     "VStack", "HStack", "ZStack", "Grid", "ScrollView", "Spacer", "Divider", "Card",
@@ -60,7 +61,7 @@ __all__ = [
     # lists
     "Section", "Row",
     # content
-    "Text", "Label", "Icon", "Image", "ProgressView", "Link", "Html", "Canvas", "h",
+    "Text", "Label", "Icon", "Image", "ProgressView", "Link", "Canvas",
     # inputs
     "Button", "TextField", "TextArea", "Toggle", "Slider", "Stepper", "Picker",
     "DatePicker", "ColorPicker",
@@ -870,16 +871,16 @@ def timeout(seconds: float, fn: Callable[[], Any]) -> _Timer:
 # =============================================================================
 # Element tree
 #
-# Python keeps the tree; the page keeps one DOM node per element id. Elements
+# Python keeps the tree; the renderer keeps one view per element id. Elements
 # are created detached; once their parent is on screen, changes become ops:
 #   ["mount", parent, before, tree]  ["move", parent, id, before]
 #   ["unmount", id]  ["set", id, {prop: value}]  ["call", id, method, args]
-# plus app-level ops (config, css, dialog, toast, frame). Children are "parts":
+# plus app-level ops (config, dialog, toast, frame). Children are "parts":
 # elements or regions (Show, For, live callables) that own a run of siblings.
 # =============================================================================
 
 class Event(dict):
-    """Event details from ``h()`` elements: ``e.value``, ``e.key``, ``e.x``..."""
+    """Event details, e.g. canvas pointer events: ``e.x``, ``e.y``..."""
 
     def __getattr__(self, name):
         try:
@@ -965,7 +966,7 @@ class Element:
             _app.queue_set(self.id, name, value)
 
     def call(self, method: str, *args) -> None:
-        """Call a method on the element in the page (``focus``, ``blur``...)."""
+        """Call a method on the element in the renderer (``focus``, ``blur``...)."""
         if self.mounted:
             _app.queue_call(["call", self.id, method, [_json(a) for a in args]])
 
@@ -1445,7 +1446,6 @@ class _App:
         self.next_dialog = 1
         self.schedule_fn: Callable[[Callable[[], None]], None] | None = None
         self.config: dict = {}
-        self.styles: list[str] = []
 
     def new_id(self) -> int:
         i = self.next_id
@@ -1484,7 +1484,7 @@ class _App:
             self.schedule()
 
     def flush(self):
-        """Send everything queued to the page as one message."""
+        """Send everything queued to the renderer as one message."""
         self.scheduled = False
         ops = self.ops
         if self.sets:
@@ -1521,7 +1521,7 @@ class _App:
             self.flush()
 
     def dispatch(self, cb_id, args_json=None):
-        """Called by the page: ``cb_id`` is "<element id>:<event>"."""
+        """Called by the renderer: ``cb_id`` is "<element id>:<event>"."""
         node_id, _, event = str(cb_id).partition(":")
         try:
             el = self.nodes.get(int(node_id))
@@ -1562,7 +1562,6 @@ class _App:
         root.handlers["resync"] = (self.resync, None)
         self.owner = Owner(None)
         self.config = config
-        self.styles = []
         self.ops.append(["config", config])
         if _is_live(app) and not isinstance(app, (Signal, Computed)):
             result = _build(app, (), self.owner)
@@ -1578,7 +1577,7 @@ class _App:
         if self.root is None:
             return
         self.sets = {}
-        self.ops = [["reset"], ["config", self.config], *(["css", t] for t in self.styles)]
+        self.ops = [["reset"], ["config", self.config]]
         self.ops.extend(["mount", 0, None, el._serialize()] for el in self.root._dom_children())
 
     def stop(self):
@@ -1640,12 +1639,6 @@ def run(app: Callable[[], Child] | Child, *, title: str | None = None, theme: st
     _app.start(app, {"title": title, "theme": theme, "tint": tint})
 
 
-def css(text: str) -> None:
-    """Add global CSS to the app (an escape hatch for custom styling)."""
-    _app.styles.append(text)
-    _app.queue(["css", text])
-
-
 def navigation() -> NavigationStack:
     """The NavigationStack around the current component or event handler."""
     owner = _rt.owner
@@ -1695,76 +1688,121 @@ def toast(text: str, *, seconds: float = 2.0) -> None:
 # Components
 # =============================================================================
 
-def _px(v):
-    if v is None or v is False:
-        return ""
-    if isinstance(v, bool):
-        return ""
+# Modifiers are sent as plain values (points, colors, names); each renderer
+# turns them into its own terms (SwiftUI modifiers in the app, CSS on the web).
+
+def _num(v):
+    if v is None or isinstance(v, bool):
+        return None
     if isinstance(v, (int, float)):
-        return f"{v}px"
+        return v
+    raise TypeError(f"expected a number, got {v!r}")
+
+
+def _edges(v):
+    """padding/margin: a number, (vertical, horizontal) or (top, right, bottom, left)."""
+    if v is None or v is False:
+        return None
     if isinstance(v, (list, tuple)):
-        return " ".join(_px(x) for x in v)
+        if len(v) not in (2, 4):
+            raise ValueError("padding takes one number, (vertical, horizontal) or (top, right, bottom, left)")
+        return [_num(x) or 0 for x in v]
+    return _num(v)
+
+
+def _size(v):
+    """width/height: points, or "fill" for all the room there is."""
+    if v is None or v is False:
+        return None
+    if v in ("fill", "100%"):
+        return "fill"
+    return _num(v)
+
+
+def _flex(v):
+    if v is None or v is False:
+        return None
+    if v is True:
+        return 1
+    return _num(v)
+
+
+def _color(v):
+    """A color: "#rrggbb", "#rrggbbaa", "rgb(...)", a CSS color name, a system
+    color (red, orange, ..., gray) or a semantic one (primary, secondary,
+    tertiary, tint, background, separator)."""
+    if v is None or v is False or v == "":
+        return None
     return str(v)
+
+
+_WEIGHTS = {"ultralight": 100, "thin": 200, "light": 300, "regular": 400, "normal": 400, "medium": 500,
+            "semibold": 600, "bold": 700, "heavy": 800, "black": 900}
+
+
+def _weight(v):
+    if v is None or v is False:
+        return None
+    if isinstance(v, str):
+        if v.isdigit():
+            return int(v)
+        if v.lower() not in _WEIGHTS:
+            raise ValueError(f"unknown font weight {v!r}")
+        return _WEIGHTS[v.lower()]
+    return _num(v)
+
+
+def _align(v):
+    if v is None:
+        return None
+    return {"left": "leading", "start": "leading", "right": "trailing", "end": "trailing"}.get(v, v)
+
+
+def _border(v):
+    """A color (1 point wide) or (width, color)."""
+    if v is None or v is False or v == "":
+        return None
+    if isinstance(v, (list, tuple)):
+        width, color = v
+        return [_num(width), _color(color)]
+    return [1, _color(v)]
+
+
+def _shadow(v):
+    if v is None or v is False:
+        return None
+    if v is True:
+        return 12
+    return _num(v)
 
 
 def _str(v):
     return "" if v is None else str(v)
 
 
-def _flex(v):
-    if v is None or v is False:
-        return ""
-    if v is True:
-        return "1 1 0%"
-    if isinstance(v, (int, float)):
-        return f"{v} 1 0%"
-    return str(v)
-
-
-def _shadow(v):
-    if v is True:
-        return "0 2px 12px rgba(0,0,0,0.12)"
-    return _str(v) if v else ""
-
-
-def _style_dict(v):
-    """{"font_size": 20} -> {"font-size": "20px"}: numbers get px unless unitless."""
-    out = {}
-    for k, x in dict(v or {}).items():
-        name = str(k).replace("_", "-")
-        if isinstance(x, (int, float)) and not isinstance(x, bool) and name not in _UNITLESS:
-            out[name] = f"{x}px"
-        else:
-            out[name] = _str(x)
-    return out
-
-
-_UNITLESS = {"opacity", "z-index", "flex", "flex-grow", "flex-shrink", "font-weight", "line-height",
-             "order", "zoom"}
-
 # Keyword arguments every element accepts.
 _MODIFIERS: dict[str, tuple[str, Callable[[Any], Any]]] = {
-    "padding": ("style:padding", _px),
-    "margin": ("style:margin", _px),
-    "width": ("style:width", _px),
-    "height": ("style:height", _px),
-    "min_width": ("style:min-width", _px),
-    "max_width": ("style:max-width", _px),
-    "min_height": ("style:min-height", _px),
-    "max_height": ("style:max-height", _px),
-    "flex": ("style:flex", _flex),
-    "background": ("style:background", _str),
-    "color": ("style:color", _str),
-    "font_size": ("style:font-size", _px),
-    "font_weight": ("style:font-weight", _str),
-    "text_align": ("style:text-align", _str),
-    "corner_radius": ("style:border-radius", _px),
-    "border": ("style:border", _str),
-    "opacity": ("style:opacity", _str),
-    "shadow": ("style:box-shadow", _shadow),
-    "class_": ("class", _str),
-    "style": ("style", _style_dict),
-    "aria_label": ("attr:aria-label", _str),
+    "padding": ("padding", _edges),
+    "margin": ("margin", _edges),
+    "width": ("width", _size),
+    "height": ("height", _size),
+    "min_width": ("min_width", _size),
+    "max_width": ("max_width", _size),
+    "min_height": ("min_height", _size),
+    "max_height": ("max_height", _size),
+    "flex": ("flex", _flex),
+    "background": ("background", _color),
+    "color": ("color", _color),
+    "tint": ("tint", _color),
+    "font_size": ("font_size", _num),
+    "font_weight": ("font_weight", _weight),
+    "text_align": ("text_align", _align),
+    "corner_radius": ("corner_radius", _num),
+    "border": ("border", _border),
+    "opacity": ("opacity", _num),
+    "shadow": ("shadow", _shadow),
+    "accessibility_label": ("a11y", lambda v: None if v is None else str(v)),
+    "aria_label": ("a11y", lambda v: None if v is None else str(v)),
     "hidden": ("hidden", bool),
     "disabled": ("disabled", bool),
 }
@@ -1783,7 +1821,7 @@ def _bind_value(el: Element, value, on_change, decode=None, encode=None, prop="v
     def changed(v):
         if decode is not None:
             v = decode(v)
-        # The page already shows v; remember that so echoing it back is a no-op.
+        # The renderer already shows v; remember that so echoing it back is a no-op.
         el.props[prop] = (encode or _json)(v)
         if on_change is not None:
             return _call(on_change, [v])
@@ -2071,16 +2109,15 @@ def Link(text: Reactive[str], url: Reactive[str], **mods) -> Element:
     return _el("Link", (), text=_live_str(text), url=url, **mods)
 
 
-def Html(markup: Reactive[str], **mods) -> Element:
-    """Raw HTML (an escape hatch; it is not sanitized)."""
-    return _el("Html", (), html=_live_str(markup), **mods)
-
-
 class _Painter:
     """Records canvas drawing calls. Method and attribute names are those of the
     browser's CanvasRenderingContext2D in snake_case (``fill_rect``,
     ``fill_style``, ...), plus a few shortcuts (``clear``, ``circle``,
-    ``line``, ``text``)."""
+    ``line``, ``text``). The app draws them natively; it knows paths
+    (``begin_path``, ``move_to``, ``line_to``, ``arc``, ``arc_to``, ``ellipse``,
+    ``rect``, ``round_rect``, ``quadratic_curve_to``, ``bezier_curve_to``,
+    ``close_path``, ``fill``, ``stroke``, ``clip``), rectangles, text,
+    ``save``/``restore``, transforms and the usual style attributes."""
 
     def __init__(self, width, height):
         object.__setattr__(self, "_cmds", [])
@@ -2146,32 +2183,6 @@ def Canvas(draw: Callable[[_Painter], Any] | None = None, *, width: float = 300,
 
         el.on("frame", frame)
     return el
-
-
-def h(tag: str, *children: Child, **attrs) -> Element:
-    """Any HTML element: ``ui.h("div", "hi", class_="box", on_click=fn)``.
-
-    Keyword arguments become attributes (``data_x`` -> ``data-x``); ``value``
-    and ``checked`` are set as properties; ``on_<event>`` listens to any DOM
-    event and passes an event object (``e.value``, ``e.key``, ``e.x``...).
-    """
-    el = _el("h", children, tag=tag)
-    for name, value in attrs.items():
-        if name.startswith("on_") or name in _MODIFIERS:
-            el.bind(name, value)
-        elif name in ("value", "checked", "selected", "indeterminate"):
-            el.bind(f"prop:{name}", value)
-        else:
-            el.bind(f"attr:{name.rstrip('_').replace('_', '-')}", value, _attr)
-    return el
-
-
-def _attr(v):
-    if v is True:
-        return ""
-    if v is False or v is None:
-        return None
-    return _json(v)
 
 
 # -- inputs ------------------------------------------------------------------------

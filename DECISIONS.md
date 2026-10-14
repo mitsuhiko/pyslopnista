@@ -48,7 +48,7 @@ is too slow without JIT.
 
 ## D4: Web stack for the whole app; Swift is only a thin host
 
-2026-10-13 · Accepted
+2026-10-13 · Superseded by D31
 
 The IDE, the agent and the runtime are a TypeScript web app inside a WKWebView.
 The Swift host only provides:
@@ -212,7 +212,7 @@ typing on a device still needs to be tried.
 
 ## D18: The web app is React + Vite + TypeScript
 
-2026-10-13 - Accepted (was P3)
+2026-10-13 - Superseded by D31 (was P3)
 
 Same stack as pi-mobile. The Python worker, `_pyslop.py` and `ui.py` are served
 as static files (`public/runtime/`), not bundled. `npm run dev` runs the app in
@@ -385,7 +385,7 @@ leaves a rejected promise behind in WebKit.
 
 ## D26: UI apps use Solid-style fine-grained reactivity
 
-2026-10-13 - Accepted (was P1; supersedes D14; `uikit/`)
+2026-10-13 - Accepted (was P1; supersedes D14; `uikit/`; in the app they render natively, D30)
 
 The `ui` module works like SolidJS:
 - Components are plain functions that run once.
@@ -532,6 +532,137 @@ pixels, a tap and a key reach the handlers, `bye()` ends `done()`, a timer
 program keeps running until Stop, `Examples/Turtle.py`, and a tap that
 catches the turtle in `Examples/Catch the Turtle.py`) pass in the iPhone 17
 and iPad Pro 11 simulators (WKWebView). Not yet tried on a device.
+
+## D30: In the app, ui apps are native SwiftUI views; the web renderer is for published apps
+
+2026-10-14 - Accepted (extends D26)
+
+`ui.py` keeps the element tree and its op stream (`mount`, `move`,
+`unmount`, `set`, `call`, `dialog`, `toast`, `frame`, `reset`). In the app,
+those ops drive a SwiftUI renderer (`app/ios/Sources/UIRenderer/`). Published
+apps (D15) keep using `uikit/web/renderer.js`, and web pages only need to look
+iOS-like, not like the native views.
+
+How the native renderer works:
+- **One observable node per element.** `UIStore` mirrors the tree as
+  `@Observable` `UINode`s (type, props, children). A `set` op changes one
+  node, so only the views that read that node update, the same fine-grained
+  model as Solid. Event and value changes go back as `"<id>:<event>"` with
+  JSON arguments.
+- **Inputs echo nothing.** A change is written into the node before it is
+  sent, and Python remembers it, so its echo is a no-op.
+- **Native components where they exist:**
+  - Screens are inset grouped `List`s. Sections become list sections, Rows
+    become list rows (swipe to delete with `.swipeActions`). Any other child
+    is a row on the background.
+  - Navigation uses `NavigationStack(path:)`. The path leaves out screens the
+    user already popped (back button or edge swipe) until Python unmounts
+    them.
+  - `TabView`, sheets with detents, alerts and confirmation dialogs, a toast
+    overlay. Sheets, dialogs and toasts are presented from the topmost
+    layer.
+  - Controls: `Picker` (segmented and menu), `DatePicker`, `ColorPicker`,
+    `Stepper`, `Slider`, `Toggle`, `TextField` (with keyboard kinds),
+    `LabeledContent`.
+  - Icon names map to SF Symbols, with emoji as the fallback.
+- **Canvas** replays the recorded drawing calls (the browser's canvas 2D API)
+  into Core Graphics. Paths are kept in canvas units, so `fill()` followed by
+  `stroke()` works as in the browser. `on_frame` runs on `CADisplayLink`
+  with one frame in flight. While the program listens for pointer events,
+  touches on the canvas don't scroll the list.
+- **The Done button** sits on the leading side of the app's first screen
+  (each tab's first screen in a `TabView`).
+
+The web-only escape hatches are gone: `h()`, `Html`, `css()`, `class_`,
+`style` and arbitrary DOM events. Modifiers are now plain values that each
+renderer translates:
+- `padding` and `margin`: a number, (vertical, horizontal) or (top, right,
+  bottom, left).
+- Sizes: points, or `"fill"`.
+- `flex`: a number.
+- Colors: hex, `rgb()`, CSS names, iOS system colors (`red`, ..., `gray`) or
+  semantic names (`primary`, `secondary`, `tertiary`, `tint`, `background`,
+  `separator`, `fill`).
+- `font_weight`: a name or a number.
+- `text_align`: `leading`, `center` or `trailing`.
+- `border`: a color, or (width, color).
+- `shadow`: `True` or a radius.
+- New: `tint`, and `accessibility_label` (`aria_label` still works).
+The `Escape Hatches` example became `Async Data`.
+
+Phase A wired this into the old React app as an overlay. D31 then made the
+whole app native, and the renderer and its bridge carried over unchanged.
+
+Evidence (iPhone 17 simulator, iOS 27):
+- The `ui_app`, `ui_todo` and new `ui_navigation` selftests pass. They check
+  push, the prompt dialog, back, and a sheet with a text field.
+- Rendering a message takes 0.08 ms for 2 ops.
+- Screenshots of every uikit example look like native iOS.
+- `uikit/run.sh --selftest` passes (88 host tests, 12 browser checks).
+Not yet tried on a device.
+
+## D31: The IDE is a native SwiftUI app; web views only run Python and CodeMirror
+
+2026-10-14 - Accepted (supersedes D4 and D18)
+
+The React app is gone. Everything visible is SwiftUI:
+- the file browser
+- tabs and split view
+- the navigation bar with Run, Stop and Continue, and native menus
+- the console
+- the debugger's controls and views
+- the Find in Folder, Go to, Problems and Settings sheets
+- ui apps (D30) and turtle screens
+
+Pyodide still needs WebKit (D2), so two kinds of pages remain, built with Vite
+and without a UI framework:
+- **The engine** (`engine.html`) has no UI and never shows. It keeps the old
+  session code: Python workers (D6, D10-D13, D16), the debugger protocol
+  (D23), file write-back (D27), turtle scenes and their event queues (D29),
+  and ruff and ty (D21).
+  - The host sends commands through `window.__engine.command`. The engine
+    reports session state through the bridge: the transcript goes as patches
+    (new lines, appended text, the current order), the rest whole.
+  - Its web view stays in the window as a 1-point view, with
+    `WKPreferences.inactiveSchedulingPolicy = .none` so it is never throttled.
+  - The self-test runs here and drives the native app through `app.*` hooks.
+- **The editor** (`editor.html`) is one CodeMirror pane per web view (D17),
+  two on iPad.
+  - It is driven by `window.__editor.call`. It reports edits, focus,
+    problem counts, breakpoints that moved, taps on names while paused,
+    and long presses on line numbers.
+  - Lint, completions, hover and go to definition go through the host to the
+    engine. One ty instance serves both panes.
+  - The problem bar with its quick fixes stays inside the page for now.
+  - Edits are mirrored to the other pane right away. The text is saved after
+    300 ms of quiet, and is flushed before a run.
+
+The host owns breakpoints, settings and open tabs (in the user defaults) and
+pushes them to the pages. Files are read and written natively through
+`FileStore` (D20, D28). Linking a folder uses SwiftUI's `fileImporter`.
+
+What this gets us:
+- Real native controls: `NavigationStack`, swipe actions, context menus,
+  `.searchable`, `Menu`, popovers anchored to code.
+- Hardware shortcuts as `UIKeyCommand`s through `.keyboardShortcut`, which
+  iPadOS lists in the ⌘ overlay.
+- The console fields are `UITextField`s with no capitalization,
+  autocorrection or smart punctuation, and ↑/↓ history.
+- Turtle screens are drawn with Core Graphics from the scene ops.
+- A crash of the engine's WebContent process no longer takes the editor
+  with it.
+
+What it costs:
+- The IDE no longer runs in a desktop browser (`npm run dev` only serves the
+  pages), and Android would need its own UI. GOALS is updated.
+- There are three WebContent processes instead of one.
+- Every editor and engine call is an IPC hop. Completions now take two.
+
+Evidence: `./run.sh --selftest` passes all 40 checks in the iPhone 17 and
+iPad Pro 13" simulators (iOS 27), including typing into the native console
+fields through UIKit and pixel checks on the native turtle view. Not yet
+tried on a device; the iPhone 14 Pro should be next (memory with three
+WebContent processes, keyboard and focus behavior).
 
 ## Proposed (not yet decided)
 
