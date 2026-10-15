@@ -1355,12 +1355,13 @@ export async function selftest() {
       await app.clearField("console");
       await app.focusField("console");
       await sleep(600);
-      await typeNative("1 ");
-      const held = await keyBar(["hold:=", "hold:("]);
+      const held = await keyBar(["⇥"]);
       if (typeof held === "string") throw new Error(held);
+      await typeNative("x");
+      await keyBar(["hold:⇥"]); // dedent, not another indent
       await sleep(200);
       const holdValue = await app.fieldValue("console");
-      if (holdValue !== "1 ==)") throw new Error(`after holding = and (: ${JSON.stringify(holdValue)}`);
+      if (holdValue !== "x") throw new Error(`after ⇥ x and holding ⇥: ${JSON.stringify(holdValue)}`);
       return { shown: tapped.shown };
     } finally {
       await app.clearField("console");
