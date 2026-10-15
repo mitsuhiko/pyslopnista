@@ -1,11 +1,14 @@
-// Editor settings (font size, line wrapping). The native host owns and
-// persists them (D31) and sends them to each editor page.
+// Editor settings (font size, line wrapping, color theme). The native host
+// owns and persists them (D31) and sends them to each editor page.
+import { DEFAULT_THEME, themeFor } from "./editor/themes";
+
 export interface Settings {
   fontSize: number; // px
   wrap: boolean;
+  theme: string; // a theme id (editor/themes.ts, D39)
 }
 
-const DEFAULTS: Settings = { fontSize: 15, wrap: true };
+const DEFAULTS: Settings = { fontSize: 15, wrap: true, theme: DEFAULT_THEME };
 export const FONT_SIZES = { min: 11, max: 24 };
 
 class SettingsStore {
@@ -32,6 +35,7 @@ class SettingsStore {
 
   private apply() {
     document.documentElement.style.setProperty("--editor-font-size", `${this.data.fontSize}px`);
+    document.documentElement.dataset.theme = themeFor(this.data.theme).id;
   }
 }
 

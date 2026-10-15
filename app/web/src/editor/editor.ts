@@ -52,10 +52,10 @@ const flashField = StateField.define<DecorationSet>({
 });
 
 const highlight = HighlightStyle.define([
-  { tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.operatorKeyword, t.moduleKeyword], color: "var(--syn-keyword)", fontWeight: "600" },
+  { tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.operatorKeyword, t.moduleKeyword], color: "var(--syn-keyword)", fontWeight: "var(--syn-keyword-weight)" },
   { tag: [t.string, t.special(t.string)], color: "var(--syn-string)" },
   { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
-  { tag: [t.comment, t.lineComment], color: "var(--syn-comment)", fontStyle: "italic" },
+  { tag: [t.comment, t.lineComment], color: "var(--syn-comment)", fontStyle: "var(--syn-comment-style)" },
   { tag: [t.function(t.definition(t.variableName)), t.definition(t.className)], color: "var(--syn-def)" },
   { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--syn-call)" },
   { tag: [t.self, t.special(t.variableName)], color: "var(--syn-self)" },
@@ -64,14 +64,14 @@ const highlight = HighlightStyle.define([
 ]);
 
 const theme = EditorView.theme({
-  "&": { height: "100%", fontSize: "var(--editor-font-size)", background: "var(--editor-bg)", color: "var(--label)" },
+  "&": { height: "100%", fontSize: "var(--editor-font-size)", background: "var(--editor-bg)", color: "var(--editor-fg)" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.5", overscrollBehavior: "contain" },
-  ".cm-content": { caretColor: "var(--tint)", paddingBottom: "40vh" },
-  ".cm-gutters": { background: "var(--editor-bg)", color: "var(--tertiary)", border: "none" },
+  ".cm-content": { caretColor: "var(--caret)", paddingBottom: "40vh" },
+  ".cm-gutters": { background: "var(--editor-bg)", color: "var(--gutter)", border: "none" },
   ".cm-activeLine": { background: "var(--active-line)" },
-  ".cm-activeLineGutter": { background: "transparent", color: "var(--secondary)" },
-  "&.cm-focused .cm-cursor": { borderLeftColor: "var(--tint)", borderLeftWidth: "2px" },
+  ".cm-activeLineGutter": { background: "transparent", color: "var(--gutter-active)" },
+  "&.cm-focused .cm-cursor": { borderLeftColor: "var(--caret)", borderLeftWidth: "2px" },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": { background: "var(--selection) !important" },
   ".cm-matchingBracket": { background: "var(--bracket-match)", outline: "none" },
   ".cm-tooltip": { border: "none", borderRadius: "10px", overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,.2)", background: "var(--cell-bg)" },

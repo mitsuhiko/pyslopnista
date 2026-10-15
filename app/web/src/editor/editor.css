@@ -1,4 +1,5 @@
-/* The editor page (D31): just CodeMirror and the problem bar. iOS colors, light and dark. */
+/* The editor page (D31): just CodeMirror and the problem bar. iOS colors, light and dark;
+   the editor's own colors come from the theme (themes.ts, D39). */
 :root {
   --tint: #007aff;
   --red: #ff3b30;
@@ -11,22 +12,9 @@
   --fill: rgba(120, 120, 128, 0.12);
   --glass-strong: rgba(250, 250, 252, 0.9);
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08);
-  --editor-bg: #fff;
-  --active-line: rgba(0, 122, 255, 0.045);
-  --selection: rgba(0, 122, 255, 0.22);
-  --bracket-match: rgba(0, 122, 255, 0.16);
   --bp: #3a7cf5;
   --pc-line: rgba(52, 199, 89, 0.17);
   --pc: #248a3d;
-  --syn-keyword: #ad3da4;
-  --syn-string: #c41a16;
-  --syn-number: #1c00cf;
-  --syn-comment: #707f8c;
-  --syn-def: #0f68a0;
-  --syn-call: #326d74;
-  --syn-self: #ad3da4;
-  --syn-class: #0b4f79;
-  --syn-meta: #643820;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --editor-font-size: 15px;
   --bottom-inset: 0px;
@@ -49,22 +37,9 @@
     --fill: rgba(120, 120, 128, 0.24);
     --glass-strong: rgba(28, 28, 30, 0.9);
     --shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
-    --editor-bg: #1c1c1e;
-    --active-line: rgba(255, 255, 255, 0.04);
-    --selection: rgba(10, 132, 255, 0.35);
-    --bracket-match: rgba(10, 132, 255, 0.3);
     --bp: #2f74e8;
     --pc-line: rgba(48, 209, 88, 0.16);
     --pc: #30d158;
-    --syn-keyword: #fc5fa3;
-    --syn-string: #fc6a5d;
-    --syn-number: #d0bf69;
-    --syn-comment: #7f8c98;
-    --syn-def: #41a1c0;
-    --syn-call: #67b7a4;
-    --syn-self: #fc5fa3;
-    --syn-class: #5dd8ff;
-    --syn-meta: #fd8f3f;
   }
 }
 

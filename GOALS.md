@@ -34,6 +34,7 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 - [core] CodeMirror 6 editor tuned for touch and for hardware keyboards (in a web view inside the native app)
 - [maybe] A native editor (TextKit 2 or Runestone with tree-sitter) instead of CodeMirror
 - [core] Python syntax highlighting, indentation, bracket matching, comment toggling
+- [core] Color themes for the editor, each light and dark; the app's appearance can be fixed to light or dark (D39)
 - [core] Bar of extra keys above the on-screen keyboard (tab, brackets, quotes, `:`, `_`, `#`, cursor keys)
 - [core] Swipe on the keyboard bar to move the cursor
 - [core] Find/replace, go to line, outline of functions and classes

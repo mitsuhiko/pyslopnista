@@ -1147,6 +1147,36 @@ A cold launch with a link (`simctl launch … --launch-url`) runs the Todo
 app in the iPhone 18 Pro simulator. All 53 checks pass there (2026-10-15).
 The Shortcuts app's side was not driven by the test.
 
+## D39: Editor color themes, each light and dark; the app's appearance in Settings
+
+2026-10-15 - Accepted
+
+The code editor has five themes (`app/web/src/editor/themes.ts`), each with
+a light and a dark palette:
+- **Pyslopnista** (the default), drawn from the app icon: on light, deep
+  Python blue keywords, blue definitions and amber strings on near-white
+  with a yellow-tinted current line; on dark, Python yellow keywords and
+  caret, light blue definitions and orange strings on the icon's navy;
+- **Xcode** (the colors the editor had before), **GitHub**,
+  **Solarized** and **One** (Atom's One Light / One Dark).
+
+A palette is a set of CSS variables on `:root[data-theme=<id>]`, light by
+default and dark under `prefers-color-scheme: dark`; the editor's
+CodeMirror theme and highlight style only use the variables. The generic
+iOS colors of the page (tint, red, the problem bar) stay as they were.
+
+**Appearance** (Settings: System, Light, Dark) applies to the whole app by
+overriding the windows' interface style, so the native views, the editor
+pages and the docs viewer agree; forcing only the editor would leave it
+light inside dark chrome. Settings lists the themes with a swatch of both
+variants and previews the selected one in the current appearance, with the
+colors the editor page reports (one definition, no copy in Swift). Saved
+settings from before keep their other values.
+
+Evidence: the self-test's `editor_themes` check (the list, the default,
+Solarized's dark and light backgrounds after switching the appearance),
+in the iPhone 18 Pro simulator (2026-10-15).
+
 ## Proposed (not yet decided)
 
 (none)

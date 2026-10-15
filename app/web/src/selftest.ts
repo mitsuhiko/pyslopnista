@@ -664,6 +664,30 @@ export async function selftest() {
     return { programs: programs.length };
   });
 
+  await step("editor_themes", async () => {
+    await app.openFile("Examples/Hello.py");
+    const themes = await editorCall<{ id: string }[]>("themes");
+    if (themes[0]?.id !== "pyslopnista" || themes.length < 4) throw new Error(`themes: ${JSON.stringify(themes.map((t) => t.id))}`);
+    let state = await editorCall<{ theme: string; bg: string; dark: boolean }>("themeState");
+    if (state.theme !== "pyslopnista") throw new Error(`default: ${JSON.stringify(state)}`);
+    await appCall("setTheme", "solarized");
+    await appCall("setAppearance", "dark");
+    state = await until(async () => {
+      const s = await editorCall<{ theme: string; bg: string; dark: boolean }>("themeState");
+      return s.theme === "solarized" && s.dark ? s : null;
+    }, 5000);
+    if (state.bg !== "#002b36") throw new Error(`solarized dark: ${JSON.stringify(state)}`);
+    await appCall("setAppearance", "light");
+    state = await until(async () => {
+      const s = await editorCall<{ theme: string; bg: string; dark: boolean }>("themeState");
+      return !s.dark ? s : null;
+    }, 5000);
+    if (state.bg !== "#fdf6e3") throw new Error(`solarized light: ${JSON.stringify(state)}`);
+    await appCall("setAppearance", "system");
+    await appCall("setTheme", "pyslopnista");
+    return { themes: themes.length };
+  });
+
   await step("show_info_docs", async () => {
     const text = "import json\nimport pathlib\njson.loads('1')\npathlib.Path('.').glob('*')\n";
     await openWith("Tests/py/info.py", text);

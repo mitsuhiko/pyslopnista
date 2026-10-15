@@ -299,9 +299,9 @@ private struct EditorChrome: ViewModifier {
     }
 
     private func fileName(_ name: String) -> some View {
-        let natural = ceil((name as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .headline)]).width)
-        return Text(name).font(.headline).lineLimit(1).truncationMode(.middle)
-            .frame(width: min(natural, titleWidth - 16))
+        CappedWidth(limit: titleWidth - 16) {
+            Text(name).font(.headline).lineLimit(1).truncationMode(.middle)
+        }
     }
 
     private func title(_ file: String?) -> some View {
@@ -442,6 +442,23 @@ private struct EditorChrome: ViewModifier {
 
 /// Toolbar buttons close together in one glass group, as one toolbar item:
 /// a ToolbarItemGroup spaces them wider than an iPhone's bar can afford.
+/// Gives its one subview its ideal width, but no more than `limit`, whatever
+/// it is offered. Measures the text as it is drawn: in a navigation bar
+/// Dynamic Type is capped, so a `UIFont.preferredFont` estimate is too wide.
+private struct CappedWidth: Layout {
+    var limit: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let view = subviews.first else { return .zero }
+        let width = min(ceil(view.sizeThatFits(.unspecified).width), limit)
+        return CGSize(width: width, height: view.sizeThatFits(ProposedViewSize(width: width, height: nil)).height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+    }
+}
+
 struct TightButtons<Content: View>: View {
     @ViewBuilder var content: Content
 

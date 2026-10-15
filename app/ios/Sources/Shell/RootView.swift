@@ -82,6 +82,7 @@ struct RootView: View {
         }
         .environment(model)
         .onAppear {
+            model.applyAppearance()
             model.host.presenter = {
                 var vc = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
                 while let presented = vc?.presentedViewController { vc = presented }

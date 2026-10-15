@@ -54,6 +54,10 @@ enum SelfTest {
             return try await ProgramQuery().suggestedEntities().map(\.id)
         case "homeScreenSheet":
             model.activeSheet = .homeScreen(str(0) ?? "")
+        case "setTheme":
+            model.updateSettings { $0.theme = str(0) ?? "pyslopnista" }
+        case "setAppearance":
+            model.updateSettings { $0.appearance = EditorSettings.Appearance(rawValue: str(0) ?? "") ?? .system }
         case "docsState":
             return model.docsState
         case "closeDocs":

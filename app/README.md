@@ -75,7 +75,10 @@ apps are native views (D30).
   - Find in Folder searches the text files of the current folder.
   - Show Info shows ty's signature and docstring for a name. It's in the
     selection menu and the ⋯ menu, or ⌥-click.
-- **Settings** (⌘, or the ⋯ menus): editor font size, line wrapping.
+- **Settings** (⌘, or the ⋯ menus): appearance (system, light, dark),
+  editor font size, line wrapping, and the editor's color theme
+  (Pyslopnista, drawn from the app icon, plus Xcode, GitHub, Solarized and
+  One; each light and dark, D39).
 - **Hardware keyboard**:
 
   | Action | Shortcut |

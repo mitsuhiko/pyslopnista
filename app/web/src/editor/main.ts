@@ -6,6 +6,9 @@ import { call } from "../host";
 import { settings } from "../settings";
 import { editorEvent, PaneEditor } from "./editor";
 import "./editor.css";
+import { installThemes, THEMES } from "./themes";
+
+installThemes();
 
 const remote = Object.fromEntries(METHODS.map((m) => [m, (...args: unknown[]) => call("analysis", { method: m, args })])) as unknown as AnalysisApi;
 setAnalysis(remote);
@@ -40,7 +43,8 @@ const api: Api = {
   relint: () => editor.relint(),
   focus: () => editor.focus(),
   blur: () => editor.blur(),
-  settings: (s: { fontSize: number; wrap: boolean }) => settings.update(s),
+  settings: (s: { fontSize: number; wrap: boolean; theme?: string }) => settings.update(s),
+  themes: () => THEMES,
   setInsets: (bottom: number) => document.documentElement.style.setProperty("--bottom-inset", `${bottom}px`),
   // self-test
   setText: (text: string) => editor.setText(text),
@@ -48,6 +52,10 @@ const api: Api = {
   applyFixNamed: (name: string) => editor.applyFixNamed(name),
   setCursor: (line: number, column: number) => editor.setCursor(line, column),
   info: () => editor.info(),
+  themeState: () => {
+    const style = getComputedStyle(document.documentElement);
+    return { theme: document.documentElement.dataset.theme, bg: style.getPropertyValue("--editor-bg").trim(), dark: matchMedia("(prefers-color-scheme: dark)").matches };
+  },
 };
 
 (window as any).__editor = {

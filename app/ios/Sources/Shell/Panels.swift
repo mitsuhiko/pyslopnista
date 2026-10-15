@@ -277,10 +277,19 @@ struct ProblemsView: View {
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var themes: [EditorTheme] = []
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Appearance") {
+                    Picker("Appearance", selection: Binding(get: { model.settings.appearance }, set: { v in model.updateSettings { $0.appearance = v } })) {
+                        ForEach(EditorSettings.Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
                 Section("Editor") {
                     Stepper(value: Binding(get: { model.settings.fontSize }, set: { v in model.updateSettings { $0.fontSize = v } }),
                             in: EditorSettings.fontSizes) {
@@ -289,10 +298,26 @@ struct SettingsView: View {
                     Toggle("Wrap Long Lines", isOn: Binding(get: { model.settings.wrap }, set: { v in model.updateSettings { $0.wrap = v } }))
                 }
                 Section {
-                    Text("def greet(name: str) -> str:\n    return f\"Hello {name}, nice to see you again today!\"")
-                        .font(.system(size: CGFloat(model.settings.fontSize), design: .monospaced))
-                        .lineLimit(model.settings.wrap ? nil : 2)
-                        .fixedSize(horizontal: !model.settings.wrap, vertical: true)
+                    if let theme = themes.first(where: { $0.id == model.settings.theme }) ?? themes.first {
+                        ThemePreview(palette: colorScheme == .dark ? theme.dark : theme.light, fontSize: model.settings.fontSize, wrap: model.settings.wrap)
+                            .listRowInsets(EdgeInsets())
+                    }
+                }
+                Section("Theme") {
+                    ForEach(themes) { theme in
+                        Button { model.updateSettings { $0.theme = theme.id } } label: {
+                            HStack(spacing: 12) {
+                                ThemeSwatch(light: theme.light, dark: theme.dark)
+                                Text(theme.name)
+                                Spacer()
+                                if theme.id == model.settings.theme {
+                                    Image(systemName: "checkmark").foregroundStyle(Color.accentColor).fontWeight(.semibold)
+                                }
+                            }
+                        }
+                        .tint(.primary)
+                        .accessibilityAddTraits(theme.id == model.settings.theme ? .isSelected : [])
+                    }
                 }
                 Section {
                     Picker("Default Version", selection: Binding(get: { model.defaultPython }, set: { model.setDefaultPython($0) })) {
@@ -310,6 +335,71 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .task { themes = await model.editorThemes() }
+    }
+}
+
+/// A few lines of Python in a theme's colors.
+private struct ThemePreview: View {
+    let palette: EditorTheme.Palette
+    let fontSize: Int
+    let wrap: Bool
+
+    var body: some View {
+        Text(code)
+            .font(.system(size: CGFloat(fontSize), design: .monospaced))
+            .lineSpacing(CGFloat(fontSize) * 0.3)
+            .lineLimit(wrap ? nil : 4)
+            .fixedSize(horizontal: !wrap, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(palette.color("bg"))
+    }
+
+    private var code: AttributedString {
+        let bold = palette.keywordBold
+        func part(_ text: String, _ key: String = "fg", italic: Bool = false, weight: Font.Weight? = nil) -> AttributedString {
+            var a = AttributedString(text)
+            a.foregroundColor = palette.color(key)
+            if italic { a.font = .system(size: CGFloat(fontSize), design: .monospaced).italic() }
+            if let weight { a.font = .system(size: CGFloat(fontSize), weight: weight, design: .monospaced) }
+            return a
+        }
+        let kw = { (t: String) in part(t, "keyword", weight: bold ? .semibold : nil) }
+        return part("@", "meta") + part("cache", "meta") + part("\n")
+            + kw("def") + part(" ") + part("greet", "def") + part("(") + part("self", "self") + part(", name: ")
+            + part("str", "class") + part(") -> ") + part("str", "class") + part(":\n")
+            + part("    # Say hello, twice\n", "comment", italic: true)
+            + part("    ") + kw("return") + part(" ") + part("f\"Hello {name}!\"", "string") + part(" * ") + part("2", "number")
+            + part("\n\n") + part("print", "call") + part("(") + part("greet", "call") + part("(") + part("\"Ada\"", "string") + part(").")
+            + part("upper", "call") + part("())")
+    }
+}
+
+/// A theme's light and dark backgrounds with a keyword color dot each.
+private struct ThemeSwatch: View {
+    let light: EditorTheme.Palette
+    let dark: EditorTheme.Palette
+
+    var body: some View {
+        HStack(spacing: 0) {
+            half(light)
+            half(dark)
+        }
+        .frame(width: 44, height: 28)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color(.separator), lineWidth: 0.5))
+    }
+
+    private func half(_ p: EditorTheme.Palette) -> some View {
+        ZStack {
+            p.color("bg")
+            VStack(spacing: 3) {
+                Capsule().fill(p.color("keyword")).frame(width: 12, height: 3)
+                Capsule().fill(p.color("string")).frame(width: 12, height: 3)
+                Capsule().fill(p.color("def")).frame(width: 12, height: 3)
+            }
         }
     }
 }

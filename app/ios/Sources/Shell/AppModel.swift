@@ -23,9 +23,48 @@ struct ProblemCounts: Equatable {
 }
 
 struct EditorSettings: Codable, Equatable {
+    enum Appearance: String, Codable, CaseIterable {
+        case system, light, dark
+
+        var label: String { rawValue.capitalized }
+        var style: UIUserInterfaceStyle { self == .light ? .light : self == .dark ? .dark : .unspecified }
+    }
+
     var fontSize = 15
     var wrap = true
+    /// The code editor's color theme (web/src/editor/themes.ts, D39).
+    var theme = "pyslopnista"
+    /// The whole app's, so the editor's themes show their light or dark side.
+    var appearance = Appearance.system
     static let fontSizes = 11...24
+
+    init() {}
+
+    // Settings saved before a key existed keep the rest.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fontSize = try c.decodeIfPresent(Int.self, forKey: .fontSize) ?? fontSize
+        wrap = try c.decodeIfPresent(Bool.self, forKey: .wrap) ?? wrap
+        theme = try c.decodeIfPresent(String.self, forKey: .theme) ?? theme
+        appearance = (try? c.decodeIfPresent(Appearance.self, forKey: .appearance)) ?? appearance
+    }
+
+    /// What the editor pages get.
+    var editorPayload: [String: Any] { ["fontSize": fontSize, "wrap": wrap, "theme": theme] }
+}
+
+/// A code editor theme as the editor page describes it (for Settings' previews).
+struct EditorTheme: Identifiable, Equatable {
+    struct Palette: Equatable {
+        let colors: [String: String]
+        var keywordBold = false
+        func color(_ key: String) -> Color { UIColorParser.color(colors[key]) ?? .gray }
+    }
+
+    let id: String
+    let name: String
+    let light: Palette
+    let dark: Palette
 }
 
 enum ConsoleDetent: String {
@@ -237,7 +276,29 @@ final class AppModel {
         s.fontSize = min(max(s.fontSize, EditorSettings.fontSizes.lowerBound), EditorSettings.fontSizes.upperBound)
         settings = s
         UserDefaults.standard.set(try? JSONEncoder().encode(s), forKey: "settings")
-        for editor in editors { Task { _ = try? await editor.call("settings", [["fontSize": s.fontSize, "wrap": s.wrap]]) } }
+        applyAppearance()
+        for editor in editors { Task { _ = try? await editor.call("settings", [s.editorPayload]) } }
+    }
+
+    /// Light, dark or the system's, for every window (the editor pages and the
+    /// docs viewer follow it through prefers-color-scheme).
+    func applyAppearance() {
+        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+            for window in scene.windows { window.overrideUserInterfaceStyle = settings.appearance.style }
+        }
+    }
+
+    /// The code editor's themes, from an editor page.
+    func editorThemes() async -> [EditorTheme] {
+        guard let raw = await editorCall(0, "themes") as? [[String: Any]] else { return [] }
+        func palette(_ any: Any?) -> EditorTheme.Palette {
+            let dict = any as? [String: Any] ?? [:]
+            return EditorTheme.Palette(colors: dict.compactMapValues { $0 as? String }, keywordBold: dict["keywordBold"] as? Bool ?? false)
+        }
+        return raw.compactMap { t in
+            guard let id = t["id"] as? String, let name = t["name"] as? String else { return nil }
+            return EditorTheme(id: id, name: name, light: palette(t["light"]), dark: palette(t["dark"]))
+        }
     }
 
     // MARK: derived
@@ -455,7 +516,7 @@ final class AppModel {
         case "ready":
             editors[pane].markReady()
             Task {
-                await editorCall(pane, "settings", [["fontSize": settings.fontSize, "wrap": settings.wrap]])
+                await editorCall(pane, "settings", [settings.editorPayload])
                 if pane < panes.count, let active = panes[pane].active, restored { await show(active, in: pane) }
             }
         case "changes":
@@ -1104,7 +1165,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>][&docs=<version>/<ref, # as %23>]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>][&docs=<version>/<ref, # as %23>][&settings]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1144,6 +1205,7 @@ final class AppModel {
                 agentSend(prompt)
             }
         }
+        if hook["settings"] != nil { activeSheet = .settings }
         if let target = hook["docs"], let url = URL(string: "docs:\(target.replacingOccurrences(of: "#", with: "%23"))") {
             try? await Task.sleep(for: .milliseconds(300))
             _ = openDocsLink(url)
