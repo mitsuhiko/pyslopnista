@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Simulator builds are not signed (run.sh: CODE_SIGNING_ALLOWED=NO). The
+	     simulator reads entitlements from the binary instead (__TEXT,__entitlements,
+	     linked in for iphonesimulator only, which is why ENABLE_DEBUG_DYLIB is off: the
+	     section must be in the executable); the Keychain needs these. -->
+	<key>application-identifier</key>
+	<string>ZRL6J4P42H.eu.ronacher.Pyslopnista</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>ZRL6J4P42H.eu.ronacher.Pyslopnista</string>
+	</array>
+</dict>
+</plist>

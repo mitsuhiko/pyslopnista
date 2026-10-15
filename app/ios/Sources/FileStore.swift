@@ -184,6 +184,22 @@ struct FileStore: Sendable {
         return FileManager.default.fileExists(atPath: placeholder.path)
     }
 
+    /// Name, kind, size and modification time of a file or folder; nil if it does not exist.
+    func stat(_ path: String) throws -> [String: Any]? {
+        guard try exists(path) else { return nil }
+        let (url, linked) = try locate(path)
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
+        let values = try? coordinate(url, linked: linked) { try $0.resourceValues(forKeys: keys) }
+        let name = path.split(separator: "/").last.map(String.init) ?? ""
+        return [
+            "name": name.hasPrefix("@") ? String(name.dropFirst()) : name,
+            "path": path,
+            "dir": path.isEmpty || values?.isDirectory == true,
+            "size": values?.fileSize ?? 0,
+            "mtime": (values?.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000,
+        ]
+    }
+
     /// All files below path (recursively), relative to path, base64 encoded.
     func tree(_ path: String) throws -> [[String: String]] {
         let (base, linked) = try locate(path)

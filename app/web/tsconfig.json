@@ -1,7 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
+    "lib": [
+      "ES2024",
+      "DOM",
+      "DOM.Iterable",
+      "WebWorker.ImportScripts"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -12,7 +17,16 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": [
+      "vite/client"
+    ],
+    "paths": {
+      "@oauth/*": [
+        "./node_modules/@earendil-works/pi-ai/dist/auth/oauth/*"
+      ]
+    }
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

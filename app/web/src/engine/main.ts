@@ -28,6 +28,12 @@ turtleSync.state = (scene) =>
 session.onFilesChanged = (paths) => void call("files.changed", { paths }).catch(() => {});
 breakpoints.onChange = (data) => void call("breakpoints.changed", { data }).catch(() => {});
 
+// The coding agent (D34) loads on first use; the bundle is large and most
+// launches don't need it. It also starts a few seconds after launch to pick
+// up a turn an earlier page left running.
+const AGENT_METHODS = new Set(["open", "newConversation", "submit", "abort", "setModel", "accounts", "availableModels", "login", "cancelLogin", "logout", "state"]);
+const loadAgent = () => import("../agent/service").then((m) => m.agent);
+
 type Command = (args: any) => unknown;
 const commands: Record<string, Command> = {
   // Runs end much later; the host follows them through the session state.
@@ -49,6 +55,11 @@ const commands: Record<string, Command> = {
   setBreakpoints: ({ data }) => breakpoints.replaceAll(data ?? {}),
   analysis: ({ method, args }) => (analysis as any)[method](...(args ?? [])),
   turtle: ({ key, event }: { key: string; event: TurtleEvent }) => turtleScenes.get(key)?.push(event),
+  agent: async ({ method, args }: { method: string; args?: unknown[] }) => {
+    if (!AGENT_METHODS.has(method)) throw new Error(`unknown agent method ${method}`);
+    const agent = await loadAgent();
+    return (agent as any)[method](...(args ?? []));
+  },
 };
 
 (window as any).__engine = {
@@ -65,6 +76,9 @@ await seedExamples();
 startStateSync();
 void client.init().catch(() => {}); // start ruff + ty in the background
 await call("engine.ready", {});
+if (!location.hash.startsWith("#selftest")) {
+  setTimeout(() => void loadAgent().then((agent) => agent.start()).catch((e) => call("log", `[agent] start failed: ${e}`)), 3000);
+}
 
 if (location.hash.startsWith("#selftest")) {
   const { selftest } = await import("../selftest");

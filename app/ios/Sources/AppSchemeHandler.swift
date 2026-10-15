@@ -11,12 +11,14 @@ import WebKit
 ///   then network-first with the cache as offline fallback; file URLs are
 ///   rewritten to `/pypi-files/`
 /// - `/pypi-files/<path>`: files.pythonhosted.org, cache-first (files are immutable)
-/// - `/__http?url=<url>`: HTTP for Python programs (D25). The request is made
-///   natively, so there is no CORS; the worker routes cross-origin XHR and fetch
-///   here. Headers scripts may not set travel in `X-Pyslop-Headers` (JSON);
-///   network failures answer 502 with `X-Pyslop-Error`.
+/// - `/__http?url=<url>`: HTTP for Python programs (D25) and the agent's model
+///   providers (D32). The request is made natively, so there is no CORS; the
+///   worker routes cross-origin XHR and fetch here. Headers scripts may not
+///   set travel in `X-Pyslop-Headers` (JSON); network failures answer 502 with
+///   `X-Pyslop-Error`. The response streams: every chunk URLSession delivers
+///   goes to the page right away (server-sent events need that).
 @MainActor
-final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
+final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelegate {
     static let scheme = "app"
     static let pyodideVersion = "314.0.7"
     static let packageCDN = URL(string: "https://cdn.jsdelivr.net/pyodide/v\(pyodideVersion)/full/")!
@@ -28,13 +30,15 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
     private let packageCache: URL
     private let pypiCache: URL
     private var activeTasks = Set<ObjectIdentifier>()
-    private var proxyTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    /// Proxied requests: URLSession task ID -> the page's request.
+    private var proxied: [Int: (task: any WKURLSchemeTask, target: URL, responded: Bool)] = [:]
+    private var proxyTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private lazy var proxySession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForRequest = 120 // between bytes: models can think for a while
         config.httpCookieStorage = .shared
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: config)
+        return URLSession(configuration: config, delegate: self, delegateQueue: .main)
     }()
 
     init(root: URL) {
@@ -85,14 +89,20 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
         activeTasks.remove(ObjectIdentifier(task))
-        proxyTasks.removeValue(forKey: ObjectIdentifier(task))?.cancel()
+        if let dataTask = proxyTasks.removeValue(forKey: ObjectIdentifier(task)) {
+            proxied.removeValue(forKey: dataTask.taskIdentifier)
+            dataTask.cancel()
+        }
     }
 
     // MARK: HTTP for Python programs
 
-    /// Headers that describe our hop, not the program's request.
+    /// Headers that describe our hop, not the program's request. `user-agent`
+    /// is WebKit's own: servers treat it as a browser (Anthropic's token
+    /// endpoint answers it with a fake 429). A User-Agent the code set itself
+    /// arrives in X-Pyslop-Headers; otherwise URLSession's applies.
     private static let hopHeaders: Set<String> = [
-        "host", "origin", "referer", "connection", "content-length", "accept-encoding",
+        "host", "origin", "referer", "connection", "content-length", "accept-encoding", "user-agent",
         "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "x-pyslop-headers",
     ]
     /// Response headers that no longer apply (URLSession already decoded the
@@ -121,34 +131,61 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
             for (name, value) in extra { request.setValue(value, forHTTPHeaderField: name) }
         }
         request.httpBody = incoming.httpBody ?? incoming.httpBodyStream.map(Self.readAll)
-        let id = ObjectIdentifier(task)
-        let session = proxySession
-        // Cancelling the Task (the page stopped the request) cancels the download.
-        proxyTasks[id] = Task { @MainActor in
-            let result: (Data, URLResponse)
-            do {
-                result = try await session.data(for: request)
-            } catch {
-                guard self.proxyTasks.removeValue(forKey: id) != nil else { return }
-                let message = error.localizedDescription.replacingOccurrences(of: "\n", with: " ")
-                self.respond(task, status: 502, body: Data(message.utf8), mime: "text/plain", extra: ["X-Pyslop-Error": message])
-                return
+        // Stopping the page's request (webView(_:stop:)) cancels the download.
+        let dataTask = proxySession.dataTask(with: request)
+        proxied[dataTask.taskIdentifier] = (task, target, false)
+        proxyTasks[ObjectIdentifier(task)] = dataTask
+        dataTask.resume()
+    }
+
+    nonisolated func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        MainActor.assumeIsolated {
+            guard var entry = proxied[dataTask.taskIdentifier], activeTasks.contains(ObjectIdentifier(entry.task)) else {
+                return completionHandler(.cancel)
             }
-            guard self.proxyTasks.removeValue(forKey: id) != nil else { return } // stopped
-            let (data, response) = result
             let http = response as? HTTPURLResponse
             var headers: [String: String] = [:]
             for (key, value) in http?.allHeaderFields ?? [:] {
                 guard let name = key as? String, !Self.droppedResponseHeaders.contains(name.lowercased()) else { continue }
                 headers[name] = "\(value)"
             }
-            headers["X-Pyslop-Final-Url"] = response.url?.absoluteString ?? target.absoluteString
-            let mime = http?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
-            self.respond(task, status: http?.statusCode ?? 200, body: data, mime: mime, extra: headers)
+            headers["X-Pyslop-Final-Url"] = response.url?.absoluteString ?? entry.target.absoluteString
+            headers["Content-Type"] = http?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
+            headers.merge(Self.isolationHeaders) { _, new in new }
+            headers["Cache-Control"] = "no-store"
+            entry.task.didReceive(HTTPURLResponse(url: entry.task.request.url!, statusCode: http?.statusCode ?? 200,
+                                                  httpVersion: "HTTP/1.1", headerFields: headers)!)
+            entry.responded = true
+            proxied[dataTask.taskIdentifier] = entry
+            completionHandler(.allow)
         }
     }
 
-    private static func readAll(_ stream: InputStream) -> Data {
+    nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        MainActor.assumeIsolated {
+            guard let entry = proxied[dataTask.taskIdentifier], activeTasks.contains(ObjectIdentifier(entry.task)) else { return }
+            entry.task.didReceive(data)
+        }
+    }
+
+    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        MainActor.assumeIsolated {
+            guard let entry = proxied.removeValue(forKey: task.taskIdentifier) else { return }
+            proxyTasks.removeValue(forKey: ObjectIdentifier(entry.task))
+            if let error, !entry.responded {
+                let message = error.localizedDescription.replacingOccurrences(of: "\n", with: " ")
+                respond(entry.task, status: 502, body: Data(message.utf8), mime: "text/plain", extra: ["X-Pyslop-Error": message])
+                return
+            }
+            guard activeTasks.remove(ObjectIdentifier(entry.task)) != nil else { return }
+            if let error { entry.task.didFailWithError(error) } else { entry.task.didFinish() }
+        }
+    }
+
+    private nonisolated static func readAll(_ stream: InputStream) -> Data {
         var data = Data()
         stream.open()
         defer { stream.close() }
@@ -250,14 +287,8 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
         _ task: any WKURLSchemeTask, status: Int, body: Data, mime: String, extra: [String: String] = [:]
     ) {
         guard activeTasks.remove(ObjectIdentifier(task)) != nil else { return }
-        var headers = [
-            "Content-Type": mime,
-            "Content-Length": String(body.count),
-            "Cache-Control": "no-store",
-            "Cross-Origin-Opener-Policy": "same-origin",
-            "Cross-Origin-Embedder-Policy": "require-corp",
-            "Cross-Origin-Resource-Policy": "same-origin",
-        ]
+        var headers = ["Content-Type": mime, "Content-Length": String(body.count), "Cache-Control": "no-store"]
+        headers.merge(Self.isolationHeaders) { _, new in new }
         headers.merge(extra) { _, new in new }
         let response = HTTPURLResponse(
             url: task.request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers
@@ -266,6 +297,12 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
         task.didReceive(body)
         task.didFinish()
     }
+
+    private static let isolationHeaders = [
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Resource-Policy": "same-origin",
+    ]
 
     private static func mimeType(for url: URL) -> String {
         switch url.pathExtension.lowercased() {

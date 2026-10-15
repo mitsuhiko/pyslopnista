@@ -796,6 +796,80 @@ export async function selftest() {
     await until(idle);
   });
 
+  // The coding agent (D34) with a scripted model: every tool against a real
+  // project folder, the edited file open in the editor, the native transcript.
+  await step("agent", async () => {
+    const { agent } = await import("./agent/service");
+    const { fauxAssistantMessage, fauxText, fauxToolCall } = await import("@earendil-works/pi-ai/providers/faux");
+    const dir = "Tests/agent";
+    await fs.mkdir(dir);
+    await fs.writeText(`${dir}/greet.py`, 'def greet(name):\n    return "Hello " + name\n\n\nif __name__ == "__main__":\n    print(greet("world"))\n');
+    await fs.remove(`${dir}/out.txt`).catch(() => {});
+    await fs.remove(`${dir}/data`).catch(() => {});
+    await app.openFile(`${dir}/greet.py`);
+    await appCall("openAgent", dir);
+    await until(async () => (await agent.state()).project === dir, 30000);
+    const faux = agent.useFaux();
+    await agent.newConversation(dir);
+    await agent.setModel("selftest", "faux-1");
+    const tool = (name: string, args: Parameters<typeof fauxToolCall>[1], id: string) =>
+      fauxAssistantMessage([fauxToolCall(name, args, { id })], { stopReason: "toolUse" });
+    let firstPrompt = "";
+    faux.setResponses([
+      (context) => {
+        const first = context.messages.find((m) => m.role === "user");
+        firstPrompt = typeof first?.content === "string" ? first.content : JSON.stringify(first?.content);
+        return tool("ls", {}, "ls");
+      },
+      tool("read", { path: "greet.py" }, "read"),
+      tool("edit", { path: "greet.py", edits: [{ oldText: '"Hello " + name', newText: 'f"Hello, {name}!"' }] }, "edit"),
+      tool("write", { path: "data/notes.py", content: "import os\nx=1\n" }, "write"),
+      tool("run_python", { code: "from greet import greet\nopen('out.txt', 'w').write(greet('agent'))\nprint(greet('agent'))" }, "run"),
+      tool("grep", { pattern: "Hello", glob: "*.py" }, "grep"),
+      tool("find", { pattern: "*.txt" }, "find"),
+      tool("check", { paths: ["data/notes.py"] }, "check"),
+      tool("format", { paths: ["data/notes.py"] }, "format"),
+      tool("read", { path: "../secret.txt" }, "outside"),
+      fauxAssistantMessage([fauxText("Done: greet() now uses an f-string.")]),
+    ]);
+    await agent.submit("Make greet friendlier", await appCall("agentEditorContext"));
+    const state = await until(async () => {
+      const s = await agent.state();
+      return !s.busy && s.items.at(-1)?.text.startsWith("Done") ? s : null;
+    }, 120000);
+    const tools = Object.fromEntries(state.items.filter((i) => i.kind === "tool").map((i) => [i.id, i]));
+    const expect = (cond: unknown, what: string) => {
+      if (!cond) throw new Error(`${what}: ${JSON.stringify(state.items.map((i) => [i.id, i.status, (i.output ?? i.text).slice(0, 160)]))}`);
+    };
+    expect(Object.values(tools).every((t) => (t.id === "outside" ? t.status === "error" : t.status === "done")), "tool statuses");
+    expect(tools.ls.output?.includes("greet.py"), "ls");
+    expect(tools.write.output?.includes("F401"), "lint feedback after write");
+    expect(tools.run.output?.includes("Hello, agent!"), "run_python output");
+    expect(tools.grep.output?.includes("greet.py:2:"), "grep");
+    expect(tools.find.output?.includes("out.txt"), "find sees run_python's file");
+    expect(tools.check.output?.includes("F401"), "check");
+    expect(tools.format.output?.includes("1 file reformatted") && tools.format.diff, "format");
+    expect(tools.edit.diff, "edit diff");
+    expect(firstPrompt.includes("<editor>") && firstPrompt.includes("greet.py open") && firstPrompt.endsWith("Make greet friendlier"), `editor context in the prompt (${firstPrompt.slice(0, 200)})`);
+    const user = state.items.find((i) => i.kind === "user");
+    expect(user?.text === "Make greet friendlier" && user.path === "greet.py", "the transcript shows the message and its file");
+    const greet = await fs.readText(`${dir}/greet.py`);
+    if (!greet.includes('f"Hello, {name}!"')) throw new Error(`greet.py: ${greet}`);
+    const out = await fs.readText(`${dir}/out.txt`);
+    if (out !== "Hello, agent!") throw new Error(`out.txt: ${out}`);
+    const notes = await fs.readText(`${dir}/data/notes.py`);
+    if (notes !== "import os\n\nx = 1\n") throw new Error(`notes.py: ${JSON.stringify(notes)}`);
+    // The open editor shows the agent's edit.
+    await until(async () => String(await editorCall("text")).includes('f"Hello, {name}!"'), 5000);
+    // The native view has the same transcript.
+    const native = await until(async () => {
+      const s = await appCall("agentState");
+      return s.items === state.items.length && !s.busy ? s : null;
+    }, 5000);
+    await appCall("closeSheet");
+    return { items: state.items.length, tools: native.tools.length, model: native.model };
+  });
+
   await fs.remove("Tests").catch(() => {});
   await call("result", JSON.stringify(r, null, 2));
 }

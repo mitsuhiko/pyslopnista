@@ -1,0 +1,484 @@
+import SwiftUI
+
+// The coding agent (D34): the conversation of the current project, a
+// composer, the model menu, accounts and the sign-in sheet.
+
+struct AgentView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = ""
+    @FocusState private var composing: Bool
+
+    var body: some View {
+        let state = model.agent.state
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if state.items.isEmpty { intro(state) }
+                        ForEach(state.items) { item in
+                            AgentItemView(item: item)
+                        }
+                        if let status = state.status {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text(status).font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                        if let error = state.error {
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                        }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }
+                    .padding()
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: scrollKey(state)) { _, _ in
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .safeAreaInset(edge: .bottom) { composer(state) }
+            .navigationTitle(state.project.map(displayName) ?? "Agent")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .primaryAction) { menu(state) }
+            }
+            .navigationDestination(isPresented: Binding(get: { model.agentAccountsShown }, set: { model.agentAccountsShown = $0 })) {
+                AccountsView()
+            }
+        }
+        .task { await model.loadAgentModels() }
+        .sheet(isPresented: Binding(get: { model.agentHost.loginProvider != nil }, set: { if !$0 { model.agentCancelLogin() } })) {
+            LoginFlowView().environment(model)
+        }
+    }
+
+    private func scrollKey(_ state: AgentState) -> String {
+        "\(state.items.count):\(state.items.last?.text.count ?? 0):\(state.items.last?.status ?? ""):\(state.status ?? ""):\(state.error ?? "")"
+    }
+
+    @ViewBuilder
+    private func intro(_ state: AgentState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Ask about the code in “\(state.project.map(displayName) ?? "this folder")”, have it write a program, or explain an error. It can read and change the files here, run Python, and check and format code.")
+                .foregroundStyle(.secondary)
+            if !state.signedIn {
+                Button { model.agentAccountsShown = true } label: { Label("Sign In to a Model Provider", systemImage: "person.crop.circle.badge.plus") }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func menu(_ state: AgentState) -> some View {
+        Menu {
+            if !model.agentModels.isEmpty {
+                Menu {
+                    let groups = Dictionary(grouping: model.agentModels, by: \.providerName)
+                    ForEach(groups.keys.sorted(), id: \.self) { provider in
+                        Section(provider) {
+                            ForEach(groups[provider] ?? []) { option in
+                                Button {
+                                    model.agentSetModel(option)
+                                } label: {
+                                    if state.model?.provider == option.provider && state.model?.id == option.model {
+                                        Label(option.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(option.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label(state.model?.name ?? "Model", systemImage: "cpu")
+                }
+            }
+            Button { model.agentNewConversation() } label: { Label("New Conversation", systemImage: "square.and.pencil") }
+                .disabled(state.busy)
+            Button { model.agentAccountsShown = true } label: { Label("Accounts…", systemImage: "person.crop.circle") }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Agent options")
+    }
+
+    private func composer(_ state: AgentState) -> some View {
+        VStack(spacing: 4) {
+            if let m = state.model {
+                Text(m.name).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField(state.busy ? "Add to the request…" : "Ask the agent…", text: $draft, axis: .vertical)
+                    .lineLimit(1...6)
+                    .focused($composing)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .submitLabel(.send)
+                if state.busy && draft.isEmpty {
+                    Button { model.agentStop() } label: {
+                        Image(systemName: "stop.circle.fill").font(.system(size: 30))
+                    }
+                    .tint(.red)
+                    .accessibilityLabel("Stop")
+                } else {
+                    Button { send() } label: {
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 30))
+                    }
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Send")
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private func send() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        draft = ""
+        model.agentSend(text)
+    }
+}
+
+/// One message, tool call, error or note.
+private struct AgentItemView: View {
+    let item: AgentItem
+    @Environment(AppModel.self) private var model
+    @State private var expanded = false
+
+    var body: some View {
+        switch item.kind {
+        case "user":
+            VStack(alignment: .trailing, spacing: 4) {
+                if let path = item.path {
+                    Label(item.line.map { "\(basename(path)) · line \($0)" } ?? basename(path), systemImage: "doc.text")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Text(item.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .textSelection(.enabled)
+            }
+            .padding(.leading, 40)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        case "assistant":
+            VStack(alignment: .leading, spacing: 6) {
+                if let thinking = item.thinking, !thinking.isEmpty {
+                    DisclosureGroup("Thinking") {
+                        Text(thinking).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                    .font(.footnote)
+                }
+                if !item.text.isEmpty {
+                    Text(Self.markdown(item.text)).textSelection(.enabled)
+                } else if item.streaming == true {
+                    ProgressView().controlSize(.small)
+                }
+            }
+        case "tool":
+            toolView
+        case "error":
+            Label(item.text, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.red)
+        default:
+            Text(item.text).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+        }
+    }
+
+    private var toolView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { withAnimation(.snappy) { expanded.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: Self.icon(item.tool ?? "")).frame(width: 18).foregroundStyle(.tint)
+                    Text(Self.title(item.tool ?? "")).font(.subheadline.weight(.medium))
+                    Text(item.summary ?? "").font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 4)
+                    statusIcon
+                }
+                .contentShape(Rectangle())
+            }
+            .tint(.primary)
+            if expanded {
+                if let diff = item.diff, !diff.isEmpty {
+                    DiffView(diff: diff)
+                } else if let output = item.output, !output.isEmpty {
+                    ScrollView(.horizontal) {
+                        Text(output.count > 4000 ? String(output.prefix(4000)) + "\n…" : output)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .padding(8)
+                    }
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+                }
+                if let images = item.images, images > 0 {
+                    Label("\(images) image\(images == 1 ? "" : "s") shown to the model", systemImage: "photo").font(.caption).foregroundStyle(.secondary)
+                }
+                if let path = item.path, ["read", "write", "edit", "run_python"].contains(item.tool ?? "") {
+                    Button {
+                        let file = joinPath(model.agent.state.project ?? "", path)
+                        model.activeSheet = nil
+                        Task { await model.openLocation(file, line: item.line, keepConsole: true) }
+                    } label: { Label("Open \(basename(path))", systemImage: "arrow.up.forward.square") }
+                        .font(.caption)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch item.status {
+        case "running", "pending": ProgressView().controlSize(.small)
+        case "error": Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        default: Image(systemName: "chevron.\(expanded ? "up" : "down")").font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    static func icon(_ tool: String) -> String {
+        switch tool {
+        case "read": "doc.text"
+        case "write": "doc.badge.plus"
+        case "edit": "pencil"
+        case "ls": "folder"
+        case "find": "doc.text.magnifyingglass"
+        case "grep": "magnifyingglass"
+        case "run_python": "play.fill"
+        case "check": "checkmark.seal"
+        case "format": "wand.and.stars"
+        default: "wrench.and.screwdriver"
+        }
+    }
+
+    static func title(_ tool: String) -> String {
+        switch tool {
+        case "read": "Read"
+        case "write": "Write"
+        case "edit": "Edit"
+        case "ls": "List"
+        case "find": "Find"
+        case "grep": "Search"
+        case "run_python": "Run"
+        case "check": "Check"
+        case "format": "Format"
+        default: tool
+        }
+    }
+
+    static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+}
+
+/// A diff from edit (numbered +/- lines) or format (a unified patch).
+private struct DiffView: View {
+    let diff: String
+
+    var body: some View {
+        let lines = diff.split(separator: "\n", omittingEmptySubsequences: false).prefix(200)
+        ScrollView(.horizontal) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line.isEmpty ? " " : String(line))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(color(line))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(background(line))
+                }
+            }
+            .padding(8)
+        }
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func kind(_ line: Substring) -> Character? {
+        if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("@@") || line.hasPrefix("Index") || line.hasPrefix("===") { return "@" }
+        return line.first(where: { $0 != " " && !$0.isNumber }).flatMap { $0 == "+" || $0 == "-" ? $0 : nil }
+    }
+
+    private func color(_ line: Substring) -> Color {
+        switch kind(line) {
+        case "+": .green
+        case "-": .red
+        case "@": .secondary
+        default: .primary
+        }
+    }
+
+    private func background(_ line: Substring) -> Color {
+        switch kind(line) {
+        case "+": .green.opacity(0.1)
+        case "-": .red.opacity(0.1)
+        default: .clear
+        }
+    }
+}
+
+/// Providers: sign in with a subscription, add an API key, sign out.
+struct AccountsView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let featured = model.agentAccounts.filter(\.featured)
+        let accounts = model.agentAccounts.filter { !$0.featured }
+        List {
+            if let error = model.agentLoginError {
+                Section { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).font(.footnote) }
+            }
+            ForEach(featured) { account in
+                Section {
+                    if account.oauthName != nil { row(account, oauth: true) }
+                    if account.apiKeyName != nil { row(account, oauth: false) }
+                } header: {
+                    Text(account.name)
+                }
+            }
+            Section {
+                ForEach(accounts.filter { $0.oauthName != nil && $0.subscription }) { row($0, oauth: true) }
+            } header: {
+                Text("Subscriptions")
+            } footer: {
+                Text("Sign in with an existing plan. The sign-in page opens in a browser sheet; your tokens stay in this device's Keychain.")
+            }
+            Section {
+                ForEach(accounts.filter { $0.oauthName != nil && !$0.subscription }) { row($0, oauth: true) }
+            } header: {
+                Text("Other Sign-Ins")
+            }
+            Section {
+                ForEach(accounts.filter { $0.apiKeyName != nil }) { row($0, oauth: false) }
+            } header: {
+                Text("API Keys")
+            } footer: {
+                Text("Keys are kept in the Keychain and sent only to their provider.")
+            }
+        }
+        .navigationTitle("Accounts")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await model.loadAgentAccounts() }
+        .refreshable { await model.loadAgentAccounts() }
+    }
+
+    private func row(_ account: AgentAccount, oauth: Bool) -> some View {
+        let type = oauth ? "oauth" : "api_key"
+        let signedIn = account.signedIn == type
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                if account.featured {
+                    Text(oauth ? "Sign in with \(account.name)" : "API Key")
+                } else {
+                    Text(oauth ? (account.oauthLabel ?? account.oauthName ?? account.name) : account.name)
+                }
+                if oauth && !account.featured {
+                    Text("\(account.name) · \(account.id)").font(.caption2).foregroundStyle(.secondary)
+                }
+                if signedIn {
+                    Text(oauth ? "Signed in" : "Key saved").font(.caption).foregroundStyle(.green)
+                } else if account.signedIn != nil {
+                    Text(account.signedIn == "oauth" ? "Signed in with an account" : "Using an API key").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if signedIn {
+                Button("Sign Out", role: .destructive) { Task { await model.agentLogout(account.id) } }
+                    .buttonStyle(.borderless)
+            } else {
+                Button(oauth ? "Sign In" : "Add Key") { Task { await model.agentLogin(account.id, type) } }
+                    .buttonStyle(.bordered)
+                    .disabled(model.agentHost.loginProvider != nil)
+            }
+        }
+    }
+}
+
+/// A sign-in in progress: what the flow asks for, device codes, progress.
+struct LoginFlowView: View {
+    @Environment(AppModel.self) private var model
+    @State private var answer = ""
+
+    var body: some View {
+        let host = model.agentHost
+        NavigationStack {
+            Form {
+                if let code = host.deviceCode {
+                    Section {
+                        Text(code.code).font(.system(.largeTitle, design: .monospaced).weight(.semibold)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity)
+                        Button { UIPasteboard.general.string = code.code } label: { Label("Copy Code", systemImage: "doc.on.doc") }
+                        if let url = URL(string: code.uri) {
+                            Link(destination: url) { Label("Open \(url.host() ?? code.uri)", systemImage: "safari") }
+                        }
+                    } footer: {
+                        Text("Enter this code on the page that opened (it is already on the clipboard). This sheet closes by itself when you are done.")
+                    }
+                }
+                if let prompt = host.prompt {
+                    Section {
+                        if prompt.type == "select" {
+                            ForEach(prompt.options) { option in
+                                Button {
+                                    host.answerPrompt(option.id)
+                                } label: {
+                                    VStack(alignment: .leading) {
+                                        Text(option.label)
+                                        if let detail = option.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                                    }
+                                }
+                            }
+                        } else {
+                            Group {
+                                if prompt.type == "secret" {
+                                    SecureField(prompt.placeholder ?? "", text: $answer)
+                                } else {
+                                    TextField(prompt.placeholder ?? "", text: $answer)
+                                }
+                            }
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.body.monospaced())
+                            .onSubmit(submit)
+                            Button("Continue", action: submit)
+                                .disabled(answer.isEmpty && prompt.type != "text")
+                        }
+                    } header: {
+                        Text(prompt.message)
+                    } footer: {
+                        if prompt.type == "manual_code" {
+                            Text("Usually the sign-in finishes by itself when you return from the browser. If it does not, paste the code or the address the browser ended on.")
+                        }
+                    }
+                    .onChange(of: prompt.id) { _, _ in answer = "" }
+                }
+                if !host.progress.isEmpty {
+                    Section {
+                        ForEach(Array(host.progress.enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if host.prompt == nil && host.deviceCode == nil {
+                    Section { HStack { ProgressView(); Text("Signing in…").foregroundStyle(.secondary) } }
+                }
+            }
+            .navigationTitle(model.agentAccounts.first { $0.id == host.loginProvider }?.name ?? "Sign In")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { model.agentCancelLogin() } } }
+        }
+        .interactiveDismissDisabled()
+    }
+
+    private func submit() {
+        let value = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        answer = ""
+        model.agentHost.answerPrompt(value)
+    }
+}

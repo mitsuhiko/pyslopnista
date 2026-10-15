@@ -252,6 +252,7 @@ private struct EditorChrome: ViewModifier {
                         Button { withAnimation { model.consoleDocked.toggle() } } label: { Image(systemName: "terminal") }
                             .accessibilityLabel("Toggle console")
                     }
+                    AgentButton()
                     menu(file, external: external)
                     RunButton()
                 }
@@ -375,6 +376,20 @@ private struct EditorChrome: ViewModifier {
         }
         .accessibilityLabel("More")
         .disabled(file == nil)
+    }
+}
+
+/// Opens the coding agent for the current folder; shows when it is working.
+struct AgentButton: View {
+    var project: String?
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { model.openAgent(project: project) } label: {
+            Image(systemName: model.agent.state.busy ? "sparkles.rectangle.stack.fill" : "sparkles")
+                .symbolEffect(.pulse, isActive: model.agent.state.busy)
+        }
+        .accessibilityLabel("Agent")
     }
 }
 

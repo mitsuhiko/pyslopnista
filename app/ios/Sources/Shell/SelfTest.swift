@@ -83,6 +83,18 @@ enum SelfTest {
             if str(0) == "input" { model.programInput = "" } else { model.consoleInput = "" }
         case "blurFields":
             model.focusedField = nil
+        case "openAgent":
+            model.openAgent(project: str(0))
+        case "agentEditorContext":
+            return await model.agentEditorContext()
+        case "closeSheet":
+            model.activeSheet = nil
+        case "agentState":
+            // The transcript as the native view has it (AgentMirror).
+            let s = model.agent.state
+            return ["sheet": model.activeSheet == .agent, "project": s.project ?? NSNull(), "busy": s.busy, "items": s.items.count,
+                    "tools": s.items.filter { $0.kind == "tool" }.map { "\($0.tool ?? ""):\($0.status ?? "")" },
+                    "last": s.items.last?.text ?? "", "model": s.model?.id ?? NSNull(), "error": s.error ?? NSNull()] as [String: Any]
         default:
             throw NSError(domain: "selftest", code: 1, userInfo: [NSLocalizedDescriptionKey: "unknown app method \(method)"])
         }

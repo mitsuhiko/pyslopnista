@@ -89,9 +89,23 @@ function hostShim(): Plugin {
   };
 }
 
+const PI_AI = join(import.meta.dirname, "node_modules/@earendil-works/pi-ai/dist");
+
 export default defineConfig({
   plugins: [hostShim()],
   base: "/",
+  resolve: {
+    alias: [
+      // The agent's sign-in flows (D33): pi-ai loads them through an import()
+      // bundlers can't follow, and they are not in its exports; we import
+      // them directly and register them like pi-ai's Bun build does.
+      { find: /^@oauth\/(.*)$/, replacement: `${PI_AI}/auth/oauth/$1` },
+      // Two flows import Node built-ins: the loopback callback server (on the
+      // host's listener) and randomBytes.
+      { find: "node:http", replacement: join(import.meta.dirname, "src/agent/shims/http.ts") },
+      { find: "node:crypto", replacement: join(import.meta.dirname, "src/agent/shims/crypto.ts") },
+    ],
+  },
   // Two pages, no UI framework (D31): the engine (Python + analysis, no UI)
   // and the editor (one CodeMirror pane). Everything else is native.
   build: {

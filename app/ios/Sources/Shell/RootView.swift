@@ -39,6 +39,7 @@ struct RootView: View {
                 case .settings: SettingsView()
                 case .problems: ProblemsView()
                 case .jump(let initial): JumpView(initial: initial)
+                case .agent: AgentView()
                 }
             }
             .environment(model)
@@ -179,6 +180,7 @@ private struct ShortcutButtons: View {
             Button("Go to Symbol") { model.activeSheet = .jump("") }.keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Find in Folder") { model.activeSheet = .find }.keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Settings") { model.activeSheet = .settings }.keyboardShortcut(",", modifiers: .command)
+            Button("Agent") { model.openAgent() }.keyboardShortcut("a", modifiers: [.command, .shift])
             Button("Close Tab") { if let f = model.file { Task { await model.closeTab(f) } } }.keyboardShortcut("w", modifiers: .command)
             Button("Split View") { if model.wide { Task { await model.setSplit(!model.split) } } }.keyboardShortcut("\\", modifiers: .command)
             Button("Previous Tab") { cycle(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])

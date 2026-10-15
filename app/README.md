@@ -116,6 +116,27 @@ apps are native views (D30).
   reach the disk within about a second (D27). `Examples/Todo App.py` is a
   complete Reminders-style app that keeps its data in an SQLite database
   (`todos.db`).
+- **Coding agent** (D34): the ✨ button (in the editor and the file
+  browser, or ⌘⇧A) opens a conversation about the current folder.
+  - **What it can do:** read, write and edit files; ls, find and grep;
+    run Python (a fresh interpreter with the folder copied in; written
+    files are saved back, plots come back as images); check with ruff and
+    ty; format with ruff.
+  - **What you see:** tool calls fold out to show their output or diff,
+    with a link to the file. Its edits show up in open editors.
+  - **Durable:** conversations are pi-durable on native SQLite (D32), one
+    per folder. A turn the engine was in the middle of continues after a
+    crash or relaunch.
+  - **Accounts (⋯ → Accounts):**
+    - Radius first (sign-in or API key); its models are the default once
+      you're signed in, and its model list is fetched from the gateway;
+    - subscriptions: Claude Pro/Max, ChatGPT (Codex), Sign in with
+      ChatGPT, GitHub Copilot, xAI, Kimi, Meta;
+    - OpenRouter;
+    - API keys for Anthropic, OpenAI, Google, Mistral, Groq and DeepSeek.
+  - **Sign-in** runs pi-ai's own flows in a browser sheet. Credentials stay
+    in the Keychain (D33).
+  - Pick the model from ⋯ → Model.
 - **Crashes**: a native stack overflow ends the run with "Python crashed" and
   the next run gets a fresh interpreter (D16).
 - **Layouts**: on iPhone, Files → Code/Console; on iPad, a sidebar with the
@@ -137,7 +158,9 @@ app/
                                FileBrowserView, EditorViews (panes, tabs, nav bar), ConsoleView,
                                DebugViews, Panels (find, go to, problems, settings), Turtle, SelfTest
     Sources/UIRenderer/        ui apps as SwiftUI views (D30): UIStore (op stream), views, canvas
-    Sources/AppSchemeHandler.swift  app:// with COOP/COEP, package cache, HTTP proxy (D9, D12, D25)
+    Sources/Agent/             the agent's host side (D32, D33): SQLite, Keychain, loopback listener for OAuth,
+                               the sign-in browser and prompts (AgentHost)
+    Sources/AppSchemeHandler.swift  app:// with COOP/COEP, package cache, streaming HTTP proxy (D9, D12, D25)
     Sources/FileStore.swift    file operations on Documents and linked folders (D28)
     Sources/Locations.swift    linked folders: security-scoped bookmarks
     Sources/KeyboardAccessory.swift, CodeWebView.swift   key bar and selection menu for the editor
@@ -153,6 +176,9 @@ app/
                           events), host (bridge), selftest (runs in the engine, drives the app)
     src/analysis/         ruff + ty worker, client, CodeMirror lint/completions/fixes
     src/debug/            breakpoints, CodeMirror gutter/paused line/inspect
+    src/agent/            the coding agent (D34): service (Harness, conversations, state for the host), tools,
+                          env (the project as an ExecutionEnv), sqlite (bridge adapter), credentials, login
+                          (pi-ai's flows; shims/ for node:http and node:crypto), prompt, proxy (fetch via /__http)
 ```
 
 ## Running
@@ -163,7 +189,7 @@ app/
 ./run.sh --device                         # on the paired iPhone (unlocked)
 ./run.sh --device --selftest
 SIM=<udid> ./run.sh                       # a specific simulator (e.g. an iPad)
-FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, split=<path>, run, pane, focus
+FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, split=<path>, run, pane, focus, agent[=accounts]
 FRAGMENT="selftest&only=debugger" ./run.sh --selftest   # a subset of the checks
 ```
 
@@ -173,9 +199,13 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 
 ## Status (2026-10-15)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 42
-checks in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15; 40 in
-the iPhone 17 on 2026-10-14). The new ones tap the key bar in the `>>>` field
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 43
+checks in the iPhone 17 simulator, including `agent` (D34, 2026-10-15).
+
+In the iPad Pro 13" simulator 42 pass and `keybar_only_with_software_keyboard`
+fails; it fails the same way without the agent changes. Before the agent, all
+42 passed in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15), and
+40 in the iPhone 17 (2026-10-14). The new ones tap the key bar in the `>>>` field
 and check that it shows only with the software keyboard. The
 self-test runs in the engine page and drives the native views through hooks
 (`Shell/SelfTest.swift`): ui apps through the renderer's tree, typing through
@@ -208,6 +238,15 @@ takes about 400 ms, completions 44 ms, formatting 57 ms; installing a small
 PyPI package and running takes 0.8 s (1.3 s when cached).
 
 ## Known gaps
+
+- Agent (D34):
+  - Not tried on a device. Whether the sign-in sheet reaches the loopback
+    listener there is Q22.
+  - Only Claude Pro/Max has been signed in to for real (in the spike).
+  - It is a sheet, not a panel on iPad.
+  - No per-turn undo.
+  - A write to a file you are typing in replaces the editor's text.
+  - No teaching mode.
 
 - Native shell (D31), not tried on a device yet: memory with three
   WebContent processes, the editor's keyboard and focus, the key bar.

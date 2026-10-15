@@ -171,6 +171,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZRL6J4P42H;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
@@ -185,6 +186,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"-Xlinker",
+					"-sectcreate",
+					"-Xlinker",
+					__TEXT,
+					"-Xlinker",
+					__entitlements,
+					"-Xlinker",
+					"$(PROJECT_DIR)/Simulator.entitlements",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = eu.ronacher.Pyslopnista;
 				PRODUCT_NAME = Pyslopnista;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -199,6 +211,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZRL6J4P42H;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
@@ -213,6 +226,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"-Xlinker",
+					"-sectcreate",
+					"-Xlinker",
+					__TEXT,
+					"-Xlinker",
+					__entitlements,
+					"-Xlinker",
+					"$(PROJECT_DIR)/Simulator.entitlements",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = eu.ronacher.Pyslopnista;
 				PRODUCT_NAME = Pyslopnista;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

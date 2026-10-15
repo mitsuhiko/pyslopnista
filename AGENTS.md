@@ -30,7 +30,10 @@ agent. Early research phase.
 App (`app/`): native SwiftUI IDE (D31) with files, editor, run, console, native UI apps (D26, D30, `uikit/`), turtle (D29), ruff + ty,
 PEP 723 dependencies, visual debugger (D23), tabs and split view with
 traceback links and go to definition (D24), outline / go to line / find in
-folder / show info / settings / keyboard shortcuts, HTTP through the host (D25). Next: hands-on device feedback, then the gaps in
+folder / show info / settings / keyboard shortcuts, HTTP through the host (D25),
+and the coding agent (D34: pi-durable in the engine page, sign-in with pi-ai's
+flows, D33). Next: the agent on a device (Q22), the rest of D34's list (write
+conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 
 Spike queue (update the status here). The pi-durable agent always comes last
@@ -41,7 +44,7 @@ Spike queue (update the status here). The pi-durable agent always comes last
 3. [x] `ui-toolkit`: declarative Python UI in the app and exported as a static site (D14, D15)
 4. [x] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, wasm-GC trampoline check (D13 confirmed, D16; open: App Intents Q6, Q14, Q15)
 5. [x] `debugger`: breakpoints, stepping, pause and post-mortem on bdb's `monitoring` backend (D23, built into the app; open: Q19)
-6. [x] `agent`: pi-durable in a web view on native SQLite, a project `ExecutionEnv`, streaming proxy with host-held keys, resume after a reload (D32; next: the agent in the app, P1)
+6. [x] `agent`: pi-durable in a web view on native SQLite, a project `ExecutionEnv`, streaming proxy, resume after a reload, pi-ai sign-in flows with a loopback listener and the Keychain (D32, D33). Built into the app (D34).
 
 Done:
 - [x] `jspi-repro`: JSPI "hang" root-caused to CPython's iOS JS-trampoline fallback (D13)

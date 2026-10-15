@@ -666,7 +666,7 @@ WebContent processes, keyboard and focus behavior).
 
 ## D32: The agent's platform: native SQLite, a project ExecutionEnv, keys added by the proxy
 
-2026-10-15 - Accepted (refines D7)
+2026-10-15 - Accepted (refines D7); the host-side key injection is superseded by D33
 
 pi-durable and pi-ai run in a web view unmodified. What D7 left open is
 decided like this:
@@ -699,36 +699,108 @@ Evidence: `spikes/agent/` (iPhone 17 simulator):
 
 Not yet tried: a device, a real model, a real WebContent crash.
 
+## D33: Sign-in runs pi-ai's own flows; credentials live in the engine page and the Keychain
+
+2026-10-15 - Accepted (supersedes D32's key injection)
+
+OAuth makes D32's "keys never enter the web view" impossible to keep: pi-ai
+exchanges the code for tokens and refreshes them in JavaScript. One model
+covers API keys and OAuth alike:
+- **Credentials** are pi-ai's `CredentialStore` over page-only bridge ops,
+  stored in the Keychain: one item per provider, this device only, readable
+  after first unlock. While the app runs they are in the engine page's
+  memory. The proxy only forwards; it adds no keys.
+- **Who cannot reach them:**
+  - Python workers (user or agent code) cannot read the page's memory or
+    call the bridge.
+  - The scheme handler never serves credentials.
+  - Editor pages are refused: the `agent.*` ops are for the engine only.
+- **Login flows** are pi-ai's own:
+  - They are bundled through Vite aliases and registered with
+    `registerBundledOAuthFlowLoaders`, as pi-ai's Bun build does.
+  - `node:http` and `node:crypto` are shimmed. `node:http` runs on a native
+    loopback listener (`LoopbackServer.swift`, 127.0.0.1 and ::1), so
+    `startOAuthCallbackServer` and the ChatGPT flow's server run unmodified.
+  - Auth URLs and device-code links open in `ASWebAuthenticationSession`.
+  - pi-ai's prompts (method, key, pasted code) are a native sheet. The
+    bridge call stays pending until the user answers.
+- **The proxy drops WebKit's own User-Agent.** Anthropic's token endpoint
+  answers a browser or curl User-Agent with a fake 429 rate limit; a CFNetwork
+  or node one is accepted. A User-Agent the code sets (pi-ai's `claude-cli/…`)
+  travels in `X-Pyslop-Headers`, as Python's does (D25).
+- **OpenAI Codex uses server-sent events** (`stream.transport: "sse"`): a
+  browser WebSocket cannot carry auth headers.
+- **Simulator:** unsigned simulator builds need their entitlements embedded
+  for the Keychain (`__TEXT,__entitlements` via the linker, as Xcode does).
+  That only works with `ENABLE_DEBUG_DYLIB = NO`.
+
+Evidence: `spikes/agent/` (iPhone 17 simulator):
+- `oauth-mock` passes end to end: the sign-in sheet, the redirect to
+  localhost, the native listener, the code exchange, the Keychain, Bearer
+  requests carrying the `claude-cli` User-Agent, a forced refresh, and a
+  reload.
+- A real Claude Pro/Max sign-in: requests, refresh, and after a reload.
+
+The simulator shares the Mac's network, so whether the sign-in sheet reaches
+the app's loopback listener on a device is still open (Q22).
+
+## D34: The coding agent in the app
+
+2026-10-15 - Accepted (from P1)
+
+The agent runs in the engine page (`app/web/src/agent/`, loaded on first
+use) on D32 and D33.
+- **Tools:**
+  - pi-durable's `read`, `write` and `edit` over the project folder.
+  - `ls`, `find` and `grep` (there is no shell).
+  - `run_python`: a fresh Pyodide worker per call, with the project folder
+    copied in and written back (D27). It streams output and returns
+    matplotlib figures as images. `input()` gets EOF; ui apps are stopped.
+  - `check` (ruff + ty) and `format` (ruff format).
+  - `write` and `edit` append new ruff/ty problems of Python files to their
+    result.
+- **Conversations:** one per project folder: the open file's folder, else
+  the folder on screen. The host remembers the conversation and the last
+  model in the user defaults.
+- **System prompt:**
+  - the environment: Pyodide, no shell, PEP 723 dependencies, turtle and
+    ui apps only through Run;
+  - the `ui` module's reference, from `uikit/README.md`.
+- **UI:** a native sheet (`AgentViews.swift`) fed by the conversation's
+  `viewState()` as a compact transcript (`agent.state`). It has:
+  - collapsible tool calls with diffs and an "Open file" link;
+  - a model menu;
+  - Accounts: subscriptions, other sign-ins, API keys;
+  - the sign-in sheet.
+- **Editors:** the agent's first read in a tool call saves unsaved editor
+  text. Its writes reach open editors and the file list through
+  `files.changed`.
+
+Not built yet from P1:
+- refusing a write when the editor's buffer changed since the agent read it;
+- per-turn undo;
+- teaching mode;
+- a docked panel on iPad instead of a sheet.
+
+Evidence: the `agent` self-test check. A scripted model (pi-ai's faux
+provider) drives every tool against a real folder. The check confirms:
+- the files on disk;
+- `run_python`'s write-back;
+- lint feedback after `write`;
+- the diffs;
+- the open editor showing the edit;
+- the native transcript.
+
+It passes with the other 42 checks on the iPhone 17 simulator (2026-10-15).
+
 ## Proposed (not yet decided)
 
-- **P1: The agent in the app.**
-  - **Where it runs:** the engine page, in its own module (`src/agent/`)
-    that reaches files, Python, analysis, storage and HTTP only through
-    interfaces. It could later move to its own web view or the cloud (Q4).
-  - **Tools:**
-    - `read`, `write` and `edit` (pi-durable's), plus `ls`/`find`/`grep`
-      over the project.
-    - `run_python`: a headless run in its own worker. It installs PEP 723
-      dependencies, writes changed files back (D27), streams output and
-      returns plots as images. `input()` gets EOF, and it is not
-      replay-safe.
-    - `check` (ruff + ty diagnostics) and `format` (ruff format).
-    - After every `.py` write or edit, new ruff/ty problems are appended
-      to the tool result.
-  - **Writes and open editors:** an agent write to a file that is open in
-    an editor fails if the buffer changed since the agent read it. Otherwise
-    the write is applied as one undoable change.
-  - **Undo:** `FileStore` keeps the old contents of everything a turn
-    changes, so the turn can be undone natively.
-  - **UI:** a native chat panel fed by the conversation's `watch()`, like
-    `SessionMirror`.
-  - **Keys:** your own API key in the Keychain first; the hosted gateway
-    (Q10) later.
-  - **Teaching mode:** per-conversation `configure()` with other
-    instructions and without the write tools.
+(none)
 
 ## Open questions
 
+- **Q21:** Provider terms and App Review for subscription sign-ins (Claude Pro/Max, ChatGPT) used from a third-party app.
+- **Q22:** On a device, does `ASWebAuthenticationSession` reach the app's loopback listener (the simulator shares the Mac's network)? If not, Anthropic, Codex and Radius still have copy-code or device-code sign-ins; Sign in with ChatGPT and OpenRouter would not work.
 - **Q2:** Can WebKit evict `app://` web storage? It survives relaunch and reinstall, but `persist()` is denied (`spikes/ios-host/`).
 - **Q4:** Should the agent run locally, in the cloud, or both, given background suspension? (Local works and survives a page reload mid-turn, D32. Open: what happens when the app is suspended mid-stream, and whether running while the phone sleeps needs the cloud.)
 - **Q6:** Can Python run when triggered from App Intents / Shortcuts while the app is in the background? (Known: a running script is paused while the app is in the background and resumes afterwards, `spikes/device-perf/`.)

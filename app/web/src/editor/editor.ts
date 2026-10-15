@@ -502,7 +502,11 @@ export class PaneEditor {
     const a = this.view.coordsAtPos(word?.from ?? pos);
     const b = this.view.coordsAtPos(word?.to ?? pos, -1);
     const rect = a ? { x: a.left, y: a.top, width: Math.max(1, (b?.right ?? a.right) - a.left), height: a.bottom - a.top } : null;
-    return { path: this.path, text: state.doc.toString(), line: line.number, column: pos - line.from + 1, rect };
+    // What is selected, for the agent's context (capped: it goes into a prompt).
+    const selection = sel.empty
+      ? null
+      : { text: state.sliceDoc(sel.from, sel.to).slice(0, 4000), fromLine: line.number, toLine: state.doc.lineAt(sel.to).number };
+    return { path: this.path, text: state.doc.toString(), line: line.number, column: pos - line.from + 1, rect, selection };
   }
 
   async format(): Promise<boolean> {

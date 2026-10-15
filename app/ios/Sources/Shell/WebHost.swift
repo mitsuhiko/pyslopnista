@@ -120,6 +120,7 @@ final class WebHost: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDele
         case "fs.rename": try files.rename(from: str("from"), to: str("to"))
         case "fs.delete": try files.delete(str("path"))
         case "fs.exists": return try files.exists(str("path"))
+        case "fs.stat": return try files.stat(str("path")) ?? NSNull()
         case "fs.tree": return try files.tree(str("path"))
         default: throw FileStore.StoreError(description: "unknown op \(op)")
         }

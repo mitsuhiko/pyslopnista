@@ -33,13 +33,14 @@ enum ConsoleDetent: String {
 }
 
 enum ActiveSheet: Identifiable, Equatable {
-    case find, settings, problems, jump(String)
+    case find, settings, problems, jump(String), agent
     var id: String {
         switch self {
         case .find: "find"
         case .settings: "settings"
         case .problems: "problems"
         case .jump: "jump"
+        case .agent: "agent"
         }
     }
 }
@@ -94,6 +95,14 @@ final class AppModel {
     let ui = UIHost()
     let session = SessionMirror()
     var turtles: [String: TurtleScene] = [:]
+
+    // the coding agent (D34, AppModel+Agent.swift)
+    let agent = AgentMirror()
+    let agentHost = AgentHost()
+    var agentAccounts: [AgentAccount] = []
+    var agentModels: [AgentModelOption] = []
+    var agentLoginError: String?
+    var agentAccountsShown = false
 
     // workspace
     var panes: [Pane] = [Pane()]
@@ -155,6 +164,7 @@ final class AppModel {
             webView: host.makeWebView(role: .engine, page: "engine.html\(query)\(engineFragment)"),
             script: "return await window.__engine.command(name, args)"
         )
+        agentHost.engineView = engine.webView
         editors = (0..<2).map { i in
             PageController(webView: host.makeWebView(role: .editor(i), page: "editor.html"), script: "return await window.__editor.call(name, args)")
         }
@@ -164,7 +174,9 @@ final class AppModel {
         }
         host.onTerminate = { [weak self] role in
             switch role {
-            case .engine: self?.engine.markNotReady()
+            case .engine:
+                self?.engine.markNotReady()
+                self?.agentHost.engineTerminated()
             case .editor(let i): self?.editors[i].markNotReady()
             }
         }
@@ -296,6 +308,17 @@ final class AppModel {
                     reply(nil, "\(error)")
                 }
             }
+        case (.engine, "agent.state"):
+            if let json = value["json"] as? String { agent.apply(json) }
+            reply(nil, nil)
+        case (.engine, "agent.flushEditors"):
+            // The agent is about to read files: what was typed must be on disk.
+            Task {
+                await saveAll()
+                reply(nil, nil)
+            }
+        case (.engine, _) where op.hasPrefix("agent."):
+            if !agentHost.handle(op, value, reply) { reply(nil, "unknown op \(op)") }
         default:
             reply(nil, "unknown op \(op)")
         }
@@ -1008,7 +1031,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts]]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1036,6 +1059,10 @@ final class AppModel {
         case "console": if wide { consoleDocked = true } else { consoleDetent = .half }
         case "files": if !wide { route = [] }
         default: break
+        }
+        if let agentHook = hook["agent"] {
+            openAgent()
+            if agentHook == "accounts" { agentAccountsShown = true }
         }
         if hook["focus"] == "console" {
             try? await Task.sleep(for: .milliseconds(600))
