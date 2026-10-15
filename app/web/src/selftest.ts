@@ -701,6 +701,23 @@ export async function selftest() {
     await until(() => consoleText().includes("42"));
   });
 
+  await step("keybar_console", async () => {
+    // The code keys above the keyboard work in the native >>> field too.
+    await app.showPane("console");
+    await app.focusField("console");
+    await sleep(600);
+    await typeNative("len");
+    const tapped = await call<unknown>("test.keybar", { keys: ["("] });
+    if (tapped !== true) throw new Error(String(tapped));
+    await typeNative("[1, 2");
+    await call("test.keybar", { keys: ["]"] });
+    await sleep(200);
+    const value = await app.fieldValue("console");
+    if (value !== "len([1, 2])") throw new Error(`field has ${JSON.stringify(value)}`);
+    await app.submitField("console");
+    await until(() => consoleText().includes("len([1, 2])2"));
+  });
+
   await step("typing_plain_traits", async () => {
     await app.showPane("console");
     await app.focusField("console");

@@ -283,7 +283,7 @@ final class AppModel {
                                      pointer: value["pointer"] as? Bool ?? false, keys: value["keys"] as? Bool ?? false)
             }
             reply(nil, nil)
-        case (.engine, "test.link"), (.engine, "test.ui"), (.engine, "test.type"), (.engine, "test.turtle"), (.engine, "app"):
+        case (.engine, "test.link"), (.engine, "test.ui"), (.engine, "test.type"), (.engine, "test.turtle"), (.engine, "test.keybar"), (.engine, "app"):
             SelfTest.handle(self, op, value, reply)
         case (.editor(let pane), "editor.event"):
             editorEvent(pane, value)
@@ -795,7 +795,11 @@ final class AppModel {
         Task { _ = await command("clear") }
     }
 
+    /// Counts Return in the console fields; the console scrolls to the end.
+    var consoleSubmits = 0
+
     func submitConsole() {
+        consoleSubmits += 1
         let source = consoleInput
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         consoleHistory.removeAll { $0 == source }
@@ -809,6 +813,7 @@ final class AppModel {
     }
 
     func submitProgramInput() {
+        consoleSubmits += 1
         let text = programInput
         programInput = ""
         Task { _ = await command("submitInput", ["text": text]) }
@@ -1003,7 +1008,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1032,7 +1037,10 @@ final class AppModel {
         case "files": if !wide { route = [] }
         default: break
         }
-        if hook["focus"] != nil {
+        if hook["focus"] == "console" {
+            try? await Task.sleep(for: .milliseconds(600))
+            focusedField = .console
+        } else if hook["focus"] != nil {
             try? await Task.sleep(for: .milliseconds(600))
             for _ in 0..<5 {
                 await editorCall(focused, "focus")

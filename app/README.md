@@ -20,7 +20,8 @@ apps are native views (D30).
   bracket closing, search, undo history per file, soft wrapping with hanging
   indent, light/dark themes. Saves automatically. A row of extra keys sits above
   the keyboard (indent/dedent, brackets and quotes with the cursor placed
-  inside, operators, undo/redo, comment), with a strip to swipe the cursor.
+  inside, operators, undo/redo, comment), also for the console's `>>>` and
+  `input()` fields. With a hardware keyboard it sits above the home indicator.
 - **Code intelligence** (ruff + ty as WebAssembly in their own worker):
   wavy underlines for real mistakes (ruff's default rules + bugbear, ty's type
   checks), a problem bar above the keyboard that shows the problem at the
@@ -82,7 +83,7 @@ apps are native views (D30).
   work. Files the program creates, changes or deletes are written back while
   it idles (within about a second) and when it ends (D27). Stop raises `KeyboardInterrupt`
   and kills the program after 1.5 s (D11).
-- **Console**: streaming output, `input()`, tracebacks without Pyodide's
+- **Console**: Return in `>>>` or `input()` scrolls to the end; streaming output, `input()`, tracebacks without Pyodide's
   internal frames whose `File "x.py", line N` entries open that line, inline matplotlib plots (`plt.show()`), and a `>>>` prompt
   that runs in the program's globals after it finishes (last expression is
   shown, top-level `await` works).
@@ -169,10 +170,11 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 "Engine" and one "Editor" per pane.
 ```
 
-## Status (2026-10-14)
+## Status (2026-10-15)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 40
-checks in the iPhone 17 and iPad Pro 13" simulators (2026-10-14). The
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 41
+checks in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15; 40 in
+the iPhone 17 on 2026-10-14). The new one taps the key bar in the `>>>` field. The
 self-test runs in the engine page and drives the native views through hooks
 (`Shell/SelfTest.swift`): ui apps through the renderer's tree, typing through
 UIKit into the native console fields, turtle checks on the native drawing.
@@ -208,7 +210,6 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
 - Native shell (D31), not tried on a device yet: memory with three
   WebContent processes, the editor's keyboard and focus, the key bar.
 - The problem bar is still HTML inside the editor page.
-- No key bar above the keyboard for the native console fields yet.
 - Turtle screens in the console fit the width but not the console's height.
 - HTTP is request/response only: no WebSockets or raw sockets; responses are
   buffered, not streamed.

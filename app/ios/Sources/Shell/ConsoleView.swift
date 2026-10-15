@@ -171,6 +171,11 @@ struct ConsoleView: View {
                 .onChange(of: s.debug?.stopId) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
+                .onChange(of: model.consoleSubmits) {
+                    // Return in >>> or input(): follow the output again.
+                    atBottom = true
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
                 .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .environment(\.consoleHeight, geo.size.height)
@@ -616,6 +621,18 @@ final class HistoryTextField: UITextField {
     /// Take the keyboard once on screen (input() asks before the field exists).
     var wantsFocus = false
     private var index = -1
+
+    /// The code keys above the keyboard, like the editor's.
+    override var inputAccessoryView: UIView? {
+        get { KeyboardAccessory.shared.fieldBar }
+        set {}
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { KeyboardAccessory.shared.field = self }
+        return ok
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()

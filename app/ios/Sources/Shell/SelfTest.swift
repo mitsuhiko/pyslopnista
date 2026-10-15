@@ -14,6 +14,7 @@ enum SelfTest {
                 case "test.ui": reply(ui(model, value), nil)
                 case "test.type": reply(await type(value["text"] as? String ?? ""), nil)
                 case "test.turtle": reply(turtle(model, value), nil)
+                case "test.keybar": reply(keyBar(value["keys"] as? [String] ?? []), nil)
                 case "test.link":
                     // Link a folder outside Documents without the picker.
                     let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -134,6 +135,23 @@ enum SelfTest {
             try? await Task.sleep(for: .milliseconds(60))
         }
         return notes.joined(separator: ", ")
+    }
+
+    /// Tap keys on the key bar of whatever has focus, by their labels.
+    private static func keyBar(_ labels: [String]) -> Any {
+        guard let responder = UIResponder.current else { return "no first responder" }
+        guard let bar = responder.inputAccessoryView else { return "no key bar on \(Swift.type(of: responder))" }
+        func find(_ view: UIView, _ label: String) -> UIButton? {
+            if let button = view as? UIButton, button.accessibilityLabel == label { return button }
+            for sub in view.subviews { if let hit = find(sub, label) { return hit } }
+            return nil
+        }
+        for label in labels {
+            guard let key = find(bar, label) else { return "no key \(label)" }
+            key.sendActions(for: .touchDown)
+            key.sendActions(for: .touchUpInside)
+        }
+        return true
     }
 
     private static func turtle(_ model: AppModel, _ value: [String: Any]) -> Any? {

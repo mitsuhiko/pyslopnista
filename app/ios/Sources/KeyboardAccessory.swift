@@ -54,6 +54,11 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
     weak var webView: WKWebView?
     private(set) var mode: Mode = .plain
     private lazy var codeBar: UIInputView = makeBar()
+    /// The same keys for native code fields (the console's >>> and input()).
+    /// A separate view: the editor's keyboard may still be on its way out.
+    private(set) lazy var fieldBar: UIInputView = makeBar()
+    /// The native field the field bar types into (the first responder).
+    weak var field: UITextField?
 
     var enableInputClicksWhenVisible: Bool { true }
 
@@ -349,9 +354,9 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
     @objc private func keyUp(_ sender: UIButton) {
         if longPressed.remove(sender.tag) != nil { return }
         if sender.tag == -1 {
-            send("dismiss")
+            send("dismiss", from: sender)
         } else if Self.keys.indices.contains(sender.tag) {
-            send(Self.keys[sender.tag].action)
+            send(Self.keys[sender.tag].action, from: sender)
         }
     }
 
@@ -360,13 +365,74 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
               Self.keys.indices.contains(button.tag), let alternate = Self.keys[button.tag].alternate else { return }
         longPressed.insert(button.tag)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        send(alternate)
+        send(alternate, from: button)
     }
 
-    private func send(_ action: String) {
+    private func send(_ action: String, from key: UIView) {
+        if key.isDescendant(of: fieldBar) {
+            if let field { apply(action, to: field) }
+            return
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: [action]),
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.__pyslopKey?.(\(json)[0])")
+    }
+}
+
+extension KeyboardAccessory {
+    /// The editor's commands on a one-line UITextField. Edits go through
+    /// UITextInput, so they are undoable and the field reports the change.
+    fileprivate func apply(_ action: String, to field: UITextField) {
+        let start = field.beginningOfDocument
+        func caret(_ position: UITextPosition) {
+            field.selectedTextRange = field.textRange(from: position, to: position)
+        }
+        switch action {
+        case "dismiss":
+            _ = field.resignFirstResponder()
+            return
+        case "undo":
+            field.undoManager?.undo()
+        case "redo":
+            field.undoManager?.redo()
+        case "left", "right":
+            guard let range = field.selectedTextRange else { return }
+            let left = action == "left"
+            if !range.isEmpty { caret(left ? range.start : range.end); return }
+            if let p = field.position(from: range.start, offset: left ? -1 : 1) { caret(p) }
+            return
+        case "indent":
+            field.insertText("    ")
+        case "dedent", "comment":
+            let text = field.text ?? ""
+            let remove: Int, insert: String
+            if action == "dedent" {
+                remove = text.prefix(4).prefix { $0 == " " }.count
+                insert = ""
+            } else if text.hasPrefix("# ") || text.hasPrefix("#") {
+                remove = text.hasPrefix("# ") ? 2 : 1
+                insert = ""
+            } else {
+                remove = 0
+                insert = "# "
+            }
+            guard remove > 0 || !insert.isEmpty, let end = field.position(from: start, offset: remove),
+                  let range = field.textRange(from: start, to: end) else { return }
+            field.replace(range, withText: insert)
+        default:
+            guard action.hasPrefix("insert:") else { return }
+            var body = String(action.dropFirst("insert:".count))
+            var back = 0
+            // "insert:<text>:<cursor>": the caret goes <cursor> characters into the text.
+            if let colon = body.lastIndex(of: ":"), colon != body.startIndex,
+               let cursor = Int(body[body.index(after: colon)...]) {
+                body = String(body[..<colon])
+                back = body.count - cursor
+            }
+            field.insertText(body)
+            if back > 0, let range = field.selectedTextRange, let p = field.position(from: range.start, offset: -back) { caret(p) }
+        }
+        field.sendActions(for: .editingChanged)
     }
 }
 
