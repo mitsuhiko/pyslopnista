@@ -1,7 +1,9 @@
 // Sign-in (D33): pi-ai's own login flows, run in the engine page.
 // - The OAuth flows are bundled and registered like pi-ai's Bun build does
 //   (vite aliases); node:http runs on the host's loopback listener.
-// - Auth URLs and device-code links open in ASWebAuthenticationSession.
+// - Auth URLs open in ASWebAuthenticationSession. Device-code flows do not
+//   open anything: the sheet shows the code and the full link, so the user
+//   can sign in on another device or tap the link to open it here.
 // - Prompts (login method, API key, a pasted code) are a native sheet: the
 //   bridge call stays pending until the user answers.
 import type { AuthInteraction, AuthType, MutableModels } from "@earendil-works/pi-ai";
@@ -60,7 +62,6 @@ function interaction(signal: AbortSignal): AuthInteraction {
         void call("agent.auth.open", { url: event.url }).catch(() => {});
       } else if (event.type === "device_code") {
         void call("agent.clipboard", { value: event.userCode }).catch(() => {});
-        void call("agent.auth.open", { url: event.verificationUri }).catch(() => {});
       }
       void call("agent.login.event", { event }).catch(() => {});
     },
