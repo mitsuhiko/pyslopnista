@@ -4,7 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Agent spike</title>
-    <style>body { font: 12px ui-monospace, monospace; margin: 60px 12px; white-space: pre-wrap; }</style>
+    <style>
+      body { font: 12px ui-monospace, monospace; margin: 60px 12px; white-space: pre-wrap; }
+      #auth { font: 16px -apple-system, sans-serif; white-space: normal; margin-bottom: 16px; }
+      #auth .status { color: #555; margin: 4px 0; }
+      #auth .prompt, #auth .device { border: 1px solid #ccc; border-radius: 10px; padding: 12px; margin: 8px 0; }
+      #auth input { font-size: 16px; width: 100%; box-sizing: border-box; padding: 8px; margin: 8px 0; }
+      #auth button { font-size: 16px; padding: 8px 14px; margin: 4px 6px 0 0; }
+      #auth .code { font: bold 28px ui-monospace, monospace; letter-spacing: 2px; margin: 8px 0; }
+    </style>
   </head>
   <body>
     <div id="log"></div>

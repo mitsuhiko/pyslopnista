@@ -6,6 +6,10 @@
 #   ./run.sh --selftest          same (the name the other spikes use)
 #   ./run.sh boot,storage        some steps
 #   ./run.sh --real              also call the real Anthropic API with $ANTHROPIC_API_KEY
+#   ./run.sh oauth-mock          automated OAuth login against the mock (loopback + browser sheet)
+#   ./run.sh oauth:anthropic:browser   a real sign-in you complete in the simulator (10 min timeout)
+#   ./run.sh apikey:openai       paste a real API key in the simulator
+#   ./run.sh logins / logout     list / remove the credentials in the Keychain
 #   SIM=<udid> ./run.sh          a specific simulator (default: booted)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,6 +38,7 @@ xcrun -sdk iphonesimulator swiftc \
   -swift-version 6 \
   -target arm64-apple-ios26.0-simulator \
   -parse-as-library -O \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker Entitlements.plist \
   Sources/*.swift -o "$APP/Agent"
 cp Info.plist "$APP/"
 cp -R web/dist "$APP/web"
@@ -63,12 +68,14 @@ if [ "$REAL" = 1 ]; then
 fi
 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" >/dev/null
 
-for _ in $(seq 1 240); do
+WAIT=240 # half-seconds
+case "$STEPS" in *oauth:*|*apikey:*) WAIT=7200 ;; esac # an hour for sign-ins
+for _ in $(seq 1 "$WAIT"); do
   [ -f "$RESULT" ] && break
   sleep 0.5
 done
 if [ ! -f "$RESULT" ]; then
-  echo "no result after 120s; log:" >&2
+  echo "no result after $((WAIT / 2))s; log:" >&2
   cat "$DATA/Documents/agent-log.txt" >&2 || true
   exit 1
 fi

@@ -90,3 +90,44 @@ SIM=<udid> ./run.sh         # a specific simulator
 - Not covered here: memory on a device, the iPhone 14 Pro numbers,
   `run_python`/`check`/`format` (they wrap engine features that already
   exist), and the native UI.
+
+## Sign-in (2026-10-15, iPhone 17 simulator)
+
+**Question:** do pi-ai's OAuth and API-key sign-ins work in a WKWebView,
+with the Keychain for storage?
+
+**Added:**
+- `Sources/Loopback.swift`: a loopback HTTP listener (`NWListener`,
+  127.0.0.1 and ::1).
+- `Sources/Keychain.swift`: credentials in the Keychain.
+- `ASWebAuthenticationSession` and `clipboard.set` in `App.swift`.
+- `web/src/shims/`: `node:http` on the listener, `node:crypto`'s
+  `randomBytes`.
+- `web/src/login.ts`: pi-ai's flows registered through Vite aliases, a
+  Keychain `CredentialStore`, and HTML prompts standing in for a native
+  sheet.
+- In `mock/server.py`: an OAuth server (authorize, then a redirect to
+  localhost; code exchange with PKCE; refresh).
+
+```sh
+./run.sh oauth-mock                    # automated
+./run.sh oauth:anthropic:browser       # you sign in in the simulator
+./run.sh apikey:openai                 # you paste a key
+./run.sh logins / logout
+```
+
+| Check | Result |
+|---|---|
+| Bundling | All nine pi-ai OAuth flows bundle (31 KB) once `node:http` and `node:crypto` are aliased to shims. |
+| `oauth-mock` (3 runs) | Passes end to end in about 1.5 s: an ephemeral sign-in sheet, the mock's authorize page, the redirect to `http://localhost:<port>/callback`, the native listener, pi-ai's own `startOAuthCallbackServer`, code exchange, Keychain, Bearer requests (the `claude-cli/…` User-Agent and `anthropic-beta` arrive), a forced refresh (new token), and a reload (the Keychain copy works). |
+| Claude Pro/Max, browser login (real account) | The first try failed: the token endpoint answered **429 "Rate limited"**. Cause: the proxy forwarded WebKit's browser User-Agent. Checked from the Mac: an iPhone Safari or curl User-Agent gets 429, `node` or CFNetwork gets a normal 400 for a bad code. After the proxy stopped forwarding WebKit's User-Agent: signed in; `claude-haiku-4-5` answered "OK" (0.8 s); a forced refresh rotated the token; after a reload the Keychain copy still worked. |
+| Other providers | Not tried (aborted to integrate). |
+
+**Keychain in the simulator:** an ad-hoc signed app without entitlements
+gets -34018. Signing with entitlements makes the simulator refuse to launch
+the app. Embedding them in `__TEXT,__entitlements` through the linker, as
+Xcode does, works (`Entitlements.plist`, `run.sh`).
+
+**Not answered here:** on a device, the sign-in sheet runs in another
+process. The simulator shares the Mac's network, so it can't show that the
+sheet reaches the app's loopback listener (D33, Q22).

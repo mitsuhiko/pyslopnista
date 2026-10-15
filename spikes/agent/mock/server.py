@@ -12,23 +12,44 @@ last message:
   - anything else          -> text "hello from mock"
 Requests without x-api-key == MOCK_KEY get a 401 (proves the host injected it).
 
+OAuth (authorization code with PKCE, like Anthropic's):
+  GET /oauth/authorize?redirect_uri&state&code_challenge -> 302 to redirect_uri?code&state
+  POST /oauth/token {grant_type: authorization_code | refresh_token, ...} -> tokens
+Access tokens look like Anthropic's (sk-ant-oat…), so pi-ai sends them as
+Bearer. A request with a Bearer token must carry a live one; a refresh
+retires the old pair.
+
 GET /stream?n=10&ms=200 sends n SSE events ms apart (proxy streaming check).
 GET /stats returns request counts; POST /reset clears them.
 """
 
+import base64
+import hashlib
 import json
 import os
+import secrets
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 KEY = os.environ.get("MOCK_KEY", "mock-key")
-STATS: dict[str, int] = {}
+STATS: dict[str, object] = {}
+CODES: dict[str, dict] = {}  # code -> {challenge, redirect_uri}
+ACCESS: set[str] = set()
+REFRESH: dict[str, str] = {}  # refresh -> access
 
 
 def bump(name: str) -> None:
-    STATS[name] = STATS.get(name, 0) + 1
+    STATS[name] = int(STATS.get(name, 0)) + 1
+
+
+def issue() -> dict:
+    access = "sk-ant-oat01-mock-" + secrets.token_urlsafe(16)
+    refresh = "mock-refresh-" + secrets.token_urlsafe(16)
+    ACCESS.add(access)
+    REFRESH[refresh] = access
+    return {"access_token": access, "refresh_token": refresh, "expires_in": 3600, "token_type": "Bearer"}
 
 
 def event(kind: str, data: dict) -> bytes:
@@ -65,6 +86,17 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path == "/stats":
             return self.send_json(200, STATS)
+        if url.path == "/oauth/authorize":
+            q = {k: v[0] for k, v in parse_qs(url.query).items()}
+            bump("oauth_authorize")
+            code = secrets.token_urlsafe(12)
+            CODES[code] = {"challenge": q.get("code_challenge"), "redirect_uri": q.get("redirect_uri")}
+            target = f"{q['redirect_uri']}?{urlencode({'code': code, 'state': q.get('state', '')})}"
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
         if url.path == "/stream":
             q = parse_qs(url.query)
             n, ms = int(q.get("n", ["10"])[0]), int(q.get("ms", ["200"])[0])
@@ -82,9 +114,19 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/reset":
             STATS.clear()
             return self.send_json(200, {})
+        if url.path == "/oauth/token":
+            return self.token(json.loads(body))
         if url.path != "/v1/messages":
             return self.send_json(404, {"error": "not found"})
-        if self.headers.get("x-api-key") != KEY:
+        auth = self.headers.get("authorization") or ""
+        if auth.startswith("Bearer "):
+            if auth.removeprefix("Bearer ") not in ACCESS:
+                bump("bearer_rejected")
+                return self.send_json(401, {"type": "error", "error": {"type": "authentication_error", "message": "bad token"}})
+            bump("bearer_ok")
+            STATS["last_user_agent"] = self.headers.get("user-agent")
+            STATS["last_anthropic_beta"] = self.headers.get("anthropic-beta")
+        elif self.headers.get("x-api-key") != KEY:
             bump("unauthorized")
             return self.send_json(401, {"type": "error", "error": {"type": "authentication_error", "message": "bad key"}})
         request = json.loads(body)
@@ -110,6 +152,27 @@ class Handler(BaseHTTPRequestHandler):
             return self.answer_text([f"chunk{i} " for i in range(30)], delay=0.1)
         bump("hello")
         return self.answer_text(["hello ", "from ", "mock"])
+
+    def token(self, data: dict) -> None:
+        grant = data.get("grant_type")
+        if grant == "authorization_code":
+            entry = CODES.pop(data.get("code", ""), None)
+            verifier = data.get("code_verifier", "")
+            challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+            if not entry or entry["challenge"] != challenge or entry["redirect_uri"] != data.get("redirect_uri"):
+                bump("oauth_code_rejected")
+                return self.send_json(400, {"error": "invalid_grant"})
+            bump("oauth_code")
+            return self.send_json(200, issue())
+        if grant == "refresh_token":
+            old = REFRESH.pop(data.get("refresh_token", ""), None)
+            if old is None:
+                bump("oauth_refresh_rejected")
+                return self.send_json(400, {"error": "invalid_grant"})
+            ACCESS.discard(old)
+            bump("oauth_refresh")
+            return self.send_json(200, issue())
+        return self.send_json(400, {"error": "unsupported_grant_type"})
 
     def message_start(self) -> None:
         self.emit(event("message_start", {"type": "message_start", "message": {

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The simulator reads these from the binary (__TEXT,__entitlements, as Xcode does) for the Keychain. -->
+	<key>application-identifier</key>
+	<string>ZRL6J4P42H.dev.pyslopnista.spike.agent</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>ZRL6J4P42H.dev.pyslopnista.spike.agent</string>
+	</array>
+</dict>
+</plist>

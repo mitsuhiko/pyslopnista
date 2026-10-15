@@ -61,8 +61,12 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelegate 
 
     // MARK: proxy
 
+    /// Headers of our hop, not the caller's request. `user-agent` is WebKit's
+    /// own: forwarding it makes servers treat us as a browser (Anthropic's
+    /// token endpoint answers a browser or curl User-Agent with a fake 429).
+    /// A User-Agent the code set itself arrives in X-Pyslop-Headers.
     private static let hopHeaders: Set<String> = [
-        "host", "origin", "referer", "connection", "content-length", "accept-encoding",
+        "host", "origin", "referer", "connection", "content-length", "accept-encoding", "user-agent",
         "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "x-pyslop-headers", "x-pyslop-token",
     ]
     private static let droppedResponseHeaders: Set<String> = [

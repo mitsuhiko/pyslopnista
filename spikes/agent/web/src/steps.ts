@@ -10,6 +10,7 @@ import { base64ToBytes, bytesToBase64, call, type Config, log } from "./bridge";
 import { expect } from "./expect";
 import { rawFetch } from "./proxy";
 import { BridgeSqlite, stats } from "./sqlite";
+import { interactive, listLogins, logout, oauthMock } from "./login";
 
 export interface StepContext {
   config: Config;
@@ -18,7 +19,7 @@ export interface StepContext {
   reloadAt(phase: number): Promise<never>;
 }
 export type Result = { ok: boolean; [key: string]: unknown };
-type Step = (c: StepContext) => Promise<Result>;
+type Step = (c: StepContext, args: string[]) => Promise<Result>;
 
 const ms = (start: number) => Math.round(performance.now() - start);
 const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
@@ -339,6 +340,20 @@ const real: Step = async (c) => {
   };
 };
 
-export const STEPS: Record<string, Step> = { boot, storage, bench, tools, stream, provider, resume, real };
-export const DEFAULT_STEPS = ["boot", "storage", "bench", "tools", "stream", "provider", "resume", "real"];
+export const STEPS: Record<string, Step> = {
+  boot,
+  storage,
+  bench,
+  tools,
+  stream,
+  provider,
+  resume,
+  real,
+  "oauth-mock": (c) => oauthMock(c),
+  oauth: (c, args) => interactive(c, "oauth", args),
+  apikey: (c, args) => interactive(c, "api_key", args),
+  logins: () => listLogins(),
+  logout: (c, args) => logout(c, args),
+};
+export const DEFAULT_STEPS = ["boot", "storage", "bench", "tools", "stream", "provider", "resume", "oauth-mock", "real"];
 export { log };

@@ -25,22 +25,20 @@ const save = () => call("kv.set", { key: "runner", value: JSON.stringify(state) 
 log(`page load ${config.loads}, steps ${state.steps.join(",")}, at ${state.index}`);
 while (state.index < state.steps.length) {
   const name = state.steps[state.index];
-  const step = STEPS[name];
+  const [base, ...args] = name.split(":");
+  const step = STEPS[base];
   const phase = state.phases[name] ?? 0;
   log(`▶ ${name}${phase ? ` (phase ${phase})` : ""}`);
   let result: Result;
   try {
     if (!step) throw new Error(`unknown step ${name}`);
-    result = await step({
-      config,
-      phase,
-      reloadAt: async (next) => {
-        state.phases[name] = next;
-        await save();
-        await call("reload");
-        return new Promise<never>(() => {});
-      },
-    });
+    const reloadAt = async (next: number) => {
+      state.phases[name] = next;
+      await save();
+      await call("reload");
+      return new Promise<never>(() => {});
+    };
+    result = await step({ config, phase, reloadAt }, args);
   } catch (e) {
     result = { ok: false, error: String((e as Error)?.stack ?? e).slice(0, 1500) };
   }
