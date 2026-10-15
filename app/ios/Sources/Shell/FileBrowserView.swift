@@ -272,10 +272,16 @@ private struct EntryLabel: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundStyle(entry.dir ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                .frame(width: 32)
+            Group {
+                if location {
+                    Image(systemName: "externaldrive.connected.to.line.below").font(.title2).foregroundStyle(.tint)
+                } else if entry.dir {
+                    FolderIcon()
+                } else {
+                    FileIcon(name: entry.name)
+                }
+            }
+            .frame(width: 32)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name).lineLimit(1)
                 Text(meta).font(.caption).foregroundStyle(.secondary)
@@ -283,19 +289,6 @@ private struct EntryLabel: View {
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
-    }
-
-    private var icon: String {
-        if location { return "externaldrive.connected.to.line.below" }
-        if entry.dir { return "folder.fill" }
-        switch (entry.name as NSString).pathExtension.lowercased() {
-        case "py", "pyi": return "chevron.left.forwardslash.chevron.right"
-        case "txt", "md": return "doc.text"
-        case "json", "toml", "csv": return "doc.badge.gearshape"
-        case "png", "jpg", "jpeg", "gif": return "photo"
-        case "db", "sqlite": return "cylinder"
-        default: return "doc"
-        }
     }
 
     private var meta: String {

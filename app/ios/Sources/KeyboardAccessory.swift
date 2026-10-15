@@ -198,90 +198,135 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
 
     // MARK: the bar
 
+    /// Launch hook (`focus`): what a tap on the editor does, so screenshots
+    /// can show the keyboard.
+    @discardableResult
+    func focusForTesting() -> Bool {
+        guard let content = contentView else { return false }
+        if content.isFirstResponder { return true }
+        let ok = content.becomeFirstResponder()
+        WebHost.appendDocument(".probe-log.txt", "[keyboard] focus hook: \(ok ? "first responder" : "could not become first responder")\n")
+        return ok
+    }
+
     private func makeBar() -> UIInputView {
-        let bar = UIInputView(frame: CGRect(x: 0, y: 0, width: 0, height: 52), inputViewStyle: .keyboard)
+        // A transparent input view holding two glass platters (iOS 26 style):
+        // the scrolling keys and the dismiss button. Above the software keyboard
+        // they float over the app like the system's bars; alone at the bottom of
+        // the screen (hardware keyboard, undocked keyboard) the bar grows by the
+        // bottom safe area so nothing sits under the home indicator or corners.
+        let bar = AccessoryBar(frame: CGRect(x: 0, y: 0, width: 0, height: Self.barHeight), inputViewStyle: .default)
         bar.allowsSelfSizing = true
+        bar.backgroundColor = .clear
+
+        let keys = Self.glass()
+        let dismiss = Self.glass()
+        bar.addSubview(keys)
+        bar.addSubview(dismiss)
 
         let scroll = UIScrollView()
         scroll.showsHorizontalScrollIndicator = false
         scroll.alwaysBounceHorizontal = true
+        scroll.delaysContentTouches = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        keys.contentView.addSubview(scroll)
 
         let stack = UIStackView()
         stack.axis = .horizontal
-        stack.spacing = 6
+        stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
         for (index, key) in Self.keys.enumerated() {
             stack.addArrangedSubview(makeKey(key, tag: index))
         }
-
-        let dismiss = makeKey(Key(label: "hide", action: "dismiss", symbol: "keyboard.chevron.compact.down"), tag: -1)
-        dismiss.translatesAutoresizingMaskIntoConstraints = false
-
         scroll.addSubview(stack)
-        bar.addSubview(scroll)
-        bar.addSubview(dismiss)
+
+        let hide = makeKey(Key(label: "Hide Keyboard", action: "dismiss", symbol: "keyboard.chevron.compact.down"), tag: -1)
+        hide.translatesAutoresizingMaskIntoConstraints = false
+        dismiss.contentView.addSubview(hide)
+
+        let platter = Self.barHeight - 2 * Self.margin
+        let inner: CGFloat = 4
         NSLayoutConstraint.activate([
-            bar.heightAnchor.constraint(equalToConstant: 52),
-            scroll.leadingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: dismiss.leadingAnchor, constant: -6),
-            scroll.topAnchor.constraint(equalTo: bar.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 6),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -6),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 7),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -7),
-            stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor, constant: -14),
-            dismiss.trailingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.trailingAnchor, constant: -6),
-            dismiss.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            dismiss.heightAnchor.constraint(equalToConstant: 38),
+            keys.heightAnchor.constraint(equalToConstant: platter),
+            keys.topAnchor.constraint(equalTo: bar.topAnchor, constant: Self.margin),
+            keys.leadingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.leadingAnchor, constant: Self.margin),
+            keys.trailingAnchor.constraint(equalTo: dismiss.leadingAnchor, constant: -Self.margin),
+            dismiss.trailingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.trailingAnchor, constant: -Self.margin),
+            dismiss.topAnchor.constraint(equalTo: keys.topAnchor),
+            dismiss.heightAnchor.constraint(equalToConstant: platter),
+            dismiss.widthAnchor.constraint(equalToConstant: platter),
+
+            scroll.leadingAnchor.constraint(equalTo: keys.contentView.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: keys.contentView.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: keys.contentView.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: keys.contentView.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: inner + 4),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -inner - 4),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: inner),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -inner),
+            stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor, constant: -2 * inner),
+
+            hide.topAnchor.constraint(equalTo: dismiss.contentView.topAnchor, constant: inner),
+            hide.bottomAnchor.constraint(equalTo: dismiss.contentView.bottomAnchor, constant: -inner),
+            hide.leadingAnchor.constraint(equalTo: dismiss.contentView.leadingAnchor, constant: inner),
+            hide.trailingAnchor.constraint(equalTo: dismiss.contentView.trailingAnchor, constant: -inner),
         ])
         return bar
     }
+
+    fileprivate static let barHeight: CGFloat = 60
+    private static let margin: CGFloat = 6
+
+    private static func glass() -> UIVisualEffectView {
+        let effect = UIGlassEffect()
+        effect.isInteractive = true
+        let view = UIVisualEffectView(effect: effect)
+        view.cornerConfiguration = .capsule()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }
+
+    private static let pressed = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.18) : UIColor(white: 0, alpha: 0.1) }
 
     private func makeKey(_ key: Key, tag: Int) -> UIButton {
         var config = UIButton.Configuration.plain()
         config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
         config.baseForegroundColor = .label
+        config.cornerStyle = .capsule
         if let symbol = key.symbol {
-            config.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .medium))
+            config.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular))
         } else {
             var title = AttributedString(key.label)
-            title.font = UIFont.monospacedSystemFont(ofSize: 20, weight: .regular)
+            title.font = UIFont.monospacedSystemFont(ofSize: 19, weight: .regular)
             config.attributedTitle = title
         }
         let button = UIButton(configuration: config)
         button.tag = tag
-        button.backgroundColor = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
-        button.layer.cornerRadius = 8
-        button.layer.cornerCurve = .continuous
-        button.layer.shadowColor = UIColor.black.cgColor
-        button.layer.shadowOpacity = 0.28
-        button.layer.shadowOffset = CGSize(width: 0, height: 1)
-        button.layer.shadowRadius = 0
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: key.symbol != nil ? 44 : 34).isActive = true
+        // Our own pressed state (the plain style would only dim the glyph).
+        button.configurationUpdateHandler = { button in
+            var config = button.configuration
+            config?.background.backgroundColor = button.isHighlighted ? Self.pressed : .clear
+            button.configuration = config
+        }
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 38).isActive = true
         button.accessibilityLabel = key.label
         button.addTarget(self, action: #selector(keyDown(_:)), for: .touchDown)
-        button.addTarget(self, action: #selector(keyUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        button.addTarget(self, action: #selector(keyUp(_:)), for: .touchUpInside)
+        // Scrolling the bar cancels the touch: no key.
+        button.addTarget(self, action: #selector(keyCancel(_:)), for: [.touchUpOutside, .touchCancel])
         if key.alternate != nil {
-            let corner = UIView()
-            corner.isUserInteractionEnabled = false
-            corner.backgroundColor = UIColor.secondaryLabel.withAlphaComponent(0.5)
-            corner.translatesAutoresizingMaskIntoConstraints = false
-            button.addSubview(corner)
+            // A long press does more: a small dot in the corner, inside the key.
+            let dot = UIView()
+            dot.isUserInteractionEnabled = false
+            dot.backgroundColor = .tertiaryLabel
+            dot.layer.cornerRadius = 1.5
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(dot)
             NSLayoutConstraint.activate([
-                corner.widthAnchor.constraint(equalToConstant: 6), corner.heightAnchor.constraint(equalToConstant: 6),
-                corner.topAnchor.constraint(equalTo: button.topAnchor, constant: 3),
-                corner.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -3),
+                dot.widthAnchor.constraint(equalToConstant: 3), dot.heightAnchor.constraint(equalToConstant: 3),
+                dot.topAnchor.constraint(equalTo: button.topAnchor, constant: 5),
+                dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -5),
             ])
-            let triangle = CAShapeLayer()
-            let path = UIBezierPath()
-            path.move(to: .zero)
-            path.addLine(to: CGPoint(x: 6, y: 0))
-            path.addLine(to: CGPoint(x: 6, y: 6))
-            path.close()
-            triangle.path = path.cgPath
-            corner.layer.mask = triangle
             let press = UILongPressGestureRecognizer(target: self, action: #selector(longPress(_:)))
             press.minimumPressDuration = 0.35
             button.addGestureRecognizer(press)
@@ -295,11 +340,13 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
 
     @objc private func keyDown(_ sender: UIButton) {
         UIDevice.current.playInputClick()
-        sender.backgroundColor = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.55, alpha: 1) : UIColor(white: 0.8, alpha: 1) }
+    }
+
+    @objc private func keyCancel(_ sender: UIButton) {
+        longPressed.remove(sender.tag)
     }
 
     @objc private func keyUp(_ sender: UIButton) {
-        sender.backgroundColor = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
         if longPressed.remove(sender.tag) != nil { return }
         if sender.tag == -1 {
             send("dismiss")
@@ -320,5 +367,56 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
         guard let data = try? JSONSerialization.data(withJSONObject: [action]),
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.__pyslopKey?.(\(json)[0])")
+    }
+}
+
+/// The bar's height: the keys, plus the screen's bottom safe area when the bar
+/// sits alone at the bottom of the screen (hardware keyboard, undocked
+/// keyboard). The input accessory's own safe area is always zero there, so it
+/// would end up under the home indicator and the rounded corners.
+private final class AccessoryBar: UIInputView {
+    private var bottomInset: CGFloat = 0
+
+    override init(frame: CGRect, inputViewStyle: UIInputView.Style) {
+        super.init(frame: frame, inputViewStyle: inputViewStyle)
+        // The keyboard moves the bar without laying it out again.
+        for name in [UIResponder.keyboardDidShowNotification, UIResponder.keyboardDidHideNotification,
+                     UIResponder.keyboardDidChangeFrameNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(update), name: name, object: nil)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: KeyboardAccessory.barHeight + bottomInset)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        update()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        update()
+    }
+
+    @objc private func update() {
+        guard let window, bounds.height > 0 else { return }
+        let frame = convert(bounds, to: window)
+        // Off screen (before the keyboard animates it in) says nothing.
+        guard frame.minY < window.bounds.maxY else { return }
+        let atBottom = frame.maxY >= window.bounds.maxY - 1
+        let screenInset = window.windowScene?.windows.map(\.safeAreaInsets.bottom).max() ?? 0
+        let inset = atBottom ? max(safeAreaInsets.bottom, screenInset) : 0
+        guard inset != bottomInset else { return }
+        bottomInset = inset
+        invalidateIntrinsicContentSize()
+        // The keyboard host measured the bar once, into a height constraint of
+        // its own; it does not measure again while the bar stays installed.
+        for constraint in constraints where constraint.identifier == "_UIKBAutolayoutHeightConstraint" {
+            constraint.constant = KeyboardAccessory.barHeight + inset
+        }
     }
 }

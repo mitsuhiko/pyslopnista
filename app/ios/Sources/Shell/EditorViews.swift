@@ -136,7 +136,7 @@ private struct EmptyEditor: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label("No File Open", systemImage: "doc.text")
+            Label { Text("No File Open") } icon: { FileIcon(name: "x.py", size: 64) }
         } description: {
             Text("Pick a file or create a new one.")
         } actions: {

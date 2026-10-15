@@ -1034,7 +1034,11 @@ final class AppModel {
         }
         if hook["focus"] != nil {
             try? await Task.sleep(for: .milliseconds(600))
-            await editorCall(focused, "focus")
+            for _ in 0..<5 {
+                await editorCall(focused, "focus")
+                if KeyboardAccessory.shared.focusForTesting() { break }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
     }
 }
