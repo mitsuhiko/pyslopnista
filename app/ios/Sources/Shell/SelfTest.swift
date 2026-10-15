@@ -149,6 +149,14 @@ enum SelfTest {
             }
         case "wide":
             return model.wide
+        case "tapTraceFrame":
+            // A frame of the last traceback as data (D45), by function name: what its place button does.
+            let s = model.session
+            guard let line = s.lines.last(where: { $0.trace != nil }), let exc = line.trace?.exceptions.last,
+                  let frame = exc.frames.last(where: { $0.name == str(0) }),
+                  let target = ConsoleLinks.resolve(frame, dir: s.runs[line.runId]?.dir ?? "") else { return NSNull() }
+            await model.openLocation(target, line: frame.line, keepConsole: true)
+            return target
         case "tapTraceback":
             let links = ConsoleLinks.all(model.session)
             guard let link = links.first(where: { $0.text.contains(str(0) ?? "") }) else { return 0 }

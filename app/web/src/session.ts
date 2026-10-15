@@ -6,6 +6,7 @@ import { breakpoints } from "./debug/breakpoints";
 import type { CellRequest, KernelEvent, Output } from "./notebook/types";
 import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
 import { chooseFor, onDefaultPython, runtimeFor } from "./runtimes";
+import { parseTrace, type Trace } from "./trace";
 import { TurtleScene, turtleScenes } from "./turtle";
 
 /** "turtle": a turtle screen; the line's text is the key of its scene (D29). */
@@ -16,6 +17,8 @@ export interface Line {
   runId: number;
   kind: LineKind;
   text: string;
+  /** A traceback as data (D45); `text` is its classic form. Never merged with other output. */
+  trace?: Trace;
 }
 
 export type RunStatus = "running" | "ok" | "error" | "stopped" | "crashed";
@@ -90,8 +93,8 @@ export interface SessionState {
 }
 
 /** A notebook cell's error output. */
-const errorOutput = (ename: string, evalue: string, traceback?: string[]): Output => ({
-  output_type: "error", ename, evalue, traceback: traceback ?? [`${ename}: ${evalue}`],
+const errorOutput = (ename: string, evalue: string, traceback?: string[], trace?: Trace): Output => ({
+  output_type: "error", ename, evalue, traceback: traceback ?? [`${ename}: ${evalue}`], ...(trace ? { trace } : {}),
 });
 
 const MAX_CHARS = 400_000;
@@ -122,7 +125,7 @@ export class Session {
   private stopRequested = false;
   private inputResolver: ((text: string | null) => void) | null = null;
   private uiListener: ((json: string | null) => void) | null = null;
-  private pendingOutput: { kind: LineKind; text: string; runId: number }[] = [];
+  private pendingOutput: { kind: LineKind; text: string; runId: number; trace?: Trace }[] = [];
   private flushScheduled = false;
   // The worker blocks in the debugger until debugNext is called with a command.
   private debugNext: ((command: DebugCommand) => void) | null = null;
@@ -170,8 +173,8 @@ export class Session {
   // -- console transcript -----------------------------------------------------------
 
   /** Queue output; it is merged into the transcript once per frame. */
-  append(kind: LineKind, text: string, runId = this.currentRun) {
-    this.pendingOutput.push({ kind, text, runId });
+  append(kind: LineKind, text: string, runId = this.currentRun, trace?: Trace) {
+    this.pendingOutput.push({ kind, text, runId, trace });
     if (this.flushScheduled) return;
     this.flushScheduled = true;
     const flush = () => {
@@ -185,14 +188,16 @@ export class Session {
   flushOutput() {
     if (!this.pendingOutput.length) return;
     let lines = this.state.lines.slice();
-    for (const { kind, text, runId } of this.pendingOutput) {
+    for (const { kind, text, runId, trace } of this.pendingOutput) {
       const last = lines.at(-1);
-      const mergeable = kind === "stdout" || kind === "stderr" || kind === "system";
+      const mergeable = (kind === "stdout" || kind === "stderr" || kind === "system") && !trace;
       // Output while paused must not merge into a line from before the stop:
       // the console shows the two on different sides of the paused block.
       const boundary = this.state.debug?.firstLineId ?? 0;
-      if (mergeable && last && last.kind === kind && last.runId === runId && last.id >= boundary) {
+      if (mergeable && last && last.kind === kind && !last.trace && last.runId === runId && last.id >= boundary) {
         lines[lines.length - 1] = { ...last, text: applyCR(last.text + text) };
+      } else if (trace) {
+        lines.push({ id: this.nextId++, runId, kind, text, trace });
       } else {
         lines.push({ id: this.nextId++, runId, kind, text: mergeable ? applyCR(text) : text });
       }
@@ -380,7 +385,7 @@ export class Session {
           postMortem: !!message.postMortem,
           exception: message.exception ?? null,
           frames: (message.frames as { name: string; file: string; line: number }[]).map((f) => ({ ...f, file: join(this.workerDir, f.file) })),
-          selected: 0,
+          selected: typeof message.selected === "number" ? message.selected : 0,
           scopes: message.scopes ?? [],
         },
       });
@@ -464,18 +469,25 @@ export class Session {
   }
 
   get canInspect() {
-    return !!this.worker && !this.worker.dead && this.state.status === "idle" && !this.state.debug;
+    return !!this.worker && !this.worker.dead && !this.worker.running && this.state.status === "idle" && !this.state.debug;
   }
 
-  /** Open the debugger on the frames of the last uncaught exception. */
-  async inspectError() {
+  /** Open the debugger on the frames of the last uncaught exception, at
+   * `frame` of its stack (innermost first; a traceback's "debug" index). */
+  async inspectError(frame = 0) {
     const worker = this.worker;
     if (!worker || !this.canInspect) return;
     this.flushOutput();
-    const result = await worker.run("import _pyslop_debug\n_pyslop_debug.post_mortem()", { repl: true, cwd: PROJECT_ROOT });
+    const result = await worker.run(`import _pyslop_debug\n_pyslop_debug.post_mortem(${Math.max(0, Math.floor(frame) || 0)})`, { repl: true, cwd: PROJECT_ROOT });
     if (this.worker !== worker) return;
     this.set({ debug: null });
-    if (!result.ok && result.error) this.append("stderr", cleanTraceback(result.error) + "\n");
+    if (!result.ok && result.error) this.appendError(result);
+  }
+
+  /** A failed run's traceback: as data when the runtime described it (D45). */
+  private appendError(result: { error?: string; trace?: string }) {
+    const trace = parseTrace(result.trace);
+    this.append("stderr", (trace?.text ?? cleanTraceback(result.error ?? "")) + "\n", this.currentRun, trace);
   }
 
   /** Breakpoints changed: tell a program that is running (or paused). */
@@ -498,7 +510,7 @@ export class Session {
   }
 
   private async finishRun(
-    result: { ok: boolean; error?: string; killed?: boolean },
+    result: { ok: boolean; error?: string; trace?: string; killed?: boolean },
     fromConsole = false,
   ) {
     this.inputResolver = null;
@@ -513,7 +525,7 @@ export class Session {
         status = "crashed";
       } else {
         status = "error";
-        this.append("stderr", cleanTraceback(result.error) + "\n");
+        this.appendError(result);
       }
     }
     if (fromConsole) {
@@ -615,7 +627,10 @@ export class Session {
     const cell = this.cell;
     if (!cell) {
       // A program's display() (or a kernel's after its cell ended): the console.
-      if (msg.type === "error") return this.append("stderr", (msg.traceback ?? []).join("\n") + "\n");
+      if (msg.type === "error" || msg.type === "exception") {
+        const trace = msg.trace?.exceptions?.length ? (msg.trace as Trace) : undefined;
+        return this.append("stderr", (trace?.text ?? (msg.traceback ?? []).join("\n")) + "\n", this.currentRun, trace);
+      }
       const data = msg.data ?? {};
       if (typeof data["image/png"] === "string") this.append("image", data["image/png"].replace(/\s/g, ""));
       else if (data["text/plain"] != null) this.append("stdout", `${data["text/plain"]}\n`);
@@ -638,7 +653,10 @@ export class Session {
         break;
       case "error":
         cell.failed = true;
-        this.cellOutput(errorOutput(msg.ename ?? "Error", msg.evalue ?? "", msg.traceback));
+        this.cellOutput(errorOutput(msg.ename ?? "Error", msg.evalue ?? "", msg.traceback, msg.trace));
+        break;
+      case "exception": // the runtime caught it (a turtle event handler): shown, the cell goes on
+        this.cellOutput(errorOutput(msg.ename ?? "Error", msg.evalue ?? "", msg.traceback, msg.trace));
         break;
     }
   }
@@ -782,9 +800,11 @@ export class Session {
         if (!cell.failed) this.emit(path, { type: "output", cell: id, output: errorOutput("KeyboardInterrupt", "") });
       } else {
         status = "error";
-        const text = cleanTraceback(error);
+        const trace = parseTrace(result.trace);
+        const text = trace?.text ?? cleanTraceback(error);
         const last = text.split("\n").at(-1) ?? "";
-        this.emit(path, { type: "output", cell: id, output: errorOutput(last.split(":")[0] || "Error", last.split(": ").slice(1).join(": "), text.split("\n")) });
+        const exc = trace?.exceptions.at(-1);
+        this.emit(path, { type: "output", cell: id, output: errorOutput(exc?.type ?? (last.split(":")[0] || "Error"), exc?.message ?? last.split(": ").slice(1).join(": "), text.split("\n"), trace) });
         if (fresh) this.closeWorker(); // its dependencies did not install: the next cell tries again
       }
     }

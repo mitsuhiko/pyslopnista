@@ -25,6 +25,8 @@ export const SIGNAL = { interrupt: 2, pause: 10, breakpoints: 12 } as const;
 export interface RunResult {
   ok: boolean;
   error?: string;
+  /** The uncaught exception as data (D45): JSON from _pyslop_traceback. */
+  trace?: string;
   ms: number;
   killed?: boolean;
 }

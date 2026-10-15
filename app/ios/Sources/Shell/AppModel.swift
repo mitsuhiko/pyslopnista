@@ -606,7 +606,7 @@ final class AppModel {
             Task { _ = await showInfo() }
         case "showProblems":
             activeSheet = .problems
-        case "notebook", "runCells", "stop", "restartKernel", "openURL", "notebookError":
+        case "notebook", "runCells", "stop", "restartKernel", "openURL", "openLocation", "notebookError":
             notebookEditorEvent(pane, type, value)
         default:
             break
@@ -1013,8 +1013,10 @@ final class AppModel {
         return (try? JSONDecoder().decode(DebugVariable.self, from: data), nil)
     }
 
-    func inspectError() {
-        Task { _ = await command("inspectError") }
+    /// Post-mortem debugging of the last error; `frame` is a traceback frame's
+    /// index in the debugger's stack (innermost first, D45).
+    func inspectError(frame: Int = 0) {
+        Task { _ = await command("inspectError", ["frame": frame]) }
     }
 
     func clearConsole() {

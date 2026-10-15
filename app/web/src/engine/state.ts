@@ -3,6 +3,7 @@
 // whole. Coalesced to one message per task.
 import { call } from "../host";
 import { type Line, session } from "../session";
+import type { Trace } from "../trace";
 
 interface LinePatch {
   id: number;
@@ -10,6 +11,7 @@ interface LinePatch {
   kind: string;
   text?: string;
   append?: string;
+  trace?: Trace; // with `text` (a traceback line is never appended to)
 }
 
 export function startStateSync() {
@@ -26,7 +28,7 @@ export function startStateSync() {
       next.set(line.id, line.text);
       if (old === line.text) continue;
       if (old !== undefined && line.text.startsWith(old)) changed.push({ id: line.id, runId: line.runId, kind: line.kind, append: line.text.slice(old.length) });
-      else changed.push({ id: line.id, runId: line.runId, kind: line.kind, text: line.text });
+      else changed.push({ id: line.id, runId: line.runId, kind: line.kind, text: line.text, ...(line.trace ? { trace: line.trace } : {}) });
     }
     sent = next;
     const payload = {

@@ -5,9 +5,14 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import type { Output } from "../notebook/types";
+import type { TraceFrame } from "../trace";
+import { renderTrace } from "./trace";
 
 export interface RenderContext {
   openURL(url: string): void;
+  /** A traceback frame's place (D45): whether it can be shown, and showing it. */
+  canOpen?(frame: TraceFrame): boolean;
+  open?(frame: TraceFrame): void;
   /** The output changed its height after it was drawn (images, frames). */
   resized(): void;
 }
@@ -252,8 +257,14 @@ export function renderOutput(output: Output, ctx: RenderContext): HTMLElement {
   switch (output.output_type) {
     case "stream":
       return pre(output.text, `nb-stream ${output.name}`);
-    case "error":
+    case "error": {
+      if (output.trace) {
+        const el = renderTrace(output.trace, ctx);
+        el.classList.add("nb-trace");
+        return el;
+      }
       return pre(output.traceback.length ? output.traceback.join("\n") : `${output.ename}: ${output.evalue}`, "nb-error");
+    }
     case "status": {
       const el = document.createElement("div");
       el.className = "nb-status";

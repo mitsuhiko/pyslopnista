@@ -9,6 +9,8 @@ struct ConsoleLine: Identifiable, Equatable {
     let runId: Int
     let kind: String // stdout, stderr, system, image, input, prompt, run, turtle
     var text: String
+    /// A traceback as data (D45); `text` is its classic form.
+    var trace: Trace?
 }
 
 struct RunInfo: Codable, Equatable {
@@ -68,6 +70,7 @@ private struct LinePatch: Codable {
     let kind: String
     let text: String?
     let append: String?
+    let trace: Trace?
 }
 
 private struct Payload: Codable {
@@ -115,7 +118,7 @@ final class SessionMirror {
                     line.text += append
                     byID[patch.id] = line
                 } else {
-                    byID[patch.id] = ConsoleLine(id: patch.id, runId: patch.runId, kind: patch.kind, text: patch.text ?? "")
+                    byID[patch.id] = ConsoleLine(id: patch.id, runId: patch.runId, kind: patch.kind, text: patch.text ?? "", trace: patch.trace)
                 }
             }
             lines = p.ids.compactMap { byID[$0] }

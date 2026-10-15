@@ -39,6 +39,21 @@ const api: Api = {
   notebookRun: (index: number) => editor.notebookRun(index),
   backspace: () => editor.backspace(),
   frameProbes: () => (window as any).__nbProbes ?? [],
+  // Tracebacks drawn in the outputs (D45): what shows, and a tap on a frame's place.
+  traceProbe: () =>
+    [...document.querySelectorAll<HTMLElement>(".nb-trace")].map((t) => ({
+      type: t.querySelector(".tb-head .tb-type")?.textContent ?? null,
+      message: t.querySelector(".tb-head .tb-msg")?.textContent ?? null,
+      frames: t.querySelectorAll(".tb-frame").length,
+      open: [...t.querySelectorAll<HTMLDetailsElement>(".tb-frame[open]")].map((d) => d.querySelector(".tb-name")?.textContent ?? ""),
+      span: t.querySelector(".tb-span")?.textContent ?? null,
+      links: t.querySelectorAll(".tb-loc.link").length,
+    })),
+  traceTap: (index: number) => {
+    const link = document.querySelectorAll<HTMLElement>(".nb-trace")[index]?.querySelector<HTMLElement>(".tb-loc.link");
+    link?.click();
+    return !!link;
+  },
   replaceText: (path: string, text: string) => editor.replaceText(path, text),
   renamePath: (from: string, to: string) => editor.renamePath(from, to),
   forget: (path: string) => editor.forget(path),

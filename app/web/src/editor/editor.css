@@ -140,6 +140,51 @@ button { font: inherit; border: 0; background: none; color: inherit; cursor: poi
   padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--red) 10%, transparent);
   border-left: 3px solid var(--red); white-space: pre-wrap;
 }
+/* A traceback as data (D45, trace.ts): frames, the failing span, the exception at the bottom. */
+.tb { display: flex; flex-direction: column; gap: 6px; font: 14px/1.4 var(--nb-ui); color: var(--editor-fg); min-width: 0; }
+.tb details > summary { list-style: none; cursor: pointer; -webkit-user-select: none; user-select: none; }
+.tb details > summary::-webkit-details-marker { display: none; }
+.tb-frames { display: flex; flex-direction: column; border-radius: 10px; background: var(--fill); overflow: hidden; min-width: 0; }
+.tb-frame, .tb-lib, .tb-earlier, .tb-member { min-width: 0; }
+.tb-frames > * + * { border-top: 0.5px solid var(--tertiary); }
+.tb-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 7px 10px 7px 26px; position: relative; min-width: 0; }
+.tb-row::before {
+  content: ""; position: absolute; left: 11px; top: 13px; width: 5px; height: 5px;
+  border-right: 1.5px solid var(--secondary); border-bottom: 1.5px solid var(--secondary); transform: rotate(-45deg); transition: transform 0.15s;
+}
+details[open] > .tb-row::before { transform: rotate(45deg); top: 11px; }
+.tb-frame.bare > .tb-row::before { display: none; }
+.tb-name { font: 600 13px var(--mono); overflow-wrap: anywhere; }
+.tb-frame.library .tb-name { font-weight: 400; color: var(--secondary); }
+.tb-loc { font: 12px var(--mono); color: var(--secondary); overflow-wrap: anywhere; text-align: left; }
+.tb-loc.link { color: var(--tint); }
+.tb-repeat { font-size: 12px; color: var(--orange); }
+.tb-lib-label, .tb-omitted { font-size: 13px; color: var(--secondary); }
+.tb-omitted { padding: 7px 10px 7px 26px; }
+.tb-code { overflow-x: auto; padding: 4px 0 6px; font: 12.5px/1.5 var(--mono); background: var(--editor-bg); -webkit-overflow-scrolling: touch; }
+.tb-code.link { cursor: pointer; }
+.tb-line { display: flex; white-space: pre; min-width: max-content; padding-right: 12px; }
+.tb-line.err { background: color-mix(in srgb, var(--red) 11%, transparent); }
+.tb-no { flex: none; color: var(--tertiary); padding: 0 10px 0 10px; text-align: right; -webkit-user-select: none; user-select: none; }
+.tb-line.err .tb-no { color: var(--red); }
+.tb-span { color: inherit; background: color-mix(in srgb, var(--red) 22%, transparent); border-radius: 2px; text-decoration: underline wavy var(--red); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.tb-head { padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--red) 10%, transparent); border-left: 3px solid var(--red); }
+.tb-head .tb-type { font-weight: 600; color: var(--red); overflow-wrap: anywhere; }
+.tb-msg { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tb-note { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary); font-size: 13px; margin-top: 2px; }
+.tb-chain { font-size: 12px; color: var(--secondary); padding: 2px 2px; }
+.tb-earlier > summary, .tb-member > summary { padding: 7px 10px 7px 26px; border-radius: 10px; background: var(--fill); position: relative; overflow-wrap: anywhere; }
+.tb-earlier > summary::before, .tb-member > summary::before {
+  content: ""; position: absolute; left: 11px; top: 13px; width: 5px; height: 5px;
+  border-right: 1.5px solid var(--secondary); border-bottom: 1.5px solid var(--secondary); transform: rotate(-45deg); transition: transform 0.15s;
+}
+.tb-earlier[open] > summary::before, .tb-member[open] > summary::before { transform: rotate(45deg); top: 11px; }
+.tb-earlier > summary .tb-type, .tb-member > summary .tb-type { font-weight: 600; color: var(--red); }
+.tb-earlier[open] > .tb-exc, .tb-member[open] > .tb { margin-top: 6px; }
+.tb-exc { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tb-group { display: flex; flex-direction: column; gap: 4px; padding-left: 10px; border-left: 2px solid var(--tertiary); }
+.tb-count { font: 12px var(--mono); color: var(--secondary); margin-right: 8px; }
+.tb-member[open] > .tb-exc, .tb-member[open] > .tb-chain { margin-top: 6px; }
 .nb-outputs .nb-image { display: block; max-width: 100%; height: auto; border-radius: 4px; align-self: flex-start; }
 .nb-outputs .nb-frame { width: 100%; border: 0; display: block; background: transparent; }
 .nb-outputs .nb-status, .nb-status { font: 13px var(--nb-ui); color: var(--secondary); }

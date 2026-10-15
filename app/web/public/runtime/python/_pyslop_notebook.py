@@ -825,14 +825,14 @@ def _error(e):
     if isinstance(e, UsageError):
         lines = [f"UsageError: {e}"]
     else:
-        import traceback
+        import _pyslop_traceback
 
-        tb = e.__traceback__
-        # Our own frames (and Pyodide's) go; the cell's stay.
-        while tb is not None and not tb.tb_frame.f_code.co_filename.startswith("<cell"):
-            tb = tb.tb_next
-        lines = traceback.format_exception(type(e), e, tb) if tb is not None else traceback.format_exception_only(type(e), e)
-        lines = [line.rstrip("\n") for line in lines]
+        # Our own frames (and Pyodide's) go; the cell's stay. As data too (D45).
+        trace = _pyslop_traceback.describe(e)
+        return {
+            "type": "error", "ename": type(e).__name__, "evalue": trace["exceptions"][-1]["message"],
+            "traceback": trace["text"].split("\n"), "trace": trace,
+        }
     return {"type": "error", "ename": type(e).__name__, "evalue": str(e), "traceback": lines}
 
 

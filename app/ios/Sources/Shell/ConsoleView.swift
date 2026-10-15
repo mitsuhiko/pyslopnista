@@ -171,10 +171,16 @@ struct ConsoleView: View {
                 // When the keyboard (and its key bar) shrinks the console, keep
                 // the end of the output in view instead of under them.
                 .defaultScrollAnchor(.bottom, for: .sizeChanges)
-                .onScrollGeometryChange(for: Bool.self) { geo in
-                    geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 30
-                } action: { _, bottom in
-                    atBottom = bottom
+                .onScrollGeometryChange(for: ScrollState.self) { geo in
+                    ScrollState(bottom: geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 30, height: geo.contentSize.height)
+                } action: { old, new in
+                    // Rows measured taller than estimated (a traceback's open
+                    // frame) push the end down: follow it if we were there.
+                    if new.height > old.height && old.bottom && !new.bottom {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    } else {
+                        atBottom = new.bottom
+                    }
                 }
                 .onChange(of: contentKey) {
                     if atBottom { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -194,6 +200,11 @@ struct ConsoleView: View {
             replBar
         }
         .background(Color(.secondarySystemBackground))
+    }
+
+    private struct ScrollState: Equatable {
+        let bottom: Bool
+        let height: CGFloat
     }
 
     private var contentKey: Int {
@@ -276,19 +287,25 @@ private struct RunBlock: View {
         let after = splitAt == nil ? [] : group.lines.filter { $0.id >= splitAt! }
         VStack(alignment: .leading, spacing: 0) {
             if let run { header(run) }
-            ForEach(before) { LineView(line: $0, dir: run?.dir ?? "") }
+            ForEach(before) { LineView(line: $0, dir: run?.dir ?? "", inspectable: inspectable(run)) }
             if last && s.awaitingInput { InputLine() }
             if let debug = s.debug, last { PausedBlock(debug: debug) }
-            ForEach(after) { LineView(line: $0, dir: run?.dir ?? "") }
+            ForEach(after) { LineView(line: $0, dir: run?.dir ?? "", inspectable: inspectable(run)) }
         }
         .padding(.bottom, 6)
+    }
+
+    /// The run's uncaught error can still be debugged (the worker keeps it).
+    private func inspectable(_ run: RunInfo?) -> Bool {
+        guard let run else { return false }
+        return run.status == "error" && run.file != nil && last && model.session.canInspect
     }
 
     private func header(_ run: RunInfo) -> some View {
         let s = model.session
         let paused = s.debug != nil && last
         let time = Date(timeIntervalSince1970: run.startedAt / 1000).formatted(date: .omitted, time: .shortened)
-        let inspectable = run.status == "error" && run.file != nil && last && s.canInspect
+        let inspectable = self.inspectable(run)
         return HStack(spacing: 8) {
             Group {
                 switch run.status {
@@ -325,6 +342,7 @@ extension EnvironmentValues {
 private struct LineView: View {
     let line: ConsoleLine
     let dir: String
+    var inspectable = false
     @Environment(AppModel.self) private var model
     @Environment(\.consoleHeight) private var consoleHeight
 
@@ -354,8 +372,10 @@ private struct LineView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        case "stderr" where line.trace != nil:
+            TracebackView(trace: line.trace!, dir: dir, inspectable: inspectable)
         case "stderr" where line.text.contains("File \"") && !line.text.contains("\u{1b}"):
-            TracebackView(text: line.text, dir: dir)
+            TextTracebackView(text: line.text, dir: dir)
         default:
             ForEach(Array(ANSI.chunks(line.text).enumerated()), id: \.offset) { _, chunk in
                 Text(ANSI.attributed(chunk, base: color))
@@ -377,8 +397,9 @@ private struct LineView: View {
     }
 }
 
-/// stderr with `File "x.py", line 3` lines that open that line.
-private struct TracebackView: View {
+/// stderr with `File "x.py", line 3` lines that open that line (a
+/// traceback the program printed itself; the runtime's come as data, D45).
+private struct TextTracebackView: View {
     let text: String
     let dir: String
     @Environment(AppModel.self) private var model
@@ -436,13 +457,23 @@ enum ConsoleLinks {
         let ns = line as NSString
         guard let m = regex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) else { return nil }
         let file = ns.substring(with: m.range(at: 3))
-        guard let number = Int(ns.substring(with: m.range(at: 4))) else { return nil }
-        let path: String
-        if file.hasPrefix("<") { return nil }
-        if file.hasPrefix(projectRoot) { path = joinPath(dir, String(file.dropFirst(projectRoot.count))) }
-        else if file.hasPrefix("/") { return nil } // stdlib, site-packages, runtime
-        else { path = joinPath(dir, file) }
+        guard let number = Int(ns.substring(with: m.range(at: 4))), let path = resolve(file, dir: dir) else { return nil }
         return Link(text: ns.substring(with: m.range(at: 2)), path: path, line: number)
+    }
+
+    /// A traceback's file name as an app path: project files only, relative
+    /// to the folder the program ran in (`dir`).
+    static func resolve(_ file: String, dir: String) -> String? {
+        if file.hasPrefix("<") { return nil }
+        if file.hasPrefix(projectRoot) { return joinPath(dir, String(file.dropFirst(projectRoot.count))) }
+        if file.hasPrefix("/") { return nil } // stdlib, site-packages, runtime
+        return joinPath(dir, file)
+    }
+
+    /// A frame of a traceback as data (D45): the program's own files only.
+    static func resolve(_ frame: TraceFrame, dir: String) -> String? {
+        guard frame.kind == "app", let file = frame.file else { return nil }
+        return resolve(file, dir: dir)
     }
 
     @MainActor

@@ -2,13 +2,16 @@
 // and the editor keeps them. Outputs are nbformat 4's, plus "status" lines of
 // our own (installing packages), which are not saved.
 
+import type { Trace } from "../trace";
+
 export type MimeBundle = Record<string, unknown>;
 
 export type Output =
   | { output_type: "stream"; name: "stdout" | "stderr"; text: string }
   | { output_type: "display_data"; data: MimeBundle; metadata: Record<string, unknown>; transient?: { display_id?: string } }
   | { output_type: "execute_result"; data: MimeBundle; metadata: Record<string, unknown>; execution_count: number | null }
-  | { output_type: "error"; ename: string; evalue: string; traceback: string[] }
+  /** `trace`: the traceback as data (D45), only in memory (not saved). */
+  | { output_type: "error"; ename: string; evalue: string; traceback: string[]; trace?: Trace }
   | { output_type: "status"; text: string };
 
 export type KernelState = "none" | "starting" | "idle" | "busy" | "dead";

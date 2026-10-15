@@ -207,10 +207,15 @@ def _measure(font_css, text):
 
 
 def _report(exc):
-    """Print a traceback without our frames (a failing event handler)."""
-    te = traceback.TracebackException.from_exception(exc)
-    te.stack = traceback.StackSummary.from_list([f for f in te.stack if not f.filename.startswith(_HERE)])
-    sys.stderr.write("".join(te.format()))
+    """Show a traceback without our frames (a failing event handler), as data (D45)."""
+    try:
+        import _pyslop_traceback
+    except ImportError:  # outside the app
+        te = traceback.TracebackException.from_exception(exc)
+        te.stack = traceback.StackSummary.from_list([f for f in te.stack if not f.filename.startswith(_HERE)])
+        sys.stderr.write("".join(te.format()))
+    else:
+        _pyslop_traceback.report(exc)
 
 
 # -- the canvas ---------------------------------------------------------------------------

@@ -22,6 +22,10 @@ export interface NotebookHooks {
   stop(): void;
   restart(): void;
   openURL(url: string): void;
+  /** A project file of a traceback (D45), relative to the notebook's folder. */
+  openLocation(file: string, line: number): void;
+  /** Jump to a line of the document (a cell's line in a traceback): select, scroll, flash. */
+  reveal(line: number): void;
 }
 
 export const notebookHooks = Facet.define<NotebookHooks, NotebookHooks | null>({ combine: (v) => v[0] ?? null });
@@ -275,7 +279,11 @@ export function notebookSummary(state: EditorState) {
       id: c.info.id, type: c.info.type, count: c.info.count, status: c.info.status, source: sourceOf(state, c),
       outputs: c.info.outputs.map((o) => {
         if (o.output_type === "stream") return { type: "stream", name: o.name, text: o.text };
-        if (o.output_type === "error") return { type: "error", ename: o.ename, evalue: o.evalue };
+        if (o.output_type === "error") {
+          // The traceback as data (D45): "type: file:line ..." per exception.
+          const trace = o.trace?.exceptions.map((e) => `${e.type}: ${e.frames.map((f) => `${f.file}:${f.line}`).join(" ")}`) ?? null;
+          return { type: "error", ename: o.ename, evalue: o.evalue, trace };
+        }
         if (o.output_type === "status") return { type: "status", text: o.text };
         return { type: o.output_type, mimes: Object.keys(o.data ?? {}), text: String(o.data?.["text/plain"] ?? "") };
       }),
@@ -616,7 +624,32 @@ class ChipWidget extends WidgetType {
 const renderContext = (view: EditorView): RenderContext => ({
   openURL: (url) => view.state.facet(notebookHooks)?.openURL(url),
   resized: () => view.requestMeasure(),
+  // Traceback frames (D45): a cell of this notebook ("<cell 3>", by its count) or a project file.
+  canOpen: (frame) => {
+    if (frame.kind !== "app" || !frame.file) return false;
+    const count = cellCount(frame.file);
+    if (count !== null) return !!cellByCount(view, count);
+    return !frame.file.startsWith("<") && !frame.file.startsWith("/");
+  },
+  open: (frame) => {
+    const count = cellCount(frame.file ?? "");
+    if (count === null) return view.state.facet(notebookHooks)?.openLocation(frame.file!, frame.line ?? 1);
+    const cell = cellByCount(view, count);
+    if (!cell) return;
+    const doc = view.state.doc;
+    const first = doc.lineAt(cell.from).number;
+    const last = doc.lineAt(Math.max(cell.from, cell.to)).number;
+    view.state.facet(notebookHooks)?.reveal(Math.min(last, first + Math.max(0, (frame.line ?? 1) - 1)));
+  },
 });
+
+const cellCount = (file: string) => {
+  const m = /^<cell (\d+)>$/.exec(file);
+  return m ? Number(m[1]) : null;
+};
+
+const cellByCount = (view: EditorView, count: number) =>
+  notebookOf(view.state)?.cells.find((c) => c.info.type === "code" && c.info.count === count);
 
 /** A Markdown cell, rendered; a tap edits it. */
 class MarkdownWidget extends WidgetType {

@@ -129,10 +129,22 @@ apps are native views (D30).
   is on disk at once (at the latest when it idles or blocks, within a quarter
   second). Stop raises `KeyboardInterrupt` and kills the program after 1.5 s
   (D11).
-- **Console**: Return in `>>>` or `input()` scrolls to the end; streaming output, `input()`, tracebacks without Pyodide's
-  internal frames whose `File "x.py", line N` entries open that line, inline matplotlib plots (`plt.show()`), and a `>>>` prompt
+- **Console**: Return in `>>>` or `input()` scrolls to the end; streaming output, `input()`, inline matplotlib plots (`plt.show()`), and a `>>>` prompt
   that runs in the program's globals after it finishes (last expression is
   shown, top-level `await` works).
+- **Tracebacks** (D45), built for small screens and without Pyodide's
+  frames:
+  - Frames are rows (function, `file:line`). The innermost frame of your
+    own code is open: its source, the failing line tinted and the failing
+    span marked.
+  - Library frames fold into one row, and recursion shows one frame with
+    a count.
+  - The exception and its message come last, in the regular font.
+    Earlier exceptions of a chain are folded.
+  - Tap `file:line` to open the line. A frame's menu has Show in Editor,
+    Copy Line and Inspect Here (the debugger at that frame).
+  - Notebook error outputs look the same, and their cell frames jump to
+    the cell. Tracebacks a program prints itself stay text, with links.
 - **Notebooks** (D44): Jupyter notebooks (`.ipynb`) and `.py` files with
   `# %%` cells.
   - A `.ipynb` shows as cells, with a toolbar (Run All, Restart, Clear,
@@ -304,9 +316,10 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 
 ## Status (2026-10-15)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 68
-checks in the iPhone 18 Pro Max simulator, including the five notebook
-checks (D44) (2026-10-15). Before that, it passed all 62
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 69
+checks in the iPhone 18 Pro Max simulator, including `traceback_data`
+(D45) (2026-10-15). Before that, it passed all 68 there, including the
+five notebook checks (D44) (2026-10-15). Before that, it passed all 62
 checks in the iPhone 18 Pro simulator, including `app_docs` and
 `device_example_apps` (D42) (2026-10-15). Before that, 59 passed in the
 iPhone 18 Pro and iPad Pro 13" simulators, including the

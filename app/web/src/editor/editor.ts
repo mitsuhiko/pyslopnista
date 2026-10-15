@@ -198,6 +198,8 @@ export class PaneEditor {
     stop: () => void editorEvent("stop"),
     restart: () => void editorEvent("restartKernel", { path: this.path }),
     openURL: (url) => void editorEvent("openURL", { url }),
+    openLocation: (file, line) => void editorEvent("openLocation", { path: this.path, file, line }),
+    reveal: (line) => this.reveal(line),
   };
 
   constructor(parent: HTMLElement, problemBar: HTMLElement) {

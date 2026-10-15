@@ -55,6 +55,11 @@ extension AppModel {
             restartKernel(value["path"] as? String)
         case "openURL":
             if let url = value["url"] as? String { Task { _ = await device.openURL(url) } }
+        case "openLocation":
+            // A project file in a cell's traceback (D45), relative to the notebook's folder.
+            guard let path = value["path"] as? String, let file = value["file"] as? String,
+                  let target = ConsoleLinks.resolve(file, dir: dirname(path)) else { return }
+            Task { await openLocation(target, line: value["line"] as? Int) }
         case "notebookError":
             showToast("Showing the file's JSON: \(value["message"] as? String ?? "it is no notebook")")
         default:

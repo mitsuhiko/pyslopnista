@@ -161,22 +161,32 @@ except Exception:
 
 # -- console ------------------------------------------------------------------------
 
+_console_inputs = 0
+
+
 async def repl(source):
     """Run source in __main__: show the value of a final expression like the REPL."""
     import __main__
+    import linecache
 
+    global _console_inputs
     namespace = __main__.__dict__
-    tree = ast.parse(source, "<console>", "exec")
+    # Each input has a name of its own, with its source in linecache, so
+    # tracebacks show the lines (D45), also of functions defined earlier.
+    _console_inputs += 1
+    filename = f"<console-{_console_inputs}>"
+    linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
+    tree = ast.parse(source, filename, "exec")
     last_expr = None
     if tree.body and isinstance(tree.body[-1], ast.Expr):
         last_expr = ast.Expression(tree.body.pop().value)
     flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT
     if tree.body:
-        result = eval(compile(tree, "<console>", "exec", flags=flags), namespace)
+        result = eval(compile(tree, filename, "exec", flags=flags), namespace)
         if hasattr(result, "__await__"):
             await result
     if last_expr is not None:
-        value = eval(compile(last_expr, "<console>", "eval", flags=flags), namespace)
+        value = eval(compile(last_expr, filename, "eval", flags=flags), namespace)
         if hasattr(value, "__await__") and type(value).__name__ == "coroutine":
             value = await value
         if value is not None:

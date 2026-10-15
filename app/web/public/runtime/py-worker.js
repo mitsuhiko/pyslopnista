@@ -279,7 +279,7 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   runPlumbing([
     "import sys",
     "sys.path.append('/lib/pyslop')",
-    "import _pyslop, _pyslop_debug, _pyslop_notebook",
+    "import _pyslop, _pyslop_debug, _pyslop_notebook, _pyslop_traceback",
     interruptInts ? "import host\n_pyslop_debug.install(host.sleep)\ndel host" : "_pyslop_debug.install()",
   ].join("\n"));
   postMessage({
@@ -341,6 +341,7 @@ function cellPython(code) {
 async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, breakpoints }) {
   const t0 = performance.now();
   try {
+    runPlumbing("_pyslop_traceback.mark()");
     if (token && cwd) {
       mount(token, cwd);
       startFlushing();
@@ -400,7 +401,16 @@ async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, br
   } catch (e) {
     finishTurtle();
     flushFiles();
-    postMessage({ type: "done", ok: false, error: String(e.message ?? e), ms: performance.now() - t0 });
+    postMessage({ type: "done", ok: false, error: String(e.message ?? e), trace: lastTrace(), ms: performance.now() - t0 });
+  }
+}
+
+/** The run's uncaught exception as data (D45): JSON, or undefined. */
+function lastTrace() {
+  try {
+    return py.runPython("_pyslop_traceback.last_json()", { globals: plumbing }) || undefined;
+  } catch {
+    return undefined; // the interpreter is gone (a crash)
   }
 }
 

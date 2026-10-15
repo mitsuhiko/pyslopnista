@@ -12,6 +12,7 @@ import { base64ToBytes, bytesToBase64 } from "../host";
 import { PyWorker } from "../python";
 import { chooseFor, runtimeFor } from "../runtimes";
 import { cleanTraceback } from "../session";
+import { parseTrace } from "../trace";
 import type { ProjectEnv } from "./env";
 
 const PROJECT_ROOT = "/home/pyodide/project";
@@ -214,6 +215,15 @@ const runPythonTool = defineTool({
       if (output.length > MAX_OUTPUT * 2) output = output.slice(-MAX_OUTPUT);
       api.output(chunk);
     };
+    // Exceptions the runtime caught (a turtle event handler) come as data (D45): their text.
+    worker.onDisplay = (json) => {
+      try {
+        const msg = JSON.parse(json);
+        if (msg.type === "exception" && typeof msg.trace?.text === "string") worker.onOutput("stderr", `${msg.trace.text}\n`);
+      } catch {
+        // not for the agent
+      }
+    };
     worker.onInput = async () => {
       note ||= "input() was called; the agent's runs have no input, so it got end-of-file.\n";
       return null;
@@ -248,7 +258,7 @@ const runPythonTool = defineTool({
       if (report && !report.endsWith("\n")) report += "\n";
       report += note;
       if (timedOut) report += `Stopped after ${timeout} s.\n`;
-      else if (!result.ok && result.error) report += cleanTraceback(result.error) + "\n";
+      else if (!result.ok && result.error) report += (parseTrace(result.trace)?.text ?? cleanTraceback(result.error)) + "\n";
       if (written.length) report += `Files written: ${written.map((p) => p.slice(1)).join(", ")}\n`;
       report += result.ok ? `Finished in ${Math.round(result.ms)} ms` : timedOut ? "" : "The program failed";
       report += ` (Python ${runtimeFor(choice.python).version}).`;

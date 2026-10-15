@@ -6,6 +6,7 @@ import { analysis } from "./analysis/client";
 import { base64ToBytes, call, fs, locations } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import { session } from "./session";
+import type { Trace } from "./trace";
 import { turtleScenes } from "./turtle";
 import navigationExample from "../../../uikit/examples/Navigation.py?raw";
 
@@ -67,6 +68,7 @@ const app = {
   showPane: (pane: string) => appCall("showPane", pane),
   wide: () => appCall<boolean>("wide"),
   tapTraceback: (text: string) => appCall<number>("tapTraceback", text),
+  tapTraceFrame: (name: string) => appCall<string | null>("tapTraceFrame", name),
   focusField: (field: "console" | "input") => appCall("focusField", field),
   fieldValue: (field: "console" | "input") => appCall<string>("fieldValue", field),
   submitField: (field: "console" | "input") => appCall("submitField", field),
@@ -74,6 +76,7 @@ const app = {
   clearField: (field: "console" | "input") => appCall("clearField", field),
 };
 
+const lastTrace = (): Trace | undefined => session.getSnapshot().lines.findLast((l) => l.trace)?.trace;
 const consoleText = () => session.getSnapshot().lines.filter((l) => l.kind !== "image" && l.kind !== "turtle").map((l) => l.text).join("");
 const idle = () => session.getSnapshot().status === "idle";
 
@@ -147,6 +150,73 @@ export async function selftest() {
     const out = consoleText();
     if (!out.includes("ZeroDivisionError") || !out.includes('File "boom.py", line 2')) throw new Error(out);
     if (out.includes("_pyodide")) throw new Error("pyodide frames not removed");
+    // As data too (D45): the frames, their spans and source, the debugger's index.
+    const trace = lastTrace();
+    const exc = trace?.exceptions.at(-1);
+    const [outer, inner] = exc?.frames ?? [];
+    const ok = trace?.exceptions.length === 1 && exc!.type === "ZeroDivisionError" && exc!.message === "division by zero" &&
+      exc!.frames.length === 2 && outer.name === "<module>" && outer.file === "boom.py" && outer.line === 4 && outer.col === 0 && outer.endCol === 3 &&
+      inner.name === "f" && inner.line === 2 && inner.kind === "app" && inner.col === 11 && inner.endCol === 16 &&
+      inner.context?.start === 1 && inner.context.lines[1] === "    return 1 / 0" && inner.debug === 0 && outer.debug === 1;
+    if (!ok) throw new Error(JSON.stringify(trace));
+  });
+
+  await step("traceback_data", async () => {
+    // A chain with a library frame, recursion, a SyntaxError, a ui-style report: each as data.
+    const cases: [string, string, (t: Trace) => unknown][] = [
+      ["Tests/tb_chain.py", "import json\n\ndef load(s):\n    try:\n        return json.loads(s)\n    except ValueError as e:\n        raise RuntimeError('bad config') from e\n\nload('{x')\n", (t) => {
+        const [first, second] = t.exceptions;
+        return t.exceptions.length === 2 && first.type === "json.decoder.JSONDecodeError" && second.chain === "cause" && second.type === "RuntimeError" &&
+          first.frames.some((f) => f.kind === "library" && f.file?.startsWith("json/")) && first.frames[0].kind === "app" && first.frames[0].name === "load" &&
+          t.text.includes("The above exception was the direct cause");
+      }],
+      ["Tests/tb_rec.py", "def r(n):\n    return r(n + 1)\n\nr(0)\n", (t) => {
+        const f = t.exceptions[0].frames;
+        return t.exceptions[0].type === "RecursionError" && f.length === 2 && (f[1].repeat ?? 0) > 100;
+      }],
+      ["Tests/tb_syntax.py", "x = 1\nif x = 2:\n    pass\n", (t) => {
+        const e = t.exceptions[0];
+        return e.type === "SyntaxError" && e.syntax?.line === 2 && e.syntax.file === "tb_syntax.py" && e.syntax.context?.lines.includes("if x = 2:") && e.syntax.col !== undefined;
+      }],
+      ["Tests/tb_name.py", "count = 1\nprint(conut)\n", (t) => {
+        const e = t.exceptions[0];
+        return e.type === "NameError" && e.message.includes("Did you mean: 'count'?") && e.frames[0].col === 6 && e.frames[0].endCol === 11;
+      }],
+    ];
+    const got: Record<string, unknown> = {};
+    for (const [path, code, check] of cases) {
+      await fs.writeText(path, code);
+      const { done } = await runFile(path);
+      await done;
+      await until(idle);
+      const trace = lastTrace();
+      if (!trace || !check(trace)) throw new Error(`${path}: ${JSON.stringify(trace ?? consoleText()).slice(0, 1500)}`);
+      got[path] = trace.exceptions.map((e) => `${e.type}:${e.frames.length}`).join(" ");
+    }
+    // Console input: each input's source is there, a function from an earlier one too.
+    await session.runConsole("def g(x):\n    return x[3]");
+    await until(idle);
+    await session.runConsole("g([1])");
+    await until(() => idle() && lastTrace()?.exceptions[0]?.type === "IndexError");
+    const frames = lastTrace()!.exceptions[0].frames;
+    if (frames.length !== 2 || !/^<console-\d+>$/.test(frames[1].file ?? "") || frames[1].file === frames[0].file ||
+        frames[1].context?.lines[1] !== "    return x[3]" || frames[0].context?.lines[0] !== "g([1])" || frames[1].kind !== "app") {
+      throw new Error(`console: ${JSON.stringify(frames)}`);
+    }
+    // An exception the runtime catches and shows (a ui callback, a turtle event handler) comes as data too.
+    await fs.writeText("Tests/tb_report.py", "import _pyslop_traceback\n\ndef handler():\n    {}['missing']\n\ntry:\n    handler()\nexcept Exception as e:\n    _pyslop_traceback.report(e)\nprint('still running')\n");
+    const { done } = await runFile("Tests/tb_report.py");
+    await done;
+    await until(idle);
+    const reported = lastTrace();
+    const lines = session.getSnapshot().lines;
+    const at = lines.findIndex((l) => l.trace);
+    const after = lines.findIndex((l) => l.text.includes("still running"));
+    if (reported?.exceptions[0]?.type !== "KeyError" || reported.exceptions[0].frames.at(-1)?.name !== "handler" || at < 0 || after < at) {
+      throw new Error(JSON.stringify({ reported, lines }).slice(0, 1500));
+    }
+    if (session.getSnapshot().runs[lines[at].runId]?.status !== "ok") throw new Error("a reported exception failed the run");
+    return got;
   });
 
   await step("console_repl", async () => {
@@ -1026,6 +1096,15 @@ export async function selftest() {
     if (!d.postMortem || !d.exception?.startsWith("ZeroDivisionError") || d.frames[0].name !== "average") throw new Error(JSON.stringify(d));
     const xs = d.scopes[0].variables.find((v) => v.name === "xs")?.value;
     session.resume("continue");
+    await until(() => !session.getSnapshot().debug && idle() && session.canInspect);
+    // "Inspect Here" on the traceback's outer frame (D45): the debugger starts there.
+    const outer = lastTrace()?.exceptions.at(-1)?.frames.find((f) => f.name === "<module>");
+    if (outer?.debug !== 1) throw new Error(JSON.stringify(lastTrace()));
+    void session.inspectError(outer.debug);
+    const here = await until(stopped());
+    const selected = here.frames[here.selected];
+    if (here.selected !== 1 || selected.name !== "<module>" || selected.line !== 5) throw new Error(JSON.stringify(here));
+    session.resume("continue");
     await until(() => !session.getSnapshot().debug && idle());
     return { xs };
   });
@@ -1054,6 +1133,11 @@ export async function selftest() {
     await until(idle);
     const links = await app.tapTraceback('File "helper.py", line 3');
     if (!links) throw new Error("no link");
+    await until(async () => { const i = await editorInfo(); return i.path === "Tests/nav/helper.py" && i.line === 3; });
+    // The same from the traceback as data (D45): the frame's place.
+    await app.openFile("Tests/nav/main.py");
+    const target = await app.tapTraceFrame("average");
+    if (target !== "Tests/nav/helper.py") throw new Error(`frame opened ${target}`);
     await until(async () => { const i = await editorInfo(); return i.path === "Tests/nav/helper.py" && i.line === 3; });
     return { links };
   });
@@ -1187,6 +1271,14 @@ export async function selftest() {
     expect(c2.outputs.some((o: any) => o.name === "stdout" && o.text === "hi\n") && c2.outputs.some((o: any) => o.name === "stderr" && o.text.includes("oops")), "streams", c2);
     expect(c3.outputs[0]?.mimes?.includes("text/html") && c3.outputs.some((o: any) => o.type === "stream" && o.text.includes("Wall time")) && c3.outputs.some((o: any) => o.type === "execute_result" && o.text === "45"), "display, %time", c3);
     expect(c4.outputs[0]?.type === "error" && c4.outputs[0].ename === "ZeroDivisionError", "error", c4);
+    // The error as data, drawn with its source (D45); its frame's place is the cell.
+    expect(c4.outputs[0].trace?.length === 1 && c4.outputs[0].trace[0] === `ZeroDivisionError: <cell ${c4.count}>:1`, "error as data", c4);
+    const drawn = await until(async () => (await editorCall<any[]>("traceProbe")).find((t) => t.type === "ZeroDivisionError"), 5000);
+    expect(drawn.message === "division by zero" && drawn.frames === 1 && drawn.open[0] === "module level" && drawn.span === "1/0" && drawn.links === 1, "drawn traceback", drawn);
+    await editorCall("traceTap", 0);
+    await until(async () => (await editorInfo()).lineText === "1/0", 3000).catch(async () => {
+      throw new Error(`tap on the frame: ${JSON.stringify(await editorInfo())}`);
+    });
     expect(c5.count === null && !c5.outputs.length, "Run All stops at an error", c5);
     expect(info.kernel === "idle" && /^3\./.test(info.python ?? ""), "kernel", info);
     // The outputs are in the file, as Jupyter writes them.

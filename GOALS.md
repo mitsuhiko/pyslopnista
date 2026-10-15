@@ -49,7 +49,7 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 
 - [core] Interactive REPL with history and completion
 - [core] Script output streamed as it happens, with stdout and stderr shown apart
-- [core] Clickable tracebacks that jump to the line
+- [core] Clickable tracebacks that jump to the line, drawn as expandable frames with source and the failing span (D45)
 - [core] Rich output: images, plots and HTML shown inline
 - [later] Variable inspector
 - [later] Step-through debugger

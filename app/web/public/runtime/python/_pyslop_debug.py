@@ -208,7 +208,7 @@ class Debugger(bdb.Bdb):
             frame = frame.f_back
         return stack
 
-    def interact(self, frame, reason, stack=None, exception=None):
+    def interact(self, frame, reason, stack=None, exception=None, selected=0):
         self.stack = stack if stack is not None else self._live_stack(frame)
         if not self.stack:
             return self.set_continue()
@@ -223,7 +223,8 @@ class Debugger(bdb.Bdb):
                 "postMortem": stack is not None,
                 "exception": exception,
                 "frames": [self._describe_frame(f, line) for f, line in self.stack],
-                "scopes": self._scopes(0),
+                "selected": selected,
+                "scopes": self._scopes(selected),
             }
             while True:
                 command = _call_page(message)
@@ -419,8 +420,9 @@ def _install_sleep(host_sleep):
     time.sleep = pyodide.webloop._orig_sleep = sleep
 
 
-def post_mortem():
-    """Inspect the frames of the last uncaught exception (the console's "Inspect")."""
+def post_mortem(selected=0):
+    """Inspect the frames of the last uncaught exception (the console's "Inspect"),
+    at frame ``selected`` (innermost first; a traceback frame's "debug" index, D45)."""
     exc = getattr(sys, "last_exc", None)
     if exc is None:
         return
@@ -430,4 +432,5 @@ def post_mortem():
         _pyslophost.status("The error did not happen in your code, so there is nothing to inspect.")
         return
     summary = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-    debugger.interact(stack[0][0], "exception", stack=stack, exception=summary)
+    selected = selected if 0 <= selected < len(stack) else 0
+    debugger.interact(stack[0][0], "exception", stack=stack, exception=summary, selected=selected)

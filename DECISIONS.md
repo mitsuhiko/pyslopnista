@@ -1446,6 +1446,92 @@ template. All 68 checks pass in the iPhone 18 Pro Max simulator
 `.py` with cells were checked in the simulator. Not tried on a device or
 an iPad.
 
+## D45: Tracebacks are data, drawn as frames for small screens
+
+2026-10-15 - Accepted
+
+A traceback was text: the worker posted the error message and
+`cleanTraceback` removed Pyodide's frames with a regex. In a phone's
+console, wrapped monospace text was hard to read. The exception still
+exists when the run fails, because Pyodide keeps it in `sys.last_exc`. So
+`_pyslop_traceback.py` describes it once, in Python, and the console and
+notebooks draw that description.
+
+**The data.** `describe(exc)` returns:
+- the classic text (still used to copy, by the agent and by the
+  self-test);
+- the chain, oldest first, as Python prints it, with "cause" or
+  "context" between exceptions;
+- for each exception: its type (module-qualified, as Python shows it),
+  its message with "Did you mean" and its notes;
+- its frames, most recent call last. Each frame has the qualified
+  function name, the file and line, the span in characters (the
+  traceback's UTF-8 byte columns converted), and source lines around it,
+  dedented so they fit a phone. App frames get three lines either side;
+  library frames get only their own line.
+
+Python's rules decide which frames are whose. The runtime's own frames
+(Pyodide's, `/lib/pyslop`) are dropped, in the text too. Frames in the
+project, the console and cells are "app". The standard library and
+installed packages are "library", named by module path (`json/decoder.py`).
+Repeated frames (recursion) fold into one frame with a count. Very long
+stacks keep their first 20 and last 40 frames. A SyntaxError gets its
+place with a span, ExceptionGroup members are nested chains, and frames
+of the run's uncaught exception carry their index in the post-mortem
+debugger's stack.
+
+That replaces the separate filters in the worker, the notebook kernel,
+`ui.py` and turtle:
+- The worker sends the description of `sys.last_exc` with a failed run's
+  `done` message. `mark()` before a run keeps an earlier run's exception
+  out.
+- Exceptions the runtime catches and shows (a ui callback, a turtle event
+  handler) go through `report()` as an "exception" display message, as
+  data, without failing the run or the cell.
+- Each console input now compiles as `<console-n>` and goes into
+  `linecache`, so its frames show their source, including a function
+  defined in an earlier input.
+- A console line keeps its classic text and gets an optional `trace`.
+  Such a line never merges with other output.
+- Printed tracebacks (`traceback.print_exc()`, logging) stay text with
+  links to their files.
+
+**The view.** The console (`TracebackView.swift`) and notebook error
+outputs (`editor/trace.ts`, the same design in HTML) draw an exception as:
+- its frames as rows (function name, then `file:line`, which opens the
+  line), with the innermost app frame open. An open frame shows its
+  source with line numbers. The failing lines are tinted and the span is
+  marked. Long lines scroll sideways, starting at the span when it is far
+  to the right.
+- consecutive library frames folded into one row ("3 library frames").
+- the exception at the bottom, where Python puts it and where the console
+  is scrolled to: the type in red, then the message in the regular font.
+- earlier exceptions of a chain folded to one line, followed by Python's
+  sentence for how they connect.
+
+A frame's menu has Show in Editor, Copy Line and, for the run's uncaught
+exception, **Inspect Here**: the post-mortem debugger opens at that frame
+(`post_mortem(selected)`). In a notebook, `<cell n>` frames jump to that
+line of the cell with that count. Project files open in the editor.
+`.ipynb` files never get the data: nbformat's `traceback` stays text.
+
+Not done: syntax highlighting of the source lines, local variables in
+frames, and parsing printed tracebacks.
+
+Evidence: the self-test's `traceback` check covers the frames, spans,
+source and debugger indices. `traceback_data` covers a chain through
+`json` (library frames, "cause"), recursion folded with a count, a
+SyntaxError's place, "Did you mean", a function from an earlier console
+input, and a reported exception that doesn't fail its run. `debugger_inspect_error` covers Inspect Here on the
+outer frame, `traceback_link` opens a frame's file through the native
+view's code path, and `notebook_run_all` checks the drawn error (its
+span, the open frame) and that a tap jumps to the cell's line. All 69
+checks pass in the iPhone 18 Pro Max simulator (2026-10-15). Screenshots
+of the console were checked in light and dark mode: a library error, a
+chain, and a span on a long line scrolled into view. The notebook view was
+checked in Chrome. The data was also checked with Python 3.14 and 3.15
+in Pyodide under Node. Not tried on a device or an iPad.
+
 ## Proposed (not yet decided)
 
 (none)
