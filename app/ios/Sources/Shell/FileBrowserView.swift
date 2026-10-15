@@ -89,31 +89,33 @@ struct FileBrowserView: View {
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic))
         .navigationTitle(displayName(dir))
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu {
-                    Section {
-                        Button { ask(.newFile) } label: { Label("New File", systemImage: "doc.badge.plus") }
-                        Button { ask(.newFolder) } label: { Label("New Folder", systemImage: "folder.badge.plus") }
-                        Button { importing = true } label: { Label("Open Folder…", systemImage: "folder") }
-                    }
-                    Section {
-                        Picker("Sort", selection: $sort) {
-                            Label("Name", systemImage: "textformat").tag("name")
-                            Label("Date", systemImage: "calendar").tag("date")
+            ToolbarItem(placement: .topBarTrailing) {
+                TightButtons {
+                    Menu {
+                        Section {
+                            Button { ask(.newFile) } label: { Label("New File", systemImage: "doc.badge.plus") }
+                            Button { ask(.newFolder) } label: { Label("New Folder", systemImage: "folder.badge.plus") }
+                            Button { importing = true } label: { Label("Open Folder…", systemImage: "folder") }
                         }
+                        Section {
+                            Picker("Sort", selection: $sort) {
+                                Label("Name", systemImage: "textformat").tag("name")
+                                Label("Date", systemImage: "calendar").tag("date")
+                            }
+                        }
+                        Section {
+                            Button { model.activeSheet = .find } label: { Label("Find in \(displayName(dir))…", systemImage: "magnifyingglass") }
+                            Button { model.showDocs() } label: { Label("Python Docs", systemImage: "book") }
+                            Button { model.activeSheet = .settings } label: { Label("Settings…", systemImage: "gearshape") }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
                     }
-                    Section {
-                        Button { model.activeSheet = .find } label: { Label("Find in \(displayName(dir))…", systemImage: "magnifyingglass") }
-                        Button { model.showDocs() } label: { Label("Python Docs", systemImage: "book") }
-                        Button { model.activeSheet = .settings } label: { Label("Settings…", systemImage: "gearshape") }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
+                    .accessibilityLabel("More")
+                    AgentButton(project: projectRoot(dir))
+                    Button { ask(.newFile) } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel("New file")
                 }
-                .accessibilityLabel("More")
-                AgentButton(project: projectRoot(dir))
-                Button { ask(.newFile) } label: { Image(systemName: "square.and.pencil") }
-                    .accessibilityLabel("New file")
             }
         }
         .task(id: "\(dir)#\(model.fileListVersion)") { await load() }

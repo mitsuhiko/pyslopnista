@@ -259,12 +259,11 @@ private struct EditorChrome: ViewModifier {
                     // One item with the buttons close together: a group spaces
                     // them wider than the title can afford on iPhone.
                     ToolbarItem(placement: .topBarTrailing) {
-                        HStack(spacing: 0) {
-                            AgentButton().frame(width: 40, height: 36)
-                            menu(file, external: external).frame(width: 40, height: 36)
-                            RunButton().frame(width: 40, height: 36)
+                        TightButtons {
+                            AgentButton()
+                            menu(file, external: external)
+                            RunButton()
                         }
-                        .padding(.horizontal, 2)
                     }
                 }
             }
@@ -438,6 +437,19 @@ private struct EditorChrome: ViewModifier {
         }
         .accessibilityLabel("More")
         .disabled(file == nil)
+    }
+}
+
+/// Toolbar buttons close together in one glass group, as one toolbar item:
+/// a ToolbarItemGroup spaces them wider than an iPhone's bar can afford.
+struct TightButtons<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(subviews: content) { $0.frame(width: 40, height: 36) }
+        }
+        .padding(.horizontal, 2)
     }
 }
 
