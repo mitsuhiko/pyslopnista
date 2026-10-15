@@ -54,11 +54,14 @@ WebAssembly) and has a coding agent built in.
 ## Building
 
 ```sh
-cd app
-./run.sh              # build and launch in the booted simulator
-./run.sh --selftest   # end-to-end checks in the simulator
-./run.sh --device     # on a paired, unlocked iPhone
+make iphone-sim       # build and launch in an iPhone simulator (IPHONE="iPhone 17" picks one)
+make ipad-sim         # the same in an iPad simulator (IPAD="iPad mini (A17 Pro)")
+make device           # on a paired, unlocked iPhone
+make selftest         # end-to-end checks in the iPhone simulator
 ```
+
+The targets run `app/run.sh`, which also takes these as flags
+(`--device`, `--selftest`, `--reset`).
 
 You need Xcode 27, Node, [uv](https://docs.astral.sh/uv/), and Rust with
 `wasm-pack` (ty has no published WebAssembly build). More is in

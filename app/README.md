@@ -257,6 +257,10 @@ app/
 
 ## Running
 
+From the repository root, `make iphone-sim`, `make ipad-sim`, `make device`
+and `make selftest` pick (and boot) a simulator with `scripts/simulator.sh`
+and call `run.sh`:
+
 ```sh
 ./run.sh                                  # booted simulator
 ./run.sh --selftest                       # end-to-end checks in the simulator (JSON)
