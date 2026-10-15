@@ -17,7 +17,7 @@ struct DocsTarget: Equatable {
 final class DocsBrowser: NSObject, WKNavigationDelegate {
     @ObservationIgnored let webView: WKWebView
     private(set) var version: String
-    private(set) var title = "Python Documentation"
+    private(set) var title = "Python Docs"
     private(set) var canGoBack = false
     private(set) var canGoForward = false
     /// The page shown (for the self-test): "library/json.html#json.loads".

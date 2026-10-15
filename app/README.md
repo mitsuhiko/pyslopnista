@@ -55,6 +55,8 @@ apps are native views (D30).
   Python Program" action in the Shortcuts app and add it to the Home
   Screen; tapping it opens the app and runs the program (a ui app full
   screen). `pyslopnista://run?path=<path>` links do the same.
+- **Title bar** (iPhone): the file name without ".py", cut in the middle
+  when long; Run sits in one group with the agent and ⋯ buttons.
 - **Tabs and split view**:
   - Every pane has tabs; opening a file adds a tab after the current one, up
     to 10 per pane (the least recently used one closes).
@@ -84,7 +86,7 @@ apps are native views (D30).
   | Go to symbol | ⌘⇧O |
   | Find in folder | ⌘⇧F |
   | Settings | ⌘, |
-  | Python documentation | ⌘⇧0 |
+  | Python Docs | ⌘⇧0 |
   | Close tab | ⌘W |
   | Split view | ⌘\ |
   | Previous / next tab | ⌘⇧[ / ⌘⇧] |

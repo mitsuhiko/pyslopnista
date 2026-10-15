@@ -244,17 +244,28 @@ private struct EditorChrome: ViewModifier {
         content
             .toolbar {
                 ToolbarItem(placement: .principal) { title(file) }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if model.wide, let debug {
-                        DebugBar(debug: debug)
-                    }
-                    if model.wide {
+                if model.wide {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if let debug {
+                            DebugBar(debug: debug)
+                        }
                         Button { withAnimation { model.consoleDocked.toggle() } } label: { Image(systemName: "terminal") }
                             .accessibilityLabel("Toggle console")
+                        AgentButton()
+                        menu(file, external: external)
+                        RunButton()
                     }
-                    AgentButton()
-                    menu(file, external: external)
-                    RunButton()
+                } else {
+                    // One item with the buttons close together: a group spaces
+                    // them wider than the title can afford on iPhone.
+                    ToolbarItem(placement: .topBarTrailing) {
+                        HStack(spacing: 0) {
+                            AgentButton().frame(width: 40, height: 36)
+                            menu(file, external: external).frame(width: 40, height: 36)
+                            RunButton().frame(width: 40, height: 36)
+                        }
+                        .padding(.horizontal, 2)
+                    }
                 }
             }
             .alert("Rename “\(file.map(basename) ?? "")”", isPresented: $renaming) {
@@ -273,15 +284,21 @@ private struct EditorChrome: ViewModifier {
             }
     }
 
-    /// Room for the title on iPhone: between the back button and the buttons
-    /// on the right (about 250 pt together).
+    /// Room for the title on iPhone: between the back button and the group of
+    /// buttons on the right (about 228 pt together).
     private var titleWidth: CGFloat {
-        model.wide ? min(420, model.windowWidth * 0.4) : max(90, model.windowWidth - 250)
+        model.wide ? min(420, model.windowWidth * 0.4) : max(90, model.windowWidth - 228)
     }
 
     /// The file name, cut in the middle when it doesn't fit. Toolbar buttons
     /// keep their label's ideal size (it would run under the other buttons),
     /// so the text gets an exact width: its own, or what is left.
+    /// The title leaves out ".py": nearly every file is one, and the room is short.
+    private func titleLabel(_ path: String) -> String {
+        let name = tabLabel(path)
+        return name.hasSuffix(".py") && name.count > 3 ? String(name.dropLast(3)) : name
+    }
+
     private func fileName(_ name: String) -> some View {
         let natural = ceil((name as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .headline)]).width)
         return Text(name).font(.headline).lineLimit(1).truncationMode(.middle)
@@ -293,7 +310,7 @@ private struct EditorChrome: ViewModifier {
             if let file {
                 Button { model.activeSheet = .jump("") } label: {
                     HStack(spacing: 3) {
-                        fileName(tabLabel(file))
+                        fileName(titleLabel(file))
                         Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
                     }
                 }
@@ -358,7 +375,7 @@ private struct EditorChrome: ViewModifier {
                     .disabled(external)
                 Button { Task { _ = await model.showInfo() } } label: { Label("Show Info", systemImage: "info.circle") }
                     .disabled(external)
-                Button { model.showDocs() } label: { Label("Python Documentation", systemImage: "book") }
+                Button { model.showDocs() } label: { Label("Python Docs", systemImage: "book") }
             }
             Section {
                 Button { Task { _ = await model.editorCall(model.focused, "command", ["search"]) } } label: { Label("Find", systemImage: "magnifyingglass") }
@@ -440,7 +457,9 @@ struct AgentButton: View {
     }
 }
 
-/// Run, Stop or Continue.
+/// Run, Stop or Continue. On iPad a prominent button of its own; on iPhone
+/// it sits in the same group as the agent and ⋯ buttons (a colored symbol),
+/// which leaves the file name more room.
 struct RunButton: View {
     @Environment(AppModel.self) private var model
 
@@ -448,20 +467,29 @@ struct RunButton: View {
         let s = model.session
         let file = model.file
         if let debug = s.debug, !debug.postMortem {
-            Button { model.resume("continue") } label: { Image(systemName: "play.fill") }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
+            styled(Button { model.resume("continue") } label: { symbol("play.fill", .green) }, .green)
                 .accessibilityLabel("Continue")
         } else if (s.running && s.runningFile == file) || (s.running && file == nil) {
-            Button { model.stop() } label: { Image(systemName: "stop.fill") }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+            styled(Button { model.stop() } label: { symbol("stop.fill", .red) }, .red)
                 .accessibilityLabel("Stop")
         } else {
-            Button { Task { await model.run() } } label: { Image(systemName: "play.fill") }
-                .buttonStyle(.borderedProminent)
-                .disabled(file == nil || s.running || file.map(isExternal) == true)
+            let disabled = file == nil || s.running || file.map(isExternal) == true
+            styled(Button { Task { await model.run() } } label: { symbol("play.fill", disabled ? .secondary : .accentColor) }, .accentColor)
+                .disabled(disabled)
                 .accessibilityLabel("Run")
+        }
+    }
+
+    private func symbol(_ name: String, _ color: Color) -> some View {
+        Image(systemName: name).foregroundStyle(model.wide ? AnyShapeStyle(.white) : AnyShapeStyle(color))
+    }
+
+    @ViewBuilder
+    private func styled(_ button: some View, _ tint: Color) -> some View {
+        if model.wide {
+            button.buttonStyle(.borderedProminent).tint(tint)
+        } else {
+            button
         }
     }
 }
