@@ -26,6 +26,7 @@ struct RootView: View {
             }
             if model.ui.visible {
                 UIAppRoot(store: model.ui.store)
+                    .overlay { if model.ui.restarting { ProgressView().controlSize(.large) } }
                     .transition(.move(edge: .bottom))
                     .zIndex(1)
             }

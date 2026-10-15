@@ -169,7 +169,7 @@ extension AppModel {
 
             """),
         FileTemplate(id: "ui", title: "App", subtitle: "A native app with the ui module", icon: "iphone", fileExtension: "py", content: """
-            # A small app: tap Done to close it.
+            # A small app: tap × to close it.
             import ui
 
 

@@ -154,7 +154,8 @@ apps are native views (D30).
   running until Stop (or `bye()`), even without `done()`. Examples:
   `Turtle.py`, `Catch the Turtle.py`.
 - **UI apps**: programs using `import ui` open full screen as native SwiftUI
-  views (D30); "Done" ends the program. The module is Solid-style (D26): components run once, and
+  views (D30); the × button ends the program, touch and hold restarts it,
+  and `ui.run(close_button=False)` with `ui.close()` lets an app own its exit (D43). The module is Solid-style (D26): components run once, and
   signals and lambdas update exactly what changed. It includes navigation,
   tabs, sheets, dialogs, lists, all common inputs and a canvas (see
   `uikit/README.md`). Files the app writes while it runs (e.g. saved data)

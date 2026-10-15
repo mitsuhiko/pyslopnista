@@ -9,6 +9,8 @@ final class UIHost {
     let store = UIStore()
     /// The app view is on screen (hidden while the debugger is paused).
     private(set) var visible = false
+    /// The app's program is being run again (Restart): the view shows a spinner.
+    var restarting = false
 
     func show() {
         store.reset()

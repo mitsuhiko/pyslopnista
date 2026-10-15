@@ -1,4 +1,5 @@
-# A small app with buttons. Tap Done to close it.
+# A small app with buttons. Tap × to close it, or touch and hold × to
+# restart it.
 #
 # Components run once. `count` is a signal: the lambdas that read it are
 # what update on screen when it changes.

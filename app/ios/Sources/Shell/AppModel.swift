@@ -199,6 +199,8 @@ final class AppModel {
     @ObservationIgnored private var rootDir: String?
     @ObservationIgnored private var lastStop: (Int, Int)?
     @ObservationIgnored private var lastRunCounter = 0
+    /// The run a ui app's Restart ends: the app view stays up until the new run shows its UI or ends.
+    @ObservationIgnored private var restartingRun: Int?
     @ObservationIgnored private var lastTurtleLine = 0
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var restored = false
@@ -259,6 +261,7 @@ final class AppModel {
         ui.store.close = { [weak self] in
             Task { _ = try? await self?.engine.call("closeUI", [:]) }
         }
+        ui.store.restart = { [weak self] in self?.restartUIApp() }
         Task { await self.restoreTabs(fragment: fragment) }
         purgeTrash()
     }
@@ -452,8 +455,13 @@ final class AppModel {
 
     private func sessionChanged() {
         let debug = session.debug
-        // UI apps are on screen while they run, except while the debugger is paused.
-        let showUI = session.uiOpen && debug == nil
+        // A restarted ui app is done restarting once its new run shows its UI or ends.
+        if let run = restartingRun, session.runCounter != run, session.uiOpen || !session.running {
+            restartingRun = nil
+            ui.restarting = false
+        }
+        // UI apps are on screen while they run (or restart), except while the debugger is paused.
+        let showUI = (session.uiOpen || restartingRun != nil) && debug == nil
         if showUI != ui.visible {
             if showUI { ui.show() } else { ui.hide() }
         }
@@ -914,6 +922,34 @@ final class AppModel {
     func stop() {
         haptic()
         Task { _ = await command("stop") }
+    }
+
+    /// Runs the ui app's program again, like Run (the close button's menu).
+    /// The app view stays up, with a spinner, until the new run shows its UI;
+    /// a run that ends without one brings the editor back.
+    func restartUIApp() {
+        guard restartingRun == nil, let path = session.runningFile else { return }
+        haptic()
+        let previous = session.runCounter
+        restartingRun = previous
+        ui.restarting = true
+        Task {
+            await command("closeUI")
+            for _ in 0..<40 where session.running || session.uiOpen { try? await Task.sleep(for: .milliseconds(50)) }
+            if (try? await host.onFileQueue({ try $0.exists(path) })) == true {
+                await openFile(path)
+                await run()
+                for _ in 0..<40 where session.runCounter == previous { try? await Task.sleep(for: .milliseconds(50)) }
+            } else {
+                showToast("“\(basename(path))” doesn't exist anymore")
+            }
+            // Nothing started: let the view go.
+            if restartingRun == previous && session.runCounter == previous {
+                restartingRun = nil
+                ui.restarting = false
+                sessionChanged()
+            }
+        }
     }
 
     func pause() {

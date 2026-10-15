@@ -2,7 +2,7 @@
 # notification or a message.
 #
 # Uses contacts, reminders, notification and webbrowser (for the message).
-# Tap Done to close it.
+# Tap × to close it.
 import datetime as dt
 import webbrowser
 

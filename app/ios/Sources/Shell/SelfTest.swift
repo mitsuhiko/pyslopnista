@@ -185,7 +185,8 @@ enum SelfTest {
         let store = model.ui.store
         switch value["action"] as? String {
         case "tree":
-            return ["visible": model.ui.visible, "tree": store.snapshot(), "sheets": store.openSheets.map(\.id),
+            return ["visible": model.ui.visible, "closeButton": store.closeButton, "restarting": model.ui.restarting,
+                    "tree": store.snapshot(), "sheets": store.openSheets.map(\.id),
                     "dialogs": store.dialogs.map { ["id": $0.id, "kind": $0.kind] }]
         case "stats":
             return ["ops": store.lastRender.ops, "ms": store.lastRender.ms]
@@ -207,6 +208,9 @@ enum SelfTest {
             return true
         case "close":
             store.close()
+            return true
+        case "restart":
+            store.restart()
             return true
         default:
             return nil

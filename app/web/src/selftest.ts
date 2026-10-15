@@ -30,7 +30,10 @@ interface NativeNode {
 }
 
 const nativeTree = () =>
-  call<{ visible: boolean; tree: NativeNode; sheets: number[]; dialogs: { id: number; kind: string }[] }>("test.ui", { action: "tree" });
+  call<{ visible: boolean; closeButton: boolean; restarting: boolean; tree: NativeNode; sheets: number[]; dialogs: { id: number; kind: string }[] }>(
+    "test.ui",
+    { action: "tree" },
+  );
 const nativeRenderStats = () => call<{ ops: number; ms: number }>("test.ui", { action: "stats" });
 const nativeEvent = (id: number, event: string, args: unknown[] = []) => call("test.ui", { action: "event", id, event, args });
 
@@ -330,9 +333,36 @@ export async function selftest() {
     }
     await untilNode((n) => n.t === "Text" && n.p.font === "largeTitle" && n.p.text === "5");
     const { ops, ms } = await nativeRenderStats();
+    if (!(await nativeTree()).closeButton) throw new Error("no close button");
+    // Restart (the close button's menu): a new run, the view stays up, the count starts over.
+    const counter = session.getSnapshot().runCounter;
+    await call("test.ui", { action: "restart" });
+    let hidden = false;
+    await until(async () => {
+      const t = await nativeTree();
+      if (!t.visible) hidden = true;
+      return session.getSnapshot().runCounter > counter && session.getSnapshot().uiOpen && !t.restarting &&
+        findNodes(t.tree, (n) => n.t === "Text" && n.p.font === "largeTitle" && n.p.text === "0").length > 0;
+    }, 30000);
+    if (hidden) throw new Error("the app view went away while restarting");
     await call("test.ui", { action: "close" });
     await until(() => !session.getSnapshot().uiOpen);
     return { lastRender: { ops, ms } };
+  });
+
+  await step("ui_close_from_python", async () => {
+    // close_button=False: no close button; the program ends itself with ui.close().
+    await fs.writeText(
+      "Tests/Close.py",
+      'import ui\n\nui.run(lambda: ui.Screen("Quit", ui.Button("Quit", on_click=ui.close)), close_button=False)\n',
+    );
+    await runFile("Tests/Close.py");
+    const quit = await untilNode((n) => n.t === "Button" && n.p.label === "Quit");
+    if ((await nativeTree()).closeButton) throw new Error("close button shown");
+    await nativeEvent(quit.i, "click");
+    await until(() => !session.getSnapshot().uiOpen);
+    await until(async () => !(await nativeTree()).visible);
+    if (consoleText().includes("Traceback")) throw new Error(consoleText());
   });
 
   await step("ui_todo", async () => {

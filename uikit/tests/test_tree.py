@@ -397,6 +397,19 @@ def test_run_again_replaces_the_app(h):
     assert dom.text() == "two" and cleaned == [1]
 
 
+def test_close_button_config_and_close(h):
+    dom = h.run(lambda: ui.Text("x"))
+    assert dom.config["close_button"] is True
+    dom = h.run(lambda: ui.Button("Quit", on_click=ui.close), close_button=False)
+    assert dom.config["close_button"] is False
+    n = len(dom.ops)
+    h.fire(dom.find("Button"), "click")
+    assert h.ops_since(n) == [["close"]]
+    n = len(dom.ops)
+    ui.close()
+    assert h.ops_since(n) == [["close"]]
+
+
 def test_on_mount_runs_after_first_flush(h):
     seen = []
 

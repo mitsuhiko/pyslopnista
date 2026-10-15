@@ -11,8 +11,11 @@
 //   ["unmount", id]                                      remove (and forget the subtree)
 //   ["set", id, {prop: value}]                           update props
 //   ["call", id, method, args]                           focus(), blur(), ...
-//   ["config", {theme, tint, title}]  ["dialog", n, spec]
+//   ["config", {theme, tint, title, close_button}]  ["dialog", n, spec]
 //   ["toast", text, seconds]  ["frame", canvasId]  ["reset"]
+//   ["close"]                                            ui.close(): the app ends
+// close_button is for the app's native renderer (a page has nothing to close);
+// here "close" calls onClose, which clears the view unless the page replaces it.
 // Events go back as sendEvent("<id>:<event>", JSON args). A new renderer asks
 // for a full snapshot ("0:resync"), so it can attach to a running app.
 //
@@ -27,6 +30,7 @@ export class UIRenderer {
     this.root = root;
     this.sendEvent = sendEvent;
     this.onRendered = () => {};
+    this.onClose = () => this.clear();
     root.classList.add("ui-root");
     this.content = h("div", "ui-content");
     this.layer = h("div", "ui-layer");
@@ -125,6 +129,9 @@ export class UIRenderer {
         break;
       case "reset":
         this.reset();
+        break;
+      case "close":
+        this.onClose();
         break;
     }
   }

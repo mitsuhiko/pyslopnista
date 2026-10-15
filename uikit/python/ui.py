@@ -52,7 +52,7 @@ __all__ = [
     # control flow
     "Show", "For",
     # app
-    "run", "navigation", "alert", "confirm", "prompt", "choose", "toast",
+    "run", "close", "navigation", "alert", "confirm", "prompt", "choose", "toast",
     "Element", "Event",
     # layout
     "VStack", "HStack", "ZStack", "Grid", "ScrollView", "Spacer", "Divider", "Card",
@@ -1630,13 +1630,26 @@ def _report(exc: BaseException):
 
 
 def run(app: Callable[[], Child] | Child, *, title: str | None = None, theme: str = "auto",
-        tint: str | None = None) -> None:
+        tint: str | None = None, close_button: bool = True) -> None:
     """Show ``app`` (a component function or an element) full screen.
 
     ``theme`` is "auto", "light" or "dark"; ``tint`` is the accent color.
-    Running again replaces the previous app.
+    In Pyslopnista the app's first screen has a close button that ends the
+    program (touch and hold it to restart). ``close_button=False`` leaves it
+    out: the app ends itself with ``ui.close()``, and a two-finger swipe
+    down still closes it. Running again replaces the previous app.
     """
-    _app.start(app, {"title": title, "theme": theme, "tint": tint})
+    _app.start(app, {"title": title, "theme": theme, "tint": tint, "close_button": bool(close_button)})
+
+
+def close() -> None:
+    """End the app, like its close button. In Pyslopnista the program stops;
+    on a web page the app's view is cleared."""
+    if _app.root is None:
+        return
+    _app.queue_call(["close"])
+    if not _app.dispatching:
+        _app.flush()
 
 
 def navigation() -> NavigationStack:

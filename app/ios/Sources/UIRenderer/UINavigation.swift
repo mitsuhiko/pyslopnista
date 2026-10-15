@@ -14,6 +14,79 @@ struct UIAppRoot: View {
             .environment(\.uiAppRoot, true)
             .tint(UIColorParser.color(store.tint))
             .preferredColorScheme(store.theme == "dark" ? .dark : store.theme == "light" ? .light : nil)
+            .background {
+                // Without the close button, two fingers swiping down close the app.
+                if !store.closeButton {
+                    TwoFingerSwipeDown { store.close() }.allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+/// The app's close button on its first screen: a tap ends the program,
+/// touch and hold offers Restart.
+private struct CloseAppButton: View {
+    @Environment(UIStore.self) private var store
+
+    var body: some View {
+        Menu {
+            Button("Restart", systemImage: "arrow.clockwise") { store.restart() }
+        } label: {
+            Label("Close", systemImage: "xmark")
+        } primaryAction: {
+            store.close()
+        }
+        .labelStyle(.iconOnly)
+        .accessibilityHint("Touch and hold to restart")
+    }
+}
+
+/// A two-finger swipe down anywhere in the window. The recognizer sits on the
+/// window, next to the views' own gestures, so it works over lists and canvases.
+private struct TwoFingerSwipeDown: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.action = action
+        return view
+    }
+
+    func updateUIView(_ view: Probe, context: Context) {
+        view.action = action
+    }
+
+    static func dismantleUIView(_ view: Probe, coordinator: ()) {
+        view.detach()
+    }
+
+    final class Probe: UIView, UIGestureRecognizerDelegate {
+        var action: () -> Void = {}
+        private var recognizer: UISwipeGestureRecognizer?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            detach()
+            guard let window else { return }
+            let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swiped))
+            swipe.direction = .down
+            swipe.numberOfTouchesRequired = 2
+            swipe.cancelsTouchesInView = false
+            swipe.delegate = self
+            window.addGestureRecognizer(swipe)
+            recognizer = swipe
+        }
+
+        func detach() {
+            if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) }
+            recognizer = nil
+        }
+
+        @objc private func swiped() { action() }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
     }
 }
 
@@ -45,7 +118,7 @@ struct ScreenView: View {
     }
 }
 
-/// Title, toolbar items and the app's Done button.
+/// Title, toolbar items and the app's close button.
 struct ScreenChrome: ViewModifier {
     let title: String?
     let large: Bool
@@ -60,10 +133,9 @@ struct ScreenChrome: ViewModifier {
             .navigationTitle(title ?? "")
             .navigationBarTitleDisplayMode(large && !(title ?? "").isEmpty ? .large : .inline)
             .toolbar {
-                if appRoot {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Done") { store.close() }.fontWeight(.semibold)
-                    }
+                if appRoot && store.closeButton {
+                    ToolbarItem(placement: .topBarLeading) { CloseAppButton() }
+                    if !leading.isEmpty { ToolbarSpacer(.fixed, placement: .topBarLeading) }
                 }
                 if !leading.isEmpty {
                     ToolbarItemGroup(placement: .topBarLeading) {

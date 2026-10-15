@@ -81,6 +81,9 @@ class FakeDOM:
     def op_toast(self, text, seconds):
         self.calls.append(("toast", text))
 
+    def op_close(self):
+        self.calls.append(("close",))
+
     def op_reset(self):
         self.nodes = {0: {"i": 0, "t": "#root", "p": {}, "kids": []}}
 

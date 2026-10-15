@@ -12,8 +12,9 @@ import SwiftUI
 //   ["unmount", id]                                      remove (and forget the subtree)
 //   ["set", id, {prop: value}]                           update props
 //   ["call", id, method, args]                           focus(), blur(), ...
-//   ["config", {theme, tint, title}]  ["dialog", n, spec]  ["toast", text, seconds]
-//   ["frame", canvasId]  ["reset"]
+//   ["config", {theme, tint, title, close_button}]  ["dialog", n, spec]
+//   ["toast", text, seconds]  ["frame", canvasId]  ["reset"]
+//   ["close"]                                            ui.close(): end the app
 // Events go back as send("<id>:<event>", JSON args). A new store asks for a
 // full snapshot ("0:resync").
 
@@ -64,6 +65,9 @@ final class UIStore {
     private(set) var root = UINode(id: 0, type: "#root", props: [:])
     var theme: String?
     var tint: String?
+    /// The app's first screen has the close button (`ui.run(close_button=)`);
+    /// without it a two-finger swipe down closes the app.
+    var closeButton = true
     var dialogs: [UIDialog] = []
     var toasts: [UIToast] = []
     /// Sheets that are open, in the order they were created (nested ones last).
@@ -74,8 +78,12 @@ final class UIStore {
     @ObservationIgnored var frameAcks: [Int: () -> Void] = [:]
     /// Sends an event to Python: ("<id>:<event>", JSON array of arguments).
     @ObservationIgnored var send: (String, String) -> Void = { _, _ in }
-    /// Ends the app (the Done button).
+    /// Ends the app (the close button, `ui.close()`, a two-finger swipe down).
     @ObservationIgnored var close: () -> Void = {}
+    /// Runs the app's program again (the close button's menu).
+    @ObservationIgnored var restart: () -> Void = {}
+    /// The program asked to close: what it sends after that is not shown.
+    @ObservationIgnored private var closed = false
     @ObservationIgnored var lastRender: (ops: Int, ms: Double) = (0, 0)
 
     init() {
@@ -88,7 +96,7 @@ final class UIStore {
         let t0 = CACurrentMediaTime()
         guard let msg = JSONValue.parse(message), let ops = msg["ops"]?.array else { return }
         var sheetsChanged = false
-        for op in ops {
+        for op in ops where !closed {
             guard let a = op.array, let name = a.first?.string else { continue }
             if apply(name, Array(a.dropFirst())) { sheetsChanged = true }
         }
@@ -134,6 +142,11 @@ final class UIStore {
             let config = a.first?.object ?? [:]
             theme = config["theme"]?.string
             tint = config["tint"].flatMap { $0.isNull ? nil : $0.string }
+            closeButton = config["close_button"].map { $0.isNull || $0.truthy } ?? true
+            return false
+        case "close":
+            closed = true
+            close()
             return false
         case "dialog":
             guard a.count >= 2, let id = a[0].int else { return false }
@@ -197,6 +210,8 @@ final class UIStore {
         frameAcks = [:]
         dialogs = []
         openSheets = []
+        closeButton = true
+        closed = false
     }
 
     private func updateSheets() {

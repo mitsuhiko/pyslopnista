@@ -42,7 +42,7 @@ purpose without the hint.
 | State | `signal`, `computed`, `effect`, `batch`, `untrack`, `store` (deep reactive dicts and lists, `todo.done = True`), `bind(store, key)` (two-way), `unwrap` |
 | Lifecycle | `on_cleanup`, `on_mount`, `interval`, `timeout` (cancelled with their component), `resource(fetcher, source)` (async data with `.loading()` and `.error()`) |
 | Control flow | `Show(when, *children, fallback=)`, `For(each, render, key=, fallback=)` (keyed, minimal moves, `render(item, index)`), any `lambda` child |
-| App | `run(app, theme=, tint=)`, `navigation()`, `await alert/confirm/prompt/choose(...)`, `toast(...)` |
+| App | `run(app, theme=, tint=, close_button=)`, `close()`, `navigation()`, `await alert/confirm/prompt/choose(...)`, `toast(...)` |
 | Layout | `VStack`, `HStack`, `ZStack`, `Grid`, `ScrollView`, `Spacer`, `Divider`, `Card` |
 | Navigation | `NavigationStack(root)` with `.push(Screen, *args)` / `.pop()` (and edge swipe), `Screen(title, ..., leading=, trailing=)`, `TabView`/`Tab`, `Sheet(open=signal)` |
 | Lists | `Section(header=, footer=)`, `Row(title, subtitle=, detail=, icon=, accessory=, checked=, on_click=, on_delete=)` (swipe to delete) |
@@ -113,7 +113,7 @@ Async Data (`resource`, a spinner, modifiers), Plot (live matplotlib).
 Protocol: Python calls `_uihost.render('{"seq": n, "ops": [...]}')`. The
 renderer calls the dispatcher with `("<id>:<event>", json_args)`. Ops are
 `mount`, `move`, `unmount`, `set`, `call`, `config`, `dialog`, `toast`,
-`frame` and `reset` (documented at the top of `renderer.js` and of
+`frame`, `reset` and `close` (documented at the top of `renderer.js` and of
 `UIStore.swift`). Only the worker's existing two `_uihost` functions are used.
 A protocol change needs both renderers.
 
@@ -161,7 +161,10 @@ change.
 - The app view is shown while a ui app runs, except while the debugger is
   paused. Each time it appears it asks for a full snapshot (`resync`).
 - Files the app writes are written back while it idles (within about a
-  second, D27), and on Done and when the app goes to the background.
+  second, D27), and on close and when the app goes to the background.
+- The app's first screen has a close button (×; touch and hold to
+  restart). `run(close_button=False)` hides it: the program ends itself
+  with `close()`, and a two-finger swipe down still closes it (D43).
 - App selftests (iPhone 17 simulator, native views): `ui_app` (Counter App),
   `ui_todo` (Todo App: open the Inbox, add a to-do, go back, find it in
   `todos.db` while the app still runs, read it back in a second run) and

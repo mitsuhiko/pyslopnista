@@ -3,7 +3,8 @@
 The `ui` module builds apps that look and feel like iOS: screens with
 navigation bars, lists, buttons, text fields, tabs, sheets and a drawing
 canvas. Inside Pyslopnista they are real SwiftUI views; a program that calls
-`ui.run()` opens full screen, and **Done** ends it.
+`ui.run()` opens full screen, and the **×** button on its first screen ends
+it (touch and hold it to restart the program).
 
 ```python
 import ui
@@ -148,11 +149,25 @@ ui.Section(ui.For(todos, lambda t: ui.Row(t.title, checked=ui.bind(t, "done"))))
 
 ## The app
 
-### ui.run(app, *, title=None, theme='auto', tint=None)
+### ui.run(app, *, title=None, theme='auto', tint=None, close_button=True)
 
 Show `app` (a component function or an element) full screen. `theme` is
 `"auto"`, `"light"` or `"dark"`; `tint` is the accent color. Running again
 replaces the app.
+
+The app's first screen gets a close button (×) on the leading side: a tap
+ends the program, touch and hold offers Restart. `close_button=False`
+leaves it out, for an app that ends itself with `ui.close()`; a two-finger
+swipe down still closes it.
+
+### ui.close()
+
+End the app, like its close button: the program stops. Published web apps
+clear the view instead.
+
+```python
+ui.run(lambda: ui.Screen("Game", ui.Button("Quit", on_click=ui.close)), close_button=False)
+```
 
 ### ui.navigation()
 

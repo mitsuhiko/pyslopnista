@@ -18,7 +18,7 @@ extension EnvironmentValues {
     @Entry var uiStretch: Bool = false
     /// The element should fill the width it is given (buttons stretch their label).
     @Entry var uiFillWidth: Bool = false
-    /// The screen is the first one of the app: it gets the Done button.
+    /// The screen is the first one of the app: it gets the close button.
     @Entry var uiAppRoot: Bool = false
     /// font_size set on a container: body text inside uses it.
     @Entry var uiBodySize: Double? = nil

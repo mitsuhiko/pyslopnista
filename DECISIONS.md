@@ -571,7 +571,7 @@ How the native renderer works:
   with one frame in flight. While the program listens for pointer events,
   touches on the canvas don't scroll the list.
 - **The Done button** sits on the leading side of the app's first screen
-  (each tab's first screen in a `TabView`).
+  (each tab's first screen in a `TabView`). Replaced by a close button, D43.
 
 The web-only escape hatches are gone: `h()`, `Html`, `css()`, `class_`,
 `style` and arbitrary DOM events. Modifiers are now plain values that each
@@ -1305,6 +1305,51 @@ Evidence: the self-test's `app_docs` (search by name in both versions, by
 words, reading a class, `help()` for a function and a class, Show Info)
 and `device_example_apps` (each example opens and closes without an error)
 checks. All 62 checks pass in the iPhone 18 Pro simulator (2026-10-15).
+
+## D43: ui apps close with an X that can restart them, or close themselves
+
+2026-10-15 - Accepted (amends D30)
+
+A ui app stays full screen, both when it runs from the editor and when a
+Home Screen shortcut launches it (D38). A sheet over the IDE was
+considered and rejected: a shortcut's app has to fill the screen, and an
+app run from the editor should look the same.
+
+"Done" was the wrong word, because the button ends the program and saves
+nothing. It is now the system's close button, a round X, still on the
+leading side of the app's first screen. A tap ends the program, as before.
+Touch and hold it for a menu with **Restart**, which runs the program
+again like Run: the app view stays up with a spinner until the new run
+shows its UI, so it doesn't slide away and come back. A run that ends
+without a UI brings the editor back. The app's own leading toolbar items
+come after a small gap, so they don't share the X's glass background.
+
+An app can leave the button out and own its exit:
+- `ui.run(app, close_button=False)` hides it (a `close_button` key in the
+  `config` op).
+- `ui.close()` ends the app (a new `close` op). The native renderer
+  ignores whatever the program sends after it and calls the same close
+  path as the button. The web renderer calls `onClose`, which clears the
+  view by default, because a published page has nothing to close.
+- Without the button, a two-finger swipe down anywhere closes the app, as
+  in Pythonista with `hide_title_bar`. The recognizer sits on the window
+  next to the views' own gestures, so lists and canvases keep working.
+
+The engine now ignores render messages from a worker that is no longer
+the session's. A closed program that is still flushing, or the program a
+restart replaced, can no longer reopen the app view.
+
+Later: "Show Code" in the X's menu, which would hide the app and keep it
+running with a way back from the IDE. And a Run menu in iPadOS's menu
+bar (Run, Stop, ⌘.), which would also show Stop while an app is up.
+
+Evidence: `uikit/run.sh --test` (89 tests; the new one checks the config
+key and the `close` op). The app's `ui_app` self-test restarts the
+Counter App: a new run, the count back at 0, and the view never hidden.
+The new `ui_close_from_python` test runs a program with
+`close_button=False` and a button that calls `ui.close()`. All 63
+checks pass in the iPhone 18 Pro simulator (2026-10-15). The two-finger
+swipe was not tested: the self-test can't make touches.
 
 ## Proposed (not yet decided)
 

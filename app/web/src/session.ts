@@ -298,6 +298,8 @@ export class Session {
         this.set({ awaitingInput: true });
       });
     worker.onUIRender = (json) => {
+      // A closed program may still send a message before it is killed.
+      if (this.worker !== worker) return;
       this.set({ uiOpen: true });
       this.uiListener?.(json);
     };
