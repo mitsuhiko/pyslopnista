@@ -835,6 +835,56 @@ export async function selftest() {
     if (!problems.some((p) => p.source === "ty" && /argument/i.test(p.message))) throw new Error(`no argument error: ${JSON.stringify(problems)}`);
   });
 
+  // The app's own modules in the docs (D42), and the example apps that use them.
+  await step("app_docs", async () => {
+    const hits = await call<{ ref: string }[]>("docs.search", { query: "photos.pick_image", version: "3.14", limit: 5 });
+    if (hits[0]?.ref !== "pyslopnista/photos.html#photos.pick_image") throw new Error(JSON.stringify(hits));
+    const ui = await call<{ ref: string }[]>("docs.search", { query: "ui.Button", version: "3.15", limit: 5 });
+    if (ui[0]?.ref !== "pyslopnista/ui.html#ui.Button") throw new Error(`3.15: ${JSON.stringify(ui)}`);
+    const page = await call<{ markdown: string } | null>("docs.read", { ref: "pyslopnista/sound.html#sound.Player", version: "3.14" });
+    if (!page?.markdown.includes("play()") || !page.markdown.includes("finished_handler")) throw new Error(`read: ${page?.markdown.slice(0, 300)}`);
+    const words = await call<{ ref: string }[]>("docs.search", { query: "record from the microphone", version: "3.14", limit: 8 });
+    if (!words.some((h) => h.ref.startsWith("pyslopnista/sound.html"))) throw new Error(`words: ${JSON.stringify(words.map((h) => h.ref))}`);
+    // help() opens the app's modules too.
+    await fs.mkdir("Tests/device").catch(() => {});
+    await fs.writeText("Tests/device/helpme.py", "import clipboard, sound\n");
+    const { done } = await runFile("Tests/device/helpme.py");
+    await done;
+    await session.runConsole("help(clipboard.get)");
+    await until(idle);
+    await until(async () => (await appCall("docsState")).ref === "pyslopnista/clipboard.html#clipboard.get", 8000);
+    await session.runConsole("help(sound.Player)");
+    await until(idle);
+    await until(async () => (await appCall("docsState")).ref === "pyslopnista/sound.html#sound.Player", 8000);
+    await appCall("closeDocs");
+    // Show Info on a device module links its page.
+    const text = "import clipboard\nclipboard.set('x')\n";
+    await openWith("Tests/device/info.py", text);
+    const target = await appCall("docsTarget", "Tests/device/info.py", text, 2, 12);
+    if (target?.ref !== "pyslopnista/clipboard.html#clipboard.set") throw new Error(`show info: ${JSON.stringify(target)}`);
+  });
+
+  await step("device_example_apps", async () => {
+    const opened: Record<string, number> = {};
+    for (const name of ["Photo Booth.py", "Level.py", "Birthdays.py"]) {
+      const { done } = await runFile(`Examples/${name}`);
+      const tree = await until(async () => {
+        const t = await nativeTree();
+        return t.visible ? t : null;
+      }, 30000).catch(() => {
+        throw new Error(`${name} did not open: ${consoleText().slice(-500)}`);
+      });
+      opened[name] = findNodes(tree.tree, () => true).length;
+      if (/Traceback/.test(consoleText())) throw new Error(`${name}: ${consoleText().slice(-500)}`);
+      session.closeUI();
+      await until(async () => !(await nativeTree()).visible, 5000).catch(() => {
+        throw new Error(`${name} did not close`);
+      });
+      await done.catch(() => {});
+    }
+    return opened;
+  });
+
   await step("editor_themes", async () => {
     await app.openFile("Examples/Hello.py");
     const themes = await editorCall<{ id: string }[]>("themes");

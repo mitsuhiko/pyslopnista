@@ -75,6 +75,7 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 - [core] Friendly explanations of errors, from the agent or built in
 - [later] Interactive lessons and exercises with checks
 - [core] Python documentation available offline, searchable, opened by `help()` and Show Info; the agent searches and reads it too (D37)
+- [core] The app's own modules (ui, turtle, the device modules) documented in the same viewer and index (D42)
 - [maybe] Classroom features (sharing assignments, collecting submissions)
 
 ## Building apps: UI toolkit

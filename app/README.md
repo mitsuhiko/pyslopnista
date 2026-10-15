@@ -62,7 +62,12 @@ apps are native views (D30).
   `speech`, `contacts` and `reminders`, plus `haptics`; `webbrowser.open()`
   opens links. Dialogs block until answered; images are PIL images;
   permissions are asked on first use. Not available in the agent's runs.
-  Example: `Device Tour.py`.
+  Examples: `Device Tour.py`, and the apps `Photo Booth.py`, `Level.py`
+  and `Birthdays.py`.
+- **Docs for the app's modules** (D42): `ui`, turtle in the app and the
+  device modules have pages in the docs viewer next to the Python docs
+  (sources in `docs/*.md`), found by its search, `help()`, Show Info and
+  the agent's `docs_search`.
 - **Home Screen icons** (D38): "Add to Home Screen…" (⋯ menu, or a `.py`
   file's context menu) explains how to make a shortcut with the app's "Run
   Python Program" action in the Shortcuts app and add it to the Home
@@ -201,6 +206,7 @@ apps are native views (D30).
 app/
   run.sh                  build + run (simulator or --device), --selftest, --reset
   runtimes.json           the bundled Pythons (D37): Pyodide versions, CDN folders, pinned docs archives
+  docs/                   the app's own modules' docs (Markdown, D42), rendered into the docs by build-docs.py
   scripts/fetch-pyodide.sh   the Pyodide cores of runtimes.json into vendor/
   scripts/build-docs.py     the docs (uv script): pruned, patched HTML and docs.sqlite (FTS5) into vendor/docs-<python>/
   scripts/build-ty.sh       builds ty's wasm (not on npm) from a pinned ruff commit
@@ -266,8 +272,10 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 
 ## Status (2026-10-15)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 59
-checks in the iPhone 18 Pro and iPad Pro 13" simulators, including the
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 62
+checks in the iPhone 18 Pro simulator, including `app_docs` and
+`device_example_apps` (D42) (2026-10-15). Before that, 59 passed in the
+iPhone 18 Pro and iPad Pro 13" simulators, including the
 device modules (`device_basics`, `device_dialogs`,
 `device_stop_closes_dialog`, `device_pim`, D40) and `file_management`
 (D41) (2026-10-15). For the device checks `run.sh` grants the simulator's

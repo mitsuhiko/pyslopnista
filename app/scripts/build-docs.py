@@ -1,10 +1,15 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12,<3.14"
-# dependencies = ["beautifulsoup4==4.13.4", "lxml==6.0.0", "markdownify==1.1.0"]
+# dependencies = ["beautifulsoup4==4.13.4", "lxml==6.0.0", "markdownify==1.1.0", "markdown==3.8", "pygments==2.19.1"]
 # ///
 """Build the Python documentation the app bundles (D37), one set per runtime
 in runtimes.json, into vendor/docs-<python>/:
+
+- app/docs/*.md (D42): the app's own modules (ui, turtle in the app, the
+  device modules), rendered into pyslopnista/ in the same HTML as Sphinx's
+  (sections, API entries as dl.py with their names as ids), so the viewer
+  shows them in the same style and the index treats them like the rest.
 
 - html/: the official HTML archive (pinned by its sha256), pruned (C API,
   old What's New pages, the general index, Sphinx's search) and patched for
@@ -35,7 +40,11 @@ from markdownify import MarkdownConverter
 APP = Path(__file__).resolve().parent.parent
 VENDOR = APP / "vendor"
 RUNTIMES = APP / "runtimes.json"
-SCRIPT_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+APP_DOCS = APP / "docs"
+APP_DOCS_DIR = "pyslopnista"  # where they go in the HTML tree
+SCRIPT_HASH = hashlib.sha256(
+    Path(__file__).read_bytes() + b"".join(p.read_bytes() for p in sorted(APP_DOCS.glob("*.md")))
+).hexdigest()[:16]
 
 PRUNE_DIRS = ["_sources", "c-api", "extending"]
 PRUNE_GLOBS = [
@@ -345,6 +354,174 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
 """
 
 
+# -- the app's own docs (D42) -------------------------------------------------------
+
+_HEADING = re.compile(r"^(#{1,4})\s+(.*?)\s*$")
+_API = re.compile(r"^(class\s+)?([A-Za-z_]\w*(?:\.\w+)+)(\(.*\))?$")
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower().replace("`", "")).strip("-") or "section"
+
+
+def _highlight(code: str, lang: str) -> str:
+    from pygments import highlight
+    from pygments.formatters import HtmlFormatter
+    from pygments.lexers import get_lexer_by_name
+
+    try:
+        lexer = get_lexer_by_name(lang or "python3")
+    except Exception:
+        lexer = get_lexer_by_name("text")
+    body = highlight(code, lexer, HtmlFormatter(nowrap=True))
+    return f'<div class="highlight-{lang or "python3"} notranslate"><div class="highlight"><pre><span></span>{body}</pre></div></div>'
+
+
+def _md(text: str) -> str:
+    """Markdown as Sphinx would render it: literals, highlighted code, docutils tables."""
+    import markdown as mdlib
+
+    blocks: list[str] = []
+
+    def stash(m):
+        blocks.append(_highlight(m.group(2), m.group(1).strip()))
+        return f"\n\nPYSLOPCODE{len(blocks) - 1}\n\n"
+
+    text = re.sub(r"^```(\w*)\n(.*?)^```\s*$", stash, text, flags=re.M | re.S)
+    out = mdlib.markdown(text, extensions=["tables"])
+    out = re.sub(r"<code>(.*?)</code>", r'<code class="docutils literal notranslate"><span class="pre">\1</span></code>', out, flags=re.S)
+    out = out.replace("<table>", '<table class="docutils align-default">')
+    for i, block in enumerate(blocks):
+        out = out.replace(f"<p>PYSLOPCODE{i}</p>", block)
+    return out
+
+
+def _inline(text: str) -> str:
+    out = _md(text)
+    return re.sub(r"^<p>(.*)</p>$", r"\1", out.strip(), flags=re.S)
+
+
+def _parse(source: str) -> list[dict]:
+    """Headings and the text under them, as a tree (by heading level)."""
+    root: list[dict] = []
+    stack: list[dict] = []
+    body: list[str] = []
+    current: dict | None = None
+    in_code = False
+
+    def flush():
+        if current is not None:
+            current["body"] = "\n".join(body).strip()
+        body.clear()
+
+    for line in source.split("\n"):
+        if line.startswith("```"):
+            in_code = not in_code
+        m = None if in_code else _HEADING.match(line)
+        if not m:
+            body.append(line)
+            continue
+        flush()
+        node = {"level": len(m.group(1)), "title": m.group(2), "children": []}
+        while stack and stack[-1]["level"] >= node["level"]:
+            stack.pop()
+        (stack[-1]["children"] if stack else root).append(node)
+        stack.append(node)
+        current = node
+    flush()
+    return root
+
+
+def _render(node: dict, page_module: str | None, parent_class: str | None = None, depth: int = 1) -> str:
+    title = node["title"]
+    m = _API.match(title)
+    if m and depth > 1:
+        is_class, name, params = bool(m.group(1)), m.group(2), m.group(3)
+        if is_class:
+            kind = "class"
+        elif parent_class and name.startswith(parent_class + "."):
+            kind = "method" if params is not None else "attribute"
+        else:
+            kind = "function" if params is not None else "data"
+        prename, _, short = name.rpartition(".")
+        sig = ""
+        if is_class:
+            sig += '<em class="property"><span class="pre">class</span><span class="w"> </span></em>'
+        if kind in ("function", "class", "data"):
+            sig += f'<span class="sig-prename descclassname"><span class="pre">{prename}.</span></span>'
+        sig += f'<span class="sig-name descname"><span class="pre">{short}</span></span>'
+        if params is not None:
+            inner = params[1:-1].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            sig += f'<span class="sig-paren">(</span><em class="sig-param">{inner}</em><span class="sig-paren">)</span>'
+        children = "".join(_render(c, page_module, name if is_class else parent_class, depth + 1) for c in node["children"])
+        return (
+            f'<dl class="py {kind}"><dt class="sig sig-object py" id="{name}">{sig}'
+            f'<a class="headerlink" href="#{name}" title="Link to this definition">¶</a></dt>'
+            f'<dd>{_md(node["body"])}{children}</dd></dl>\n'
+        )
+    anchor = f"module-{page_module}" if depth == 1 and page_module else _slug(title)
+    level = min(depth, 6)
+    children = "".join(_render(c, page_module, parent_class, depth + 1) for c in node["children"])
+    return (
+        f'<section id="{anchor}"><h{level}>{_inline(title)}<a class="headerlink" href="#{anchor}" '
+        f'title="Link to this heading">¶</a></h{level}>\n{_md(node["body"])}{children}</section>\n'
+    )
+
+
+def render_app_docs(root: Path, release: str) -> int:
+    """app/docs/*.md -> <root>/pyslopnista/*.html, in the archive's page layout."""
+    out = root / APP_DOCS_DIR
+    out.mkdir(exist_ok=True)
+    sources = sorted(APP_DOCS.glob("*.md"))
+    for src in sources:
+        stem = src.stem
+        tree = _parse(src.read_text())
+        title = re.sub(r"[`*]", "", tree[0]["title"]) if tree else stem
+        # turtle's page is about the app; the module itself is the standard library's.
+        module = None if stem in ("index", "turtle") else stem
+        content = "".join(_render(n, module) for n in tree)
+        crumbs = f'<li><a href="../index.html">{release} Documentation</a> &#187;</li>\n'
+        if stem != "index":
+            crumbs += '<li class="nav-item"><a href="index.html">Pyslopnista Modules</a> &#187;</li>\n'
+        crumbs += f'<li class="nav-item nav-item-this"><a href="">{title}</a></li>'
+        page = f"""<!DOCTYPE html>
+<html lang="en" data-content_root="../">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{title} &#8212; Python {release} documentation</title>
+<link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+<link rel="stylesheet" type="text/css" href="../_static/classic.css" />
+<link rel="stylesheet" type="text/css" href="../_static/pydoctheme.css" />
+<link id="pygments_dark_css" media="(prefers-color-scheme: dark)" rel="stylesheet" type="text/css" href="../_static/pygments_dark.css" />
+<link rel="stylesheet" href="../_static/pydoctheme_dark.css" media="(prefers-color-scheme: dark)" id="pydoctheme_dark_css" />
+</head>
+<body>
+<div class="related" role="navigation" aria-label="Related"><h3>Navigation</h3><ul>{crumbs}</ul></div>
+<div class="document"><div class="documentwrapper"><div class="bodywrapper"><div class="body" role="main">
+{content}
+</div></div></div></div>
+<div class="footer">The Pyslopnista modules' documentation is part of the app.</div>
+</body>
+</html>
+"""
+        (out / f"{stem}.html").write_text(page, encoding="utf-8")
+    return len(sources)
+
+
+def link_app_docs(soup: BeautifulSoup) -> None:
+    """The docs' start page links the app's modules first."""
+    ul = soup.select_one("div.contentstable ul")
+    if ul is None:
+        return
+    li = BeautifulSoup(
+        f'<li class="biglink"><a class="biglink" href="{APP_DOCS_DIR}/index.html">Pyslopnista modules</a><br/>'
+        '<span class="linkdescr">ui apps, turtle, and the device: clipboard, dialogs, photos, location, sound, ...</span></li>',
+        "html.parser",
+    )
+    ul.insert(0, li)
+
+
 # -- build --------------------------------------------------------------------------
 
 
@@ -363,6 +540,10 @@ def build(runtime: dict, update_pins: bool, force: bool) -> None:
         z.extractall(work / "raw")
     (root,) = [p for p in (work / "raw").iterdir() if p.is_dir()]
     prune(root, python)
+    release = next(
+        (m.group(1) for m in [re.search(r"Python ([\d.a-z]+) documentation", (root / "index.html").read_text())] if m), python
+    )
+    render_app_docs(root, release)
 
     db = sqlite3.connect(work / "docs.sqlite")
     db.executescript(SCHEMA)
@@ -376,6 +557,8 @@ def build(runtime: dict, update_pins: bool, force: bool) -> None:
             release = m.group(1)
         if str(rel) not in NOT_INDEXED:
             indexer.index(BeautifulSoup(page.read_bytes(), "lxml"), str(rel))
+        if str(rel) == "index.html":
+            link_app_docs(soup)
         patch(soup, rel, root, python)
         page.write_text(str(soup), encoding="utf-8")
     (root / "_static" / "pyslop.css").write_text(CSS)

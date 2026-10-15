@@ -80,6 +80,11 @@ extension AppModel {
 
     /// The standard library module of a ty definition target ("ext:vendored://stdlib/json/__init__.pyi" -> "json").
     static func stdlibModule(_ target: String) -> String? {
+        // The app's own modules (ui, clipboard, ...) are documented too (D42).
+        if let range = target.range(of: "/pyslop-stubs/") {
+            let file = String(target[range.upperBound...])
+            return file.hasPrefix("_") ? nil : (file as NSString).deletingPathExtension
+        }
         guard let range = target.range(of: "stdlib/") else { return nil }
         var module = String(target[range.upperBound...])
         for suffix in [".pyi", ".py"] where module.hasSuffix(suffix) { module.removeLast(suffix.count) }

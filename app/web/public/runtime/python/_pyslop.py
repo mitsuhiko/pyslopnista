@@ -63,6 +63,11 @@ sys.meta_path.insert(0, _PyplotHook())
 _original_help = builtins.help
 # Where the docs describe what a module defines elsewhere.
 _DOCUMENTED_AS = {"posixpath": "os.path", "ntpath": "os.path"}
+# The app's own modules have pages in the docs too (D42).
+_APP_MODULES = {
+    "ui", "clipboard", "console", "contacts", "dialogs", "haptics", "keychain", "location", "motion",
+    "notification", "photos", "reminders", "sound", "speech",
+}
 
 
 def _docs_symbol(obj):
@@ -83,7 +88,7 @@ def _docs_symbol(obj):
         module = getattr(obj, "__module__", None) or "builtins"
         name = qualname if module == "builtins" else f"{module}.{qualname}"
     top = name.split(".")[0]
-    if top not in sys.stdlib_module_names and top not in dir(builtins):
+    if top not in sys.stdlib_module_names and top not in dir(builtins) and top not in _APP_MODULES:
         return None  # not the standard library: pydoc's text
     module, _, rest = name.partition(".")
     module = _DOCUMENTED_AS.get(module, module)
@@ -93,7 +98,7 @@ def _docs_symbol(obj):
 
 
 class _Helper:
-    """help(x) for the standard library opens the Python docs in the app; the rest is pydoc's."""
+    """help(x) for the standard library and the app's modules opens the docs; the rest is pydoc's."""
 
     def __repr__(self):
         return repr(_original_help)

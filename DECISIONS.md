@@ -1265,6 +1265,47 @@ beside a same-named file, delete for good, two templates, Quick Look of a
 PNG). All 59 checks pass in the iPhone 18 Pro and iPad Pro 13" simulators
 (2026-10-15).
 
+## D42: The app's own modules are documented next to the Python docs
+
+2026-10-15 - Accepted (extends D37)
+
+`ui`, turtle in the app and the device modules (D40) have reference pages
+written by hand in Markdown (`app/docs/*.md`): an overview of how programs
+run (Run, input, Stop, packages, versions, HTTP, links, help, shortcuts),
+one page per module with an introduction, examples and every function,
+class, method and attribute.
+
+`scripts/build-docs.py` renders them into `pyslopnista/` inside each bundled
+docs set, in the HTML Sphinx makes: sections with ids, API entries as
+`dl.py` with the full name as id (`ui.Button`, `sound.Player.play`),
+code highlighted with the archive's Pygments styles. So the viewer shows
+them like the Python docs (dark mode, the stylesheet, the breadcrumbs), and
+the same index takes them in: chunks, symbols, full-text search. Nothing
+treats them differently:
+- the agent's `docs_search` and `docs_read` find and read them like the
+  standard library (`pyslopnista/photos.html#photos.pick_image`); their
+  descriptions and the prompt say they are there;
+- `help(clipboard.get)` and Show Info open them;
+- the docs' start page links them first, and the viewer's book menu has
+  "Pyslopnista Modules".
+
+Rendering from Markdown keeps the sources readable and diffable; writing
+them by hand (not from docstrings) gives room for introductions, examples
+and the differences from Pythonista. The turtle page has no module id, so
+`turtle` still means the standard library's reference. The build stamp
+includes the sources, so editing a page rebuilds the docs.
+
+Three examples use the device modules in `ui` apps: `Photo Booth.py`
+(camera, library, Pillow filters, saving, sharing, haptics), `Level.py`
+(motion read every frame on a canvas, haptics, location with a reverse
+geocoded address and a map image) and `Birthdays.py` (contacts' birthdays
+with reminders, yearly notifications and a message link).
+
+Evidence: the self-test's `app_docs` (search by name in both versions, by
+words, reading a class, `help()` for a function and a class, Show Info)
+and `device_example_apps` (each example opens and closes without an error)
+checks. All 62 checks pass in the iPhone 18 Pro simulator (2026-10-15).
+
 ## Proposed (not yet decided)
 
 (none)
