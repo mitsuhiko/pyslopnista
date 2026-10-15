@@ -329,6 +329,9 @@ private struct EditorChrome: ViewModifier {
         if let debug = s.debug, let frame = debug.frames.first {
             Text(debug.postMortem ? "Error in \(frame.label)" : "Paused · line \(frame.line)")
                 .font(.caption).foregroundStyle(debug.postMortem ? .red : .green)
+        } else if let kernel = s.kernel, kernel.path == file, s.running {
+            // A notebook's cell (D44).
+            Text(kernel.cell.map { "Running cell [\($0)]…" } ?? "Starting Python…").font(.caption).foregroundStyle(.green)
         } else if s.running && s.runningFile == file, let run = s.lastRun {
             Text(run.summary(awaitingInput: s.awaitingInput)).font(.caption).foregroundStyle(.green)
         } else if let file, isExternal(file) {
@@ -339,6 +342,8 @@ private struct EditorChrome: ViewModifier {
                     .font(.caption)
             }
             .tint(counts.errors > 0 ? .red : .orange)
+        } else if let kernel = s.kernel, kernel.path == file, !kernel.python.isEmpty {
+            Text("Python \(kernel.python) kernel").font(.caption).foregroundStyle(.secondary)
         } else if model.wide, let file, !dirname(file).isEmpty {
             Text(displayName(dirname(file))).font(.caption).foregroundStyle(.secondary)
         }
@@ -365,6 +370,43 @@ private struct EditorChrome: ViewModifier {
         }
     }
 
+    /// Cells and the kernel (D44).
+    @ViewBuilder
+    private func notebookSection(_ notebook: NotebookPane, _ file: String) -> some View {
+        let ipynb = file.hasSuffix(".ipynb")
+        Section {
+            if notebook.view != "source" {
+                Button { model.notebookCommand("runCell") } label: { Label("Run Cell", systemImage: "play") }
+                Button { model.notebookCommand("runAll") } label: { Label("Run All Cells", systemImage: "forward") }
+                Menu {
+                    Button { model.notebookCommand("runAbove") } label: { Label("Run Cells Above", systemImage: "arrow.up.to.line") }
+                    Button { model.notebookCommand("runBelow") } label: { Label("Run Cell and Below", systemImage: "arrow.down.to.line") }
+                    Divider()
+                    Button { model.notebookCommand("insertCode") } label: { Label("Insert Code Cell", systemImage: "plus.rectangle") }
+                    Button { model.notebookCommand("insertMarkdown") } label: { Label("Insert Markdown Cell", systemImage: "text.badge.plus") }
+                    if ipynb {
+                        Button { model.notebookCommand("moveUp") } label: { Label("Move Cell Up", systemImage: "arrow.up") }
+                        Button { model.notebookCommand("moveDown") } label: { Label("Move Cell Down", systemImage: "arrow.down") }
+                        Button(role: .destructive) { model.notebookCommand("deleteCell") } label: { Label("Delete Cell", systemImage: "trash") }
+                    }
+                    Divider()
+                    Button { model.notebookCommand("clearOutputs") } label: { Label("Clear All Outputs", systemImage: "xmark.circle") }
+                } label: {
+                    Label("Cells", systemImage: "square.split.1x2")
+                }
+            }
+            Button { model.restartKernel() } label: { Label("Restart Kernel", systemImage: "arrow.clockwise") }
+                .disabled(model.session.kernel?.path != file)
+            if ipynb {
+                Button { model.notebookCommand("toggleView") } label: {
+                    notebook.view == "source"
+                        ? Label("Show as Notebook", systemImage: "book.pages")
+                        : Label("Show JSON Source", systemImage: "curlybraces")
+                }
+            }
+        }
+    }
+
     private func menu(_ file: String?, external: Bool) -> some View {
         let bps = file.map { model.breakpoints[$0]?.count ?? 0 } ?? 0
         return Menu {
@@ -382,9 +424,12 @@ private struct EditorChrome: ViewModifier {
                     Label("Find in \(file.map { displayName(dirname($0)) } ?? "Files")…", systemImage: "doc.text.magnifyingglass")
                 }
                 Button { Task { await model.format() } } label: { Label("Format Code", systemImage: "wand.and.stars") }
-                    .disabled(external)
+                    .disabled(external || model.notebook?.view == "source")
                 Button { model.activeSheet = .problems } label: { Label("Show Problems", systemImage: "exclamationmark.triangle") }
                     .disabled(model.problems[min(model.focused, 1)].total == 0)
+            }
+            if let notebook = model.notebook, let file {
+                notebookSection(notebook, file)
             }
             if bps > 0, let file {
                 Section {

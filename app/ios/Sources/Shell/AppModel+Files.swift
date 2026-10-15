@@ -236,6 +236,46 @@ extension AppModel {
             print("[bold magenta]Hello[/] from [green]rich[/]!")
 
             """),
+        FileTemplate(id: "notebook", title: "Notebook", subtitle: "Cells of code and notes (Jupyter)", icon: "book.pages", fileExtension: "ipynb", content: #"""
+            {
+             "cells": [
+              {
+               "cell_type": "markdown",
+               "id": "a1b2c3d4e5f6",
+               "metadata": {},
+               "source": [
+                "# Notebook\n",
+                "\n",
+                "Run a cell with its ▶ button (or Shift-Return). What a cell defines stays for the cells after it."
+               ]
+              },
+              {
+               "cell_type": "code",
+               "execution_count": null,
+               "id": "b2c3d4e5f6a1",
+               "metadata": {},
+               "outputs": [],
+               "source": [
+                "name = \"world\"\n",
+                "f\"Hello, {name}!\""
+               ]
+              }
+             ],
+             "metadata": {
+              "kernelspec": {
+               "display_name": "Python 3",
+               "language": "python",
+               "name": "python3"
+              },
+              "language_info": {
+               "name": "python"
+              }
+             },
+             "nbformat": 4,
+             "nbformat_minor": 5
+            }
+
+            """#),
         FileTemplate(id: "markdown", title: "Notes", subtitle: "A Markdown file", icon: "text.alignleft", fileExtension: "md", content: "# Notes\n\n"),
     ]
 

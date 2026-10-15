@@ -12,6 +12,12 @@ them, and how programs run in the app.
   changed.
 - [turtle](turtle.html): Python's turtle graphics, drawn in the console.
 
+## Notebooks
+
+- [Notebooks](notebooks.html): Jupyter notebooks (`.ipynb`) and Python
+  files with `# %%` cells: run cells one by one, outputs below them,
+  magics like `%pip`, and the `IPython.display` module.
+
 ## The device
 
 These modules use the names and the API of Pythonista's, so scripts written
@@ -76,6 +82,10 @@ other links (like `maps://`) in the app they belong to.
 
 **Help.** `help(json.loads)` in the console opens these docs at that
 function, for the standard library and the modules above.
+
+**Notebooks.** A `.ipynb` file, or a `.py` file with `# %%` lines, runs
+cell by cell in a kernel that keeps its variables; see
+[Notebooks](notebooks.html).
 
 **Shortcuts.** A program can get an icon on the Home Screen: "Add to Home
 Screen…" in the ⋯ menu shows how, with the "Run Python Program" action in

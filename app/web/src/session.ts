@@ -3,6 +3,7 @@
 // subscribes via useSyncExternalStore. Output is batched per animation frame.
 import { basename, call, dirname, haptic, join } from "./host";
 import { breakpoints } from "./debug/breakpoints";
+import type { CellRequest, KernelEvent, Output } from "./notebook/types";
 import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
 import { chooseFor, onDefaultPython, runtimeFor } from "./runtimes";
 import { TurtleScene, turtleScenes } from "./turtle";
@@ -84,7 +85,14 @@ export interface SessionState {
   debug: DebugState | null;
   /** Pause was requested and the program has not stopped yet. */
   pausing: boolean;
+  /** The interpreter is a notebook's kernel (D44); `cell` is the count of the cell running. */
+  kernel: { path: string; python: string; count: number; cell: number | null } | null;
 }
+
+/** A notebook cell's error output. */
+const errorOutput = (ename: string, evalue: string, traceback?: string[]): Output => ({
+  output_type: "error", ename, evalue, traceback: traceback ?? [`${ename}: ${evalue}`],
+});
 
 const MAX_CHARS = 400_000;
 const PROJECT_ROOT = "/home/pyodide/project";
@@ -102,7 +110,7 @@ function applyCR(text: string): string {
 export class Session {
   private state: SessionState = {
     lines: [], runs: {}, status: "idle", awaitingInput: false, uiOpen: false, runningFile: null, bootMs: null, runCounter: 0,
-    debug: null, pausing: false,
+    debug: null, pausing: false, kernel: null,
   };
   private listeners = new Set<() => void>();
   private pool = new WorkerPool();
@@ -121,6 +129,16 @@ export class Session {
   private debugResult: ((message: any) => void) | null = null;
   private debugQueue: Promise<unknown> = Promise.resolve();
   private stopCounter = 0;
+  // Notebook kernels (D44): the worker belongs to one notebook while `kernel` is set.
+  private kernel: { path: string; python: string; count: number } | null = null;
+  private cell: { path: string; id: string; count: number; failed: boolean; tail: string; run: number | null } | null = null;
+  private cellQueue: { path: string; id: string; code: string; source: string }[] = [];
+  private cellLoop: Promise<void> | null = null;
+  private cellLoopPath: string | null = null;
+  private kernelEvents = new Map<string, KernelEvent[]>();
+  private eventsScheduled = false;
+  /** The self-test listens to what goes to the editors. */
+  onKernelEvents: ((path: string, events: KernelEvent[]) => void) | null = null;
 
   constructor() {
     this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
@@ -290,9 +308,10 @@ export class Session {
     this.worker = worker;
     this.workerDir = dir;
     const serial = ++this.workerSerial;
-    worker.onOutput = (stream, text) => this.append(stream, text);
+    worker.onOutput = (stream, text) => this.output(stream, text);
+    worker.onDisplay = (json) => this.display(json);
     worker.onInput = () =>
-      new Promise((resolve) => {
+      this.cell ? this.cellInput() : new Promise((resolve) => {
         this.flushOutput();
         this.inputResolver = resolve;
         this.set({ awaitingInput: true });
@@ -313,6 +332,7 @@ export class Session {
         if (!scene) {
           scene = new TurtleScene(key);
           turtleScenes.set(key, scene);
+          this.cellConsoleRun();
           this.append("turtle", key);
         }
         scene.apply(ops);
@@ -537,6 +557,7 @@ export class Session {
     const debug = this.state.debug;
     if (debug?.postMortem) return this.resume("continue"); // just ends the inspection
     this.stopRequested = true;
+    this.cancelCells();
     if (this.worker?.running) {
       this.worker.stop(); // also interrupts a paused debugger (its call is pending)
       this.endDebug();
@@ -549,12 +570,236 @@ export class Session {
 
   private closeWorker(keepAlive = false) {
     void call("device.ended").catch(() => {});
+    if (this.kernel) {
+      this.emit(this.kernel.path, { type: "kernel", state: "dead" });
+      this.kernel = null;
+      this.set({ kernel: null });
+    }
     if (this.worker && !this.worker.dead && !keepAlive) this.worker.terminate("closed");
     if (this.worker) this.endScenes();
     this.endDebug();
     this.worker = null;
     this.set({ uiOpen: false, awaitingInput: false });
     this.uiListener?.(null);
+  }
+
+  // -- notebooks (D44) ----------------------------------------------------------------
+
+  /** Output of the program: a running cell's goes to its notebook, the rest to the console. */
+  private output(stream: Stream, text: string) {
+    const cell = this.cell;
+    if (!cell) return this.append(stream, text);
+    if (stream === "image") {
+      this.cellOutput({ output_type: "display_data", data: { "image/png": text, "text/plain": "<Figure>" }, metadata: {} });
+    } else if (stream === "system") {
+      this.cellOutput({ output_type: "status", text: text.replace(/\n$/, "") });
+    } else {
+      if (stream === "stdout") cell.tail = (cell.tail + text).split("\n").at(-1)!.slice(-300);
+      this.cellOutput({ output_type: "stream", name: stream, text });
+    }
+  }
+
+  private cellOutput(output: Output) {
+    const cell = this.cell;
+    if (cell) this.emit(cell.path, { type: "output", cell: cell.id, output });
+  }
+
+  /** A rich output (display(), a cell's value, its error), as JSON from _pyslop_notebook. */
+  private display(json: string) {
+    let msg: any;
+    try {
+      msg = JSON.parse(json);
+    } catch {
+      return;
+    }
+    const cell = this.cell;
+    if (!cell) {
+      // A program's display() (or a kernel's after its cell ended): the console.
+      if (msg.type === "error") return this.append("stderr", (msg.traceback ?? []).join("\n") + "\n");
+      const data = msg.data ?? {};
+      if (typeof data["image/png"] === "string") this.append("image", data["image/png"].replace(/\s/g, ""));
+      else if (data["text/plain"] != null) this.append("stdout", `${data["text/plain"]}\n`);
+      return;
+    }
+    switch (msg.type) {
+      case "display_data":
+        this.cellOutput({ output_type: "display_data", data: msg.data ?? {}, metadata: msg.metadata ?? {}, transient: msg.transient ?? {} });
+        break;
+      case "execute_result":
+        this.cellOutput({ output_type: "execute_result", data: msg.data ?? {}, metadata: msg.metadata ?? {}, execution_count: cell.count });
+        break;
+      case "update_display_data":
+        if (msg.transient?.display_id) {
+          this.emit(cell.path, { type: "update", displayId: msg.transient.display_id, data: msg.data ?? {}, metadata: msg.metadata ?? {} });
+        }
+        break;
+      case "clear_output":
+        this.emit(cell.path, { type: "clear", cell: cell.id, wait: !!msg.wait });
+        break;
+      case "error":
+        cell.failed = true;
+        this.cellOutput(errorOutput(msg.ename ?? "Error", msg.evalue ?? "", msg.traceback));
+        break;
+    }
+  }
+
+  /** input() in a cell: a native prompt (the console is not on screen). */
+  private async cellInput(): Promise<string | null> {
+    const cell = this.cell!;
+    this.flushEvents();
+    const text = await call<string | null>("notebook.input", { path: cell.path, prompt: cell.tail.trim() }).catch(() => null);
+    if (this.cell !== cell || text === null || text === undefined) return null; // EOFError
+    this.cellOutput({ output_type: "stream", name: "stdout", text: `${text}\n` });
+    cell.tail = "";
+    return `${text}\n`;
+  }
+
+  /** Turtle screens are drawn in the console: a cell that draws gets a run there. */
+  private cellConsoleRun() {
+    const cell = this.cell;
+    if (!cell || cell.run !== null) return;
+    cell.run = this.startRun(cell.path).id;
+    this.cellOutput({ output_type: "status", text: "Turtle graphics are in the console." });
+  }
+
+  /** Events for a notebook's editors, sent at most once a frame (stream text merged). */
+  private emit(path: string, event: KernelEvent) {
+    let list = this.kernelEvents.get(path);
+    if (!list) this.kernelEvents.set(path, (list = []));
+    const last = list.at(-1);
+    if (
+      event.type === "output" && event.output.output_type === "stream" && last?.type === "output" && last.cell === event.cell &&
+      last.output.output_type === "stream" && last.output.name === event.output.name
+    ) {
+      list[list.length - 1] = { ...last, output: { ...last.output, text: last.output.text + event.output.text } };
+    } else {
+      list.push(event);
+    }
+    if (this.eventsScheduled) return;
+    this.eventsScheduled = true;
+    setTimeout(() => this.flushEvents(), 16);
+  }
+
+  private flushEvents() {
+    this.eventsScheduled = false;
+    for (const [path, events] of this.kernelEvents) {
+      void call("notebook.events", { path, events }).catch(() => {});
+      this.onKernelEvents?.(path, events);
+    }
+    this.kernelEvents.clear();
+  }
+
+  /** Run cells of a notebook one after the other in its kernel (started if needed).
+   * False if something else is running. `source` is the whole notebook's code
+   * (its dependencies and Python version, read when the kernel starts). */
+  runCells(path: string, cells: CellRequest[], source: string): boolean {
+    if (this.state.status !== "idle" && this.cellLoopPath !== path) return false;
+    for (const c of cells) {
+      this.cellQueue.push({ path, id: c.id, code: c.code, source });
+      this.emit(path, { type: "queued", cell: c.id });
+    }
+    if (!this.cellLoop) {
+      this.cellLoopPath = path;
+      this.cellLoop = this.drainCells().finally(() => {
+        this.cellLoop = null;
+        this.cellLoopPath = null;
+      });
+    }
+    return true;
+  }
+
+  private async drainCells() {
+    while (this.cellQueue.length) {
+      const next = this.cellQueue.shift()!;
+      const status = await this.runCell(next);
+      // An error stops "Run All", as in Jupyter.
+      if (status !== "ok") this.cancelCells();
+    }
+  }
+
+  private cancelCells() {
+    for (const c of this.cellQueue) this.emit(c.path, { type: "done", cell: c.id, status: "cancelled" });
+    this.cellQueue = [];
+  }
+
+  /** End the notebook's kernel: its variables are gone, the next cell starts a new one. */
+  restartKernel(path?: string) {
+    if (!this.kernel || (path && this.kernel.path !== path)) return;
+    this.cancelCells();
+    this.stopRequested = true;
+    this.closeWorker();
+  }
+
+  private kernelSnapshot() {
+    const k = this.kernel;
+    return k ? { path: k.path, python: k.python, count: k.count, cell: this.cell?.count ?? null } : null;
+  }
+
+  private async runCell({ path, id, code, source }: { path: string; id: string; code: string; source: string }): Promise<"ok" | "error" | "stopped"> {
+    this.flushOutput();
+    this.stopRequested = false;
+    let fresh = false;
+    if (!this.worker || this.worker.dead || this.kernel?.path !== path || this.state.uiOpen) {
+      this.closeWorker(); // what ran before ends, like with Run
+      this.set({ status: "starting", runningFile: path, kernel: { path, python: "", count: 0, cell: null } });
+      this.emit(path, { type: "kernel", state: "starting" });
+      try {
+        const choice = await chooseFor(dirname(path), source);
+        if (!choice.ok) throw new Error(`Python version: ${choice.error}`);
+        await this.takeWorker(dirname(path), choice.python);
+        await call("device.reset").catch(() => {});
+        this.kernel = { path, python: runtimeFor(choice.python).version, count: 0 };
+        fresh = true;
+      } catch (e) {
+        this.emit(path, { type: "output", cell: id, output: errorOutput("Error", String((e as Error).message ?? e)) });
+        this.emit(path, { type: "done", cell: id, status: "error" });
+        this.emit(path, { type: "kernel", state: "dead" });
+        this.set({ status: "idle", runningFile: null, kernel: null });
+        return "error";
+      }
+    }
+    const worker = this.worker!;
+    const kernel = this.kernel!;
+    const cell = { path, id, count: ++kernel.count, failed: false, tail: "", run: null as number | null };
+    this.cell = cell;
+    this.setScenesActive(true);
+    this.set({ status: "running", runningFile: path, kernel: this.kernelSnapshot() });
+    this.emit(path, { type: "kernel", state: "busy", python: kernel.python });
+    this.emit(path, { type: "start", cell: id, count: cell.count });
+    const result = await worker.run(code, { filename: basename(path), cwd: PROJECT_ROOT, cell: { count: cell.count, prepare: fresh ? source : null } });
+    this.flushOutput();
+    this.cell = null;
+    this.setScenesActive(false);
+    let status: "ok" | "error" | "stopped" = cell.failed ? (this.stopRequested ? "stopped" : "error") : "ok";
+    if (!result.ok) {
+      const error = result.error ?? "";
+      if (result.killed) {
+        status = this.stopRequested ? "stopped" : "error";
+        const message = /crashed/i.test(error) ? error : "The kernel was restarted; its variables are gone.";
+        this.emit(path, { type: "output", cell: id, output: errorOutput(this.stopRequested ? "KernelRestarted" : "Crash", message, [message]) });
+      } else if (/KeyboardInterrupt\s*$/.test(error.trim())) {
+        status = "stopped";
+        if (!cell.failed) this.emit(path, { type: "output", cell: id, output: errorOutput("KeyboardInterrupt", "") });
+      } else {
+        status = "error";
+        const text = cleanTraceback(error);
+        const last = text.split("\n").at(-1) ?? "";
+        this.emit(path, { type: "output", cell: id, output: errorOutput(last.split(":")[0] || "Error", last.split(": ").slice(1).join(": "), text.split("\n")) });
+        if (fresh) this.closeWorker(); // its dependencies did not install: the next cell tries again
+      }
+    }
+    if (cell.run !== null && this.state.runs[cell.run]) {
+      this.currentRun = cell.run;
+      this.endRun(status === "ok" ? "ok" : status === "stopped" ? "stopped" : "error");
+    }
+    this.emit(path, { type: "done", cell: id, status });
+    if (this.kernel && this.worker === worker && !worker.dead) this.emit(path, { type: "kernel", state: "idle", python: kernel.python });
+    else if (this.kernel?.path === path && worker.dead) this.closeWorker();
+    this.set({ status: "idle", awaitingInput: false, pausing: false, kernel: this.kernelSnapshot() });
+    if (!this.state.uiOpen) void call("device.ended").catch(() => {});
+    if (status === "error") haptic();
+    await worker.syncFiles();
+    return status;
   }
 
   // -- UI apps ------------------------------------------------------------------------

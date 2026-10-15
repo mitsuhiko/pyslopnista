@@ -3,7 +3,9 @@
 // selection survive switching files). The host calls window.__editor; the
 // page reports back with editorEvent().
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap, indentLess, indentMore, indentWithTab, redo, toggleComment, undo } from "@codemirror/commands";
+import {
+  defaultKeymap, deleteCharBackward, history, historyKeymap, indentLess, indentMore, indentWithTab, redo, toggleComment, undo,
+} from "@codemirror/commands";
 import { python } from "@codemirror/lang-python";
 import { bracketMatching, ensureSyntaxTree, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { type Diagnostic, forEachDiagnostic, forceLinting } from "@codemirror/lint";
@@ -14,13 +16,19 @@ import {
   highlightSpecialChars, keymap, lineNumbers, ViewPlugin, type ViewUpdate,
 } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
-import { analysisCompletions, analysisLinter, formatDocument } from "../analysis/codemirror";
+import { type AnalysisSource, analysisCompletions, analysisLinter, formatDocument, formatRanges } from "../analysis/codemirror";
 import type { Breakpoint } from "../debug/breakpoints";
 import {
   breakpointLines, debugExtensions, pausedCompartment, pausedExtension, setBreakpointsEffect, setDebugLineEffect,
 } from "../debug/codemirror";
 import { call } from "../host";
+import { parseIpynb } from "../notebook/ipynb";
+import type { KernelEvent } from "../notebook/types";
 import { settings } from "../settings";
+import {
+  analysisSource, clearOutputs, deleteCell, insertCell, kernelEventsEffect, moveCell, type NotebookHooks, notebookExtensions, notebookOf,
+  notebookSummary, runAbove, runAll, runBelow, runCell, serializeNotebook, setCellType,
+} from "./notebook";
 
 export type EditorCommand = "undo" | "redo" | "indent" | "dedent" | "comment" | "left" | "right" | "up" | "down" | "search";
 
@@ -118,6 +126,13 @@ const cursorMove = (view: EditorView, dir: "left" | "right" | "up" | "down") => 
   view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
 };
 
+/** A .ipynb shows as a notebook, or as its JSON (D44). */
+const isNotebookPath = (path: string | null): path is string => !!path && path.endsWith(".ipynb");
+type Mode = "python" | "notebook" | "json";
+
+/** What the file holds: a notebook's JSON, else the text. */
+const fileText = (state: EditorState) => (notebookOf(state)?.kind === "ipynb" ? serializeNotebook(state) : state.doc.toString());
+
 const sameBreakpoints = (a: Breakpoint[], b: Breakpoint[]) =>
   a.length === b.length && a.every((bp, i) => bp.line === b[i].line && bp.enabled === b[i].enabled);
 
@@ -167,10 +182,27 @@ export class PaneEditor {
   private updateFrame = 0;
   private problemBar: HTMLElement;
   private lastSummary = "";
+  /** Notebooks shown as their JSON. */
+  private views = new Map<string, "notebook" | "source">();
+  /** Notebooks this pane ran cells of: it saves their outputs. */
+  private runOwners = new Set<string>();
+  private cachedSaves = new Map<string, number>();
+  private lastNotebook = "";
+
+  private hooks: NotebookHooks = {
+    run: (cells, source) => {
+      if (!this.path) return;
+      this.runOwners.add(this.path);
+      void editorEvent("runCells", { path: this.path, cells, source });
+    },
+    stop: () => void editorEvent("stop"),
+    restart: () => void editorEvent("restartKernel", { path: this.path }),
+    openURL: (url) => void editorEvent("openURL", { url }),
+  };
 
   constructor(parent: HTMLElement, problemBar: HTMLElement) {
     this.problemBar = problemBar;
-    this.view = new EditorView({ parent, state: this.makeState("", false) });
+    this.view = new EditorView({ parent, state: this.makeState(null, "", false) });
     new ResizeObserver(() => this.view.requestMeasure()).observe(parent);
     settings.subscribe(() => {
       this.view.dispatch({ effects: wrapCompartment.reconfigure(wrapping(settings.getSnapshot().wrap)) });
@@ -178,13 +210,37 @@ export class PaneEditor {
     });
   }
 
-  private makeState(doc: string, readOnly: boolean) {
-    return EditorState.create({ doc, extensions: this.extensions(readOnly) });
+  private makeState(path: string | null, text: string, readOnly: boolean): EditorState {
+    if (isNotebookPath(path) && this.views.get(path) !== "source") {
+      try {
+        const nb = parseIpynb(text);
+        return EditorState.create({ doc: nb.text, extensions: this.extensions(readOnly, "notebook", nb) });
+      } catch (e) {
+        // Not a notebook we can read: its JSON, and a word why.
+        this.views.set(path, "source");
+        void editorEvent("notebookError", { path, message: String((e as Error).message ?? e) });
+      }
+    }
+    return EditorState.create({ doc: text, extensions: this.extensions(readOnly, isNotebookPath(path) ? "json" : "python") });
   }
 
-  private extensions(readOnly: boolean): Extension[] {
+  /** What ruff and ty check for the document on screen (D44: a notebook's code cells). */
+  private analysisSourceOf = (state: EditorState): AnalysisSource | null => {
+    const path = this.path;
+    if (!path) return null;
+    const data = notebookOf(state);
+    const cells = data?.cells.filter((c) => c.info.type === "code").map((c) => ({ from: c.from, to: c.to }));
+    if (isNotebookPath(path)) {
+      if (data?.kind !== "ipynb") return null; // its JSON
+      return { path: `${path}.py`, text: analysisSource(state), cells };
+    }
+    return { path, text: state.doc.toString(), cells: data?.cells.length ? cells : undefined };
+  };
+
+  private extensions(readOnly: boolean, mode: Mode, notebook?: ReturnType<typeof parseIpynb>): Extension[] {
     const definition = () => void editorEvent("definition");
     const info = () => void editorEvent("info");
+    const code = mode !== "json";
     return [
       readOnlyCompartment.of(readOnlyExt(readOnly)),
       flashField,
@@ -201,23 +257,31 @@ export class PaneEditor {
           return true;
         },
       }),
-      debugExtensions((line, rect) => {
-        if (this.path) void editorEvent("longPress", { path: this.path, line, rect: rectOf(rect) });
-      }),
-      lineNumbers(),
-      highlightActiveLineGutter(),
+      // A notebook has no line numbers (its lines are not the file's) and no breakpoints.
+      mode === "notebook"
+        ? pausedCompartment.of([])
+        : [
+            debugExtensions((line, rect) => {
+              if (this.path) void editorEvent("longPress", { path: this.path, line, rect: rectOf(rect) });
+            }),
+            lineNumbers(),
+            highlightActiveLineGutter(),
+          ],
       highlightSpecialChars(),
       history(),
       drawSelection(),
       indentOnInput(),
       bracketMatching(),
       closeBrackets(),
-      autocompletion({ activateOnTyping: true, icons: false, override: [analysisCompletions(() => this.path)] }),
-      analysisLinter(() => this.path),
+      code ? [
+        autocompletion({ activateOnTyping: true, icons: false, override: [analysisCompletions(this.analysisSourceOf)] }),
+        analysisLinter(this.analysisSourceOf),
+      ] : [],
       highlightActiveLine(),
       highlightSelectionMatches(),
       search({ top: true }),
-      python(),
+      code ? python() : [],
+      mode === "python" ? notebookExtensions("py", this.hooks) : mode === "notebook" ? notebookExtensions("ipynb", this.hooks, notebook) : [],
       wrapCompartment.of(wrapping(settings.getSnapshot().wrap)),
       indentUnit.of("    "),
       EditorState.tabSize.of(4),
@@ -227,11 +291,18 @@ export class PaneEditor {
       EditorView.contentAttributes.of({ autocapitalize: "off", autocorrect: "off", spellcheck: "false", "aria-label": "Code editor" }),
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !u.transactions.some((tr) => tr.annotation(remote))) this.localChange(u);
+        else if (!u.docChanged && this.path && isNotebookPath(this.path) && notebookOf(u.startState) !== notebookOf(u.state)) {
+          // Outputs and cleared outputs are part of a .ipynb (the pane that ran the cells saves them).
+          const fromKernel = u.transactions.some((tr) => tr.effects.some((e) => e.is(kernelEventsEffect)));
+          if (!fromKernel || this.runOwners.has(this.path)) this.saveLater(u.state);
+        }
         if (u.focusChanged) {
           if (!u.view.hasFocus) this.flush();
           void call("keyboard.mode", { mode: u.view.hasFocus ? "code" : "plain" }).catch(() => {});
           void editorEvent("focus", { focused: u.view.hasFocus });
         }
+        // The host's notebook commands follow the file right away (no frame may come while the view moves).
+        if (notebookOf(u.startState) !== notebookOf(u.state)) this.reportNotebook();
         cancelAnimationFrame(this.updateFrame);
         this.updateFrame = requestAnimationFrame(() => this.updated());
       }),
@@ -242,15 +313,20 @@ export class PaneEditor {
   private localChange(u: ViewUpdate) {
     const path = this.path;
     if (!path) return;
-    void editorEvent("changes", { path, changes: JSON.stringify(u.changes.toJSON()) });
-    this.pendingText = u.state.doc.toString();
-    clearTimeout(this.saveTimer);
-    this.saveTimer = window.setTimeout(() => this.flush(), 300);
+    void editorEvent("changes", { path, changes: JSON.stringify(u.changes.toJSON()), notebook: notebookOf(u.state)?.kind === "ipynb" });
+    this.saveLater(u.state);
+    if (notebookOf(u.state)?.kind === "ipynb") return; // no breakpoints in a notebook
     const lines = breakpointLines(u.state);
     if (!sameBreakpoints(lines, this.breakpoints)) {
       this.breakpoints = lines;
       void editorEvent("breakpoints", { path, breakpoints: lines });
     }
+  }
+
+  private saveLater(state: EditorState) {
+    this.pendingText = fileText(state);
+    clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => this.flush(), 300);
   }
 
   /** Report unsaved text now; returns it (or null if there is none). */
@@ -272,6 +348,7 @@ export class PaneEditor {
 
   private updated() {
     const state = this.view.state;
+    this.reportNotebook();
     let errors = 0;
     let warnings = 0;
     let current: Problem | null = null;
@@ -340,6 +417,91 @@ export class PaneEditor {
     if (actions.childElementCount) bar.append(actions);
   }
 
+  /** The host offers notebook commands for files with cells. */
+  private reportNotebook() {
+    const path = this.path;
+    const data = notebookOf(this.view.state);
+    const view = isNotebookPath(path) ? (this.views.get(path) ?? "notebook") : null;
+    const summary = { path, kind: data?.cells.length ? data.kind : null, cells: data?.cells.length ?? 0, view };
+    const key = JSON.stringify(summary);
+    if (key === this.lastNotebook) return;
+    this.lastNotebook = key;
+    void editorEvent("notebook", summary);
+  }
+
+  // -- notebooks (D44) ---------------------------------------------------------------------
+
+  /** What the kernel says about a notebook's cells (also for one that is not on screen). */
+  notebookEvents(path: string, events: KernelEvent[]) {
+    const spec = { effects: kernelEventsEffect.of(events) };
+    if (path === this.path) {
+      if (notebookOf(this.view.state)) this.view.dispatch(spec);
+      return;
+    }
+    const cached = this.states.get(path);
+    if (!cached || !notebookOf(cached)) return;
+    const next = cached.update(spec).state;
+    this.states.set(path, next);
+    if (isNotebookPath(path) && this.runOwners.has(path)) {
+      clearTimeout(this.cachedSaves.get(path));
+      this.cachedSaves.set(path, window.setTimeout(() => {
+        const state = this.states.get(path);
+        if (state) void editorEvent("text", { path, text: fileText(state) });
+      }, 500));
+    }
+  }
+
+  notebookCommand(name: string): unknown {
+    const view = this.view;
+    if (name === "toggleView") return this.setView(this.views.get(this.path ?? "") === "source" ? "notebook" : "source");
+    if (!notebookOf(view.state)) return false;
+    const active = () => {
+      const data = notebookOf(view.state)!;
+      return data.cells.findIndex((c) => (c.marker?.from ?? c.from) <= view.state.selection.main.head && view.state.selection.main.head <= c.to);
+    };
+    switch (name) {
+      case "runCell": return runCell(view);
+      case "runCellAdvance": return runCell(view, undefined, true);
+      case "runAll": return runAll(view);
+      case "runAbove": return runAbove(view);
+      case "runBelow": return runBelow(view);
+      case "insertCode": return insertCell(view, undefined, "code");
+      case "insertMarkdown": return insertCell(view, undefined, "markdown");
+      case "deleteCell": return deleteCell(view);
+      case "moveUp": return moveCell(view, active(), -1);
+      case "moveDown": return moveCell(view, active(), 1);
+      case "toMarkdown": return setCellType(view, active(), "markdown");
+      case "toCode": return setCellType(view, active(), "code");
+      case "clearOutputs": return clearOutputs(view);
+      default: return false;
+    }
+  }
+
+  /** A .ipynb as a notebook or as its JSON. */
+  setView(mode: "notebook" | "source"): { ok: boolean; error?: string } {
+    const path = this.path;
+    if (!isNotebookPath(path)) return { ok: false, error: "Not a notebook" };
+    if ((this.views.get(path) ?? "notebook") === mode) return { ok: true };
+    const text = fileText(this.view.state);
+    if (mode === "notebook") {
+      try {
+        parseIpynb(text);
+      } catch (e) {
+        return { ok: false, error: String((e as Error).message ?? e) };
+      }
+    }
+    this.flush();
+    this.views.set(path, mode);
+    this.view.setState(this.makeState(path, text, this.readOnly.get(path) ?? false));
+    this.view.dispatch({ effects: pausedCompartment.reconfigure(this.pausedExt()) });
+    this.reportNotebook();
+    return { ok: true };
+  }
+
+  notebookInfo() {
+    return { path: this.path, view: isNotebookPath(this.path) ? (this.views.get(this.path) ?? "notebook") : null, ...notebookSummary(this.view.state) };
+  }
+
   // -- the host's API ---------------------------------------------------------------------
 
   /** Show a file; `text` is used when there is no state for it yet. */
@@ -350,13 +512,15 @@ export class PaneEditor {
     if (this.path) this.states.set(this.path, view.state);
     this.path = path;
     if (path === null) {
-      view.setState(this.makeState("", false));
+      view.setState(this.makeState(null, "", false));
       this.updated();
+      this.reportNotebook();
       return;
     }
     this.readOnly.set(path, readOnly);
-    view.setState(this.states.get(path) ?? this.makeState(text, readOnly));
+    view.setState(this.states.get(path) ?? this.makeState(path, text, readOnly));
     view.dispatch({ effects: [setBreakpointsEffect.of(this.breakpoints), pausedCompartment.reconfigure(this.pausedExt())] });
+    this.reportNotebook();
     requestAnimationFrame(() => view.requestMeasure());
     setTimeout(() => view.requestMeasure(), 450);
   }
@@ -366,9 +530,11 @@ export class PaneEditor {
     return this.path === path || this.states.has(path);
   }
 
+  /** The file's text (a notebook's JSON). */
   text(path?: string) {
-    if (!path || path === this.path) return this.view.state.doc.toString();
-    return this.states.get(path)?.doc.toString() ?? null;
+    if (!path || path === this.path) return fileText(this.view.state);
+    const state = this.states.get(path);
+    return state ? fileText(state) : null;
   }
 
   setBreakpoints(list: Breakpoint[]) {
@@ -464,13 +630,17 @@ export class PaneEditor {
     this.command(action as EditorCommand);
   }
 
-  applyRemote(path: string, changesJSON: string) {
+  applyRemote(path: string, changesJSON: string, notebook = false) {
     const changes = ChangeSet.fromJSON(JSON.parse(changesJSON));
     const spec = { changes, annotations: [remote.of(true), Transaction.addToHistory.of(false)] };
-    if (path === this.path) this.view.dispatch(spec);
-    else {
+    // A notebook's edits only fit where it shows as a notebook too.
+    const fits = (state: EditorState) => (notebookOf(state)?.kind === "ipynb") === notebook && state.doc.length === changes.length;
+    if (path === this.path) {
+      if (fits(this.view.state)) this.view.dispatch(spec);
+    } else {
       const cached = this.states.get(path);
-      if (cached) this.states.set(path, cached.update(spec).state);
+      if (cached && fits(cached)) this.states.set(path, cached.update(spec).state);
+      else if (cached) this.states.delete(path);
     }
   }
 
@@ -478,7 +648,12 @@ export class PaneEditor {
   replaceText(path: string, text: string) {
     const view = this.view;
     if (path === this.path) {
-      if (view.state.doc.toString() !== text) {
+      if (fileText(view.state) === text) return;
+      if (notebookOf(view.state)?.kind === "ipynb") {
+        // A notebook written by someone else (the agent): read it again.
+        view.setState(this.makeState(path, text, this.readOnly.get(path) ?? false));
+        view.dispatch({ effects: pausedCompartment.reconfigure(this.pausedExt()) });
+      } else {
         view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, annotations: remote.of(true) });
       }
     } else {
@@ -495,12 +670,27 @@ export class PaneEditor {
         this.states.set(next, st);
       }
     }
+    for (const [p, v] of [...this.views]) {
+      const next = moved(p);
+      if (next) {
+        this.views.delete(p);
+        this.views.set(next, v);
+      }
+    }
+    for (const p of [...this.runOwners]) {
+      const next = moved(p);
+      if (next) {
+        this.runOwners.delete(p);
+        this.runOwners.add(next);
+      }
+    }
     const current = this.path && moved(this.path);
     if (current) this.path = current;
   }
 
   forget(path: string) {
     for (const p of [...this.states.keys()]) if (p === path || p.startsWith(path + "/")) this.states.delete(p);
+    for (const p of [...this.views.keys()]) if (p === path || p.startsWith(path + "/")) this.views.delete(p);
   }
 
   /** Where the cursor is, for go to definition and show info. */
@@ -522,15 +712,24 @@ export class PaneEditor {
           toLine: state.doc.lineAt(sel.to).number,
           truncated: sel.to - sel.from > 4000,
         };
-    return { path: this.path, text: state.doc.toString(), line: line.number, column: pos - line.from + 1, rect, selection };
+    // A notebook's analysis sees its code cells as one Python file (D44).
+    const source = this.analysisSourceOf(state);
+    return {
+      path: this.path, analysisPath: source?.path ?? this.path, text: source?.text ?? state.doc.toString(),
+      line: line.number, column: pos - line.from + 1, rect, selection,
+    };
   }
 
   async format(): Promise<boolean> {
+    const data = notebookOf(this.view.state);
+    if (data?.kind === "ipynb") return formatRanges(this.view, data.cells.filter((c) => c.info.type === "code").map((c) => ({ from: c.from, to: c.to })));
     return formatDocument(this.view);
   }
 
   outline() {
-    return { symbols: outline(this.view.state), lines: this.view.state.doc.lines };
+    let state = this.view.state;
+    if (notebookOf(state)?.kind === "ipynb") state = EditorState.create({ doc: analysisSource(state), extensions: python() });
+    return { symbols: outline(state), lines: state.doc.lines };
   }
 
   problems() {
@@ -592,6 +791,17 @@ export class PaneEditor {
     const doc = this.view.state.doc;
     const l = doc.line(Math.max(1, Math.min(line, doc.lines)));
     this.view.dispatch({ selection: { anchor: Math.min(l.to, l.from + column - 1) } });
+  }
+
+  /** Run a cell by its index (self-test). */
+  notebookRun(index: number) {
+    return runCell(this.view, index);
+  }
+
+  /** Backspace, as the keyboard would (self-test: marker lines are protected). */
+  backspace() {
+    deleteCharBackward(this.view);
+    return fileText(this.view.state);
   }
 
   info() {

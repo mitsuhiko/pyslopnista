@@ -42,6 +42,7 @@ export function startStateSync() {
       debug: s.debug,
       pausing: s.pausing,
       canInspect: session.canInspect,
+      kernel: s.kernel,
     };
     void call("session.state", { json: JSON.stringify(payload) }).catch(() => {});
   };

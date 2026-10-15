@@ -1351,6 +1351,101 @@ The new `ui_close_from_python` test runs a program with
 checks pass in the iPhone 18 Pro simulator (2026-10-15). The two-finger
 swipe was not tested: the self-test can't make touches.
 
+## D44: Notebooks: .ipynb and `# %%` cells in the editor, run in a kernel
+
+2026-10-15 - Accepted (GOALS' "notebook mode" moves from [maybe] to [core])
+
+Both kinds of notebooks work: Jupyter's `.ipynb` (course material, Colab,
+GitHub) and Python files with cells in the percent format (`# %%`, `# %%
+[markdown]`, as VS Code, Spyder and jupytext write them). A `.ipynb` opens
+as a notebook; "Show JSON Source" in the ⋯ menu shows the file itself.
+
+**The editor.** A notebook is one CodeMirror document in the existing
+editor page, not a CodeMirror per cell or native cells:
+- Each cell is a marker line followed by its source. A state field keeps
+  each cell's id, type, outputs and count. It follows the markers through
+  edits by mapping their positions, and structural edits (insert, move,
+  delete, change type) carry the cells' new order in an effect that undo
+  inverts.
+- In a `.py` the markers are the file's own `# %%` lines, which get a ▶
+  button and a count. In a `.ipynb` they are ours (`# %%` plus a
+  private-use character, so no source line can pass for one). They are
+  hidden behind cell headers (▶, `[n]`, and for the cell with the cursor:
+  code/Markdown, move, add, delete), atomic for the cursor, and
+  protected: typing and deleting that touch one are cut down to the parts
+  inside cells, so Backspace at the start of a cell does nothing, as in
+  Jupyter.
+- Outputs are block widgets under their cell, updated in place. Markdown
+  cells render while the editor doesn't have focus or the cursor is
+  elsewhere. A `.ipynb` gets a toolbar (Run All, Restart, Clear, the
+  kernel's state) and an add bar at the end.
+- One document keeps what the editor already does: lint, completions, go
+  to definition, find, undo, the key bar, the split view's mirroring. And
+  focus never has to jump between text fields, which iOS's keyboard
+  makes hard.
+- ruff and ty see a `.ipynb` as `<name>.ipynb.py`: the document with
+  Markdown, magics and `%%html`-style cells blanked to spaces, so every
+  position is the editor's. In both kinds of notebooks, E402, E703, B018 on
+  a cell's last line, top-level `await` and `display` go unreported.
+  Format Code formats each code cell on its own.
+
+**The file.** The editor reads and writes `.ipynb` (nbformat 4, written
+4.5 with cell ids, keys sorted, indent 1, as Jupyter writes it, so diffs
+stay small). Metadata, attachments and outputs are kept. Outputs from a
+run are saved by the pane that ran the cells. A `.py` keeps no outputs.
+
+**The kernel.** The session's interpreter becomes the notebook's kernel
+and stays for its cells (one program at a time, as before). Running a
+script, another notebook, Restart, or Stop's kill (D11) ends it, and the
+notebook shows that. The first cell of a new kernel installs the
+notebook's dependencies (a PEP 723 block or `pyproject.toml`, D22). Cells
+run one after the other from a queue, and an error drops the rest, as Run
+All does in Jupyter. Outputs reach the editors as events (queued, start,
+output, update, clear, done, kernel), batched per frame, which the host
+passes to every pane with the notebook. The console's `>>>` runs in the
+kernel while it lives.
+
+**Python** (`_pyslop_notebook.py`): `run_cell` runs a cell in `__main__`.
+The last expression is shown unless it ends in `;`, top-level `await`
+works, figures are shown at the end, and errors (with KeyboardInterrupt
+and SystemExit) become error outputs with the cell's frames only, so the
+kernel lives on. The display protocol is IPython's: `_repr_html_`,
+`_repr_png_`, `_repr_markdown_`, `_repr_mimebundle_` and so on, and
+`display()` with display ids. An `IPython` module of our own (a meta path
+finder) has `IPython.display` (HTML, Markdown, Image, SVG, JSON, Latex,
+IFrame, clear_output, update_display) and `get_ipython()`. Its shell has
+the `events` and `enable_gui` that matplotlib calls once IPython is
+imported. Pyodide's real IPython is not loaded: imports of it are left out
+of package auto-loading. Magics become one call per line, so line numbers
+stay: `%pip`, `%time`, `%timeit`, `%run`, `%cd`, `%who`, `%%html`,
+`%%writefile`, `obj?` and more; `!cmd` explains that iOS has no shell.
+`input()` in a cell asks with a native alert, since the console is not on
+screen. Turtle graphics draw in the console.
+
+**Security.** Markdown and HTML outputs are sanitized (DOMPurify) and drawn
+in shadow roots. HTML with scripts runs in a sandboxed `srcdoc` frame (an
+opaque origin). The self-test found that WebKit gives subframes the
+`bridge` message handler, so the host now refuses bridge messages from
+frames that are not a page's main frame.
+
+Not done: ipywidgets (a comm protocol), the debugger and breakpoints in
+cells, a variable inspector, LaTeX math, and outputs of `.py` cells
+surviving a reload. The agent edits a `.ipynb` as its JSON (the prompt
+says how); it has no cell tools and can't run cells in the user's kernel.
+
+Evidence: five self-test checks (`notebook_run_all`,
+`notebook_input_and_plot`, `notebook_html_sandbox`, `notebook_py_cells`,
+`notebook_edit_and_analysis`) cover Run All stopping at an error, values,
+streams, `display(HTML)`, `%time`, outputs and ids in the saved file, the
+kernel keeping and losing state, `input()` through the alert, a figure
+after `import IPython`, the sandbox (a frame's bridge call is refused, it
+can't reach the page), `.py` cells and Run still running the script,
+diagnostics, cell edits, protected markers, the JSON view and the
+template. All 68 checks pass in the iPhone 18 Pro Max simulator
+(2026-10-15). Screenshots of the example notebook, rich outputs and a
+`.py` with cells were checked in the simulator. Not tried on a device or
+an iPad.
+
 ## Proposed (not yet decided)
 
 (none)

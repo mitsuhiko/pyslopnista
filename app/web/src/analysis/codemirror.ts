@@ -88,7 +88,7 @@ export async function loadPyodideModules() {
 }
 
 // Modules the runtime provides that ty cannot see.
-const RUNTIME_MODULES = new Set(["js", "pyodide", "pyodide_js", "micropip", "host", "_pyslop", "_pyslophost", "_uihost", ...PUBLIC_MODULES]);
+const RUNTIME_MODULES = new Set(["js", "pyodide", "pyodide_js", "micropip", "host", "_pyslop", "_pyslophost", "_uihost", "IPython", ...PUBLIC_MODULES]);
 
 // Import names that differ from the distribution name for common packages.
 const DIST_FOR_IMPORT: Record<string, string> = {
@@ -122,23 +122,52 @@ function addDependencyAction(module: string): Action {
   };
 }
 
-export function analysisLinter(getPath: () => string | null): Extension {
+/**
+ * What the analysis sees of a document: its path for ty and ruff (a notebook's
+ * ends in .py) and its text, with positions as in the editor. `cells` (a
+ * notebook) turns off what does not apply to cells.
+ */
+export interface AnalysisSource {
+  path: string;
+  text: string;
+  cells?: { from: number; to: number }[];
+}
+
+/** Rules that don't fit notebooks (D44): imports in later cells, a cell's
+ * final expression (it is shown), top-level await, Jupyter's display(). */
+function irrelevantInCells(p: Problem, doc: Text, cells: { from: number; to: number }[]): boolean {
+  if (p.code === "E402" || p.code === "E703") return true; // a ";" hides a cell's value
+  if (/`await`.*outside|outside of an? (async|asynchronous)/i.test(p.message) || p.code === "F704") return true;
+  if (p.source === "ty" && p.code === "unresolved-reference" && /`(display|get_ipython)`/.test(p.message)) return true;
+  if (p.code === "B018") {
+    const end = toOffset(doc, p.end);
+    const cell = cells.find((c) => c.from <= end && end <= c.to);
+    if (!cell) return false;
+    // Only the cell's last line of code.
+    const rest = doc.sliceString(doc.lineAt(end).to, cell.to);
+    return rest.split("\n").every((l) => !l.trim() || l.trim().startsWith("#"));
+  }
+  return false;
+}
+
+export function analysisLinter(getSource: (state: EditorState) => AnalysisSource | null): Extension {
   return linter(
     async (view: EditorView): Promise<Diagnostic[]> => {
-      const path = getPath();
-      if (!path?.endsWith(".py") || path.startsWith("ext:")) return []; // library files are read-only
-      const text = view.state.doc.toString();
+      const source = getSource(view.state);
+      if (!source?.path.endsWith(".py") || source.path.startsWith("ext:")) return []; // library files are read-only
+      const { path, text } = source;
+      const doc = view.state.doc;
       let problems: Problem[];
       try {
         [problems] = await Promise.all([analysis.check(path, text), loadPyodideModules()]);
       } catch {
         return [];
       }
-      if (view.state.doc.toString() !== text) return []; // stale; a newer run is coming
+      if (view.state.doc !== doc) return []; // stale; a newer run is coming
       const declared = new Set(declaredDependencies(text));
-      const doc = view.state.doc;
       const out: Diagnostic[] = [];
       for (const p of problems) {
+        if (source.cells && irrelevantInCells(p, doc, source.cells)) continue;
         const actions: Action[] = [];
         if (p.code === "unresolved-import") {
           const module = /`([\w.]+)`/.exec(p.message)?.[1]?.split(".")[0];
@@ -165,16 +194,16 @@ const KIND_TO_TYPE: Record<number, string> = {
   8: "namespace", 9: "property", 10: "property", 12: "enum", 13: "keyword", 14: "text", 21: "constant",
 };
 
-export function analysisCompletions(getPath: () => string | null) {
+export function analysisCompletions(getSource: (state: EditorState) => AnalysisSource | null) {
   return async (ctx: CompletionContext): Promise<CompletionResult | null> => {
     const word = ctx.matchBefore(/\w*/);
     const afterDot = ctx.state.sliceDoc(Math.max(0, (word?.from ?? ctx.pos) - 1), word?.from ?? ctx.pos) === ".";
     if (!ctx.explicit && !afterDot && (!word || word.to - word.from < 2)) return null;
-    const path = getPath();
-    if (!path) return null;
+    const source = getSource(ctx.state);
+    if (!source) return null;
     try {
       const { line, column } = toLineCol(ctx.state.doc, ctx.pos);
-      const items = await analysis.complete(path, ctx.state.doc.toString(), line, column);
+      const items = await analysis.complete(source.path, source.text, line, column);
       if (ctx.aborted) return null;
       const options: Completion[] = items.map((i, rank) => ({
         label: i.name,
@@ -188,6 +217,26 @@ export function analysisCompletions(getPath: () => string | null) {
       return localCompletionSource(ctx);
     }
   };
+}
+
+/** Formatting of a notebook's code cells, each on its own (cells with magics stay). */
+export async function formatRanges(view: EditorView, ranges: { from: number; to: number }[]) {
+  const doc = view.state.doc;
+  const changes: { from: number; to: number; insert: string }[] = [];
+  for (const r of ranges) {
+    const text = doc.sliceString(r.from, r.to);
+    if (!text.trim() || /^\s*(%|!(?!=))/m.test(text)) continue;
+    let formatted: string;
+    try {
+      formatted = (await analysis.format(text)).replace(/\n+$/, "");
+    } catch {
+      continue; // a syntax error: left as it is
+    }
+    if (formatted !== text) changes.push({ from: r.from, to: r.to, insert: formatted });
+  }
+  if (view.state.doc !== doc || !changes.length) return false;
+  view.dispatch({ changes, userEvent: "format" });
+  return true;
 }
 
 /** Whole-document formatting with ruff. */

@@ -21,6 +21,7 @@ struct FileIcon: View {
         "json": (0xff9500, 0xffcc80),
         "csv": (0x34c759, 0xa8e6b5),
         "toml": (0xaf52de, 0xd9a8f0),
+        "ipynb": (0xf37626, 0xffc996),
     ]
 
     var body: some View {
@@ -42,7 +43,7 @@ struct FileIcon: View {
                 logo.fill(Self.snakeTop, with: .color(Color(hex: ink)))
                 logo.fill(Self.snakeBottom, with: .color(Color(hex: accent)))
             } else {
-                let label = String((ext.isEmpty ? "file" : ext).prefix(4)).uppercased()
+                let label = String((ext.isEmpty ? "file" : ext).prefix(ext == "ipynb" ? 5 : 4)).uppercased()
                 ctx.draw(Text(label).font(.system(size: 6.2, weight: .bold)).foregroundStyle(Color(hex: ink)),
                          at: CGPoint(x: 12, y: 22), anchor: UnitPoint(x: 0.5, y: 0.8))
             }

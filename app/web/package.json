@@ -23,6 +23,8 @@
     "@earendil-works/pi-durable": "1.2.0",
     "@lezer/highlight": "^1.2.5",
     "diff": "8.0.4",
+    "dompurify": "^3.4.17",
+    "marked": "^18.1.1",
     "smol-toml": "^1.9.1",
     "ty_wasm": "file:../vendor/ty_wasm"
   },

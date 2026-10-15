@@ -53,7 +53,9 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 - [core] Rich output: images, plots and HTML shown inline
 - [later] Variable inspector
 - [later] Step-through debugger
-- [maybe] Notebook mode (cells), compatible with `.ipynb`
+- [core] Notebooks: `.ipynb` files and `# %%` cells in `.py` files, run cell by cell in a kernel with rich output (D44)
+- [later] Interactive widgets (ipywidgets) in notebooks
+- [later] Debugger and variable inspector for notebook cells
 
 ## Projects and files
 

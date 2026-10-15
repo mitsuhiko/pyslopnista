@@ -88,6 +88,16 @@ enum SelfTest {
             // Answer the dialog a program waits for, as a tap would (D40).
             for _ in 0..<100 where !model.device.testHasDialog { try await Task.sleep(for: .milliseconds(50)) }
             return model.device.testAnswer(args.first is NSNull ? nil : args.first)
+        case "notebookAnswer":
+            // Answer a cell's input() as the alert would (nil: Cancel); returns its title (D44).
+            for _ in 0..<200 where model.notebookPrompt == nil { try await Task.sleep(for: .milliseconds(50)) }
+            let title = model.notebookPrompt?.title
+            model.answerNotebookPrompt(args.first as? String, dismiss: true)
+            return title ?? NSNull()
+        case "notebookPane":
+            return model.notebook.map { ["path": $0.path, "kind": $0.kind ?? NSNull(), "cells": $0.cells, "view": $0.view ?? NSNull()] as [String: Any] } ?? NSNull()
+        case "kernel":
+            return model.session.kernel.map { ["path": $0.path, "python": $0.python, "count": $0.count] as [String: Any] } ?? NSNull()
         case "setTheme":
             model.updateSettings { $0.theme = str(0) ?? "pyslopnista" }
         case "setAppearance":

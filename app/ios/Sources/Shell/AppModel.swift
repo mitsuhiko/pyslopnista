@@ -185,6 +185,9 @@ final class AppModel {
     var folderPin: String?
     /// Files and folders pinned to the top of the browser (D41).
     var favorites: [String] = []
+    /// What each pane's file is as a notebook (D44, AppModel+Notebook.swift).
+    var notebookPanes: [Int: NotebookPane] = [:]
+    @ObservationIgnored var notebookPrompt: NotebookPrompt?
     @ObservationIgnored let docs = DocsPresenter()
     /// The device modules' native side (D40).
     @ObservationIgnored lazy var device: DeviceBridge = {
@@ -390,6 +393,11 @@ final class AppModel {
         case (.engine, "breakpoints.changed"):
             setBreakpointsFromEngine(value["data"] as? [String: Any] ?? [:])
             reply(nil, nil)
+        case (.engine, "notebook.events"):
+            notebookEvents(value)
+            reply(nil, nil)
+        case (.engine, "notebook.input"):
+            notebookInput(value["prompt"] as? String ?? "", reply: reply)
         case (.engine, "turtle.ops"):
             if let key = value["key"] as? String, let ops = value["ops"] as? String { turtle(key).apply(ops) }
             reply(nil, nil)
@@ -471,6 +479,8 @@ final class AppModel {
             if consoleDetent == .peek { consoleDetent = .half }
             if wide { consoleDocked = true }
         }
+        // A cell's input() alert goes when its cell was stopped.
+        if !session.running, notebookPrompt != nil { answerNotebookPrompt(nil, dismiss: true) }
         if session.awaitingInput {
             if consoleDetent == .peek { consoleDetent = .half }
             if focusedField != .input { focusedField = .input }
@@ -545,8 +555,9 @@ final class AppModel {
         case "changes":
             guard let path = value["path"] as? String, let changes = value["changes"] as? String else { return }
             lastTyped[pane] = Date()
+            let notebook = value["notebook"] as? Bool ?? false
             for other in editors.indices where other != pane && panes.indices.contains(other) && panes[other].tabs.contains(path) {
-                Task { _ = await editorCall(other, "applyRemote", [path, changes]) }
+                Task { _ = await editorCall(other, "applyRemote", [path, changes, notebook]) }
             }
         case "text":
             guard let path = value["path"] as? String, let text = value["text"] as? String, !isExternal(path) else { return }
@@ -576,6 +587,8 @@ final class AppModel {
             Task { _ = await showInfo() }
         case "showProblems":
             activeSheet = .problems
+        case "notebook", "runCells", "stop", "restartKernel", "openURL", "notebookError":
+            notebookEditorEvent(pane, type, value)
         default:
             break
         }
@@ -910,6 +923,8 @@ final class AppModel {
 
     func run() async {
         guard let file, !isExternal(file) else { return }
+        // A notebook runs all its cells, in its kernel (D44).
+        if file.hasSuffix(".ipynb") { return notebookCommand("runAll") }
         haptic()
         await saveAll()
         var code = await editorCall(focused, "text") as? String
@@ -1034,6 +1049,8 @@ final class AppModel {
 
     private struct Cursor {
         let path: String
+        /// What ty knows the file as (a notebook's code as a .py, D44).
+        let analysisPath: String
         let text: String
         let line: Int
         let column: Int
@@ -1042,7 +1059,8 @@ final class AppModel {
 
     private func cursor() async -> Cursor? {
         guard let c = await editorCall(focused, "cursor") as? [String: Any], let path = c["path"] as? String, path == file else { return nil }
-        return Cursor(path: path, text: c["text"] as? String ?? "", line: c["line"] as? Int ?? 1, column: c["column"] as? Int ?? 1,
+        return Cursor(path: path, analysisPath: c["analysisPath"] as? String ?? path, text: c["text"] as? String ?? "",
+                      line: c["line"] as? Int ?? 1, column: c["column"] as? Int ?? 1,
                       rect: c["rect"] is [String: Any] ? rect(c["rect"]) : nil)
     }
 
@@ -1054,12 +1072,13 @@ final class AppModel {
         }
         await rootSync?.value // the folder's modules must be known first
         do {
-            let targets = try await analysis("definition", [c.path, c.text, c.line, c.column]) as? [[String: Any]] ?? []
-            guard let target = targets.first, let path = target["path"] as? String else {
+            let targets = try await analysis("definition", [c.analysisPath, c.text, c.line, c.column]) as? [[String: Any]] ?? []
+            guard let target = targets.first, var path = target["path"] as? String else {
                 showToast("No definition found")
                 return ["targets": targets]
             }
             let start = target["start"] as? [String: Any] ?? [:]
+            if path == c.analysisPath { path = c.path } // in the notebook itself
             haptic()
             await openLocation(path, line: start["line"] as? Int, column: start["column"] as? Int, keepConsole: true)
             return ["file": c.path, "line": c.line, "column": c.column, "targets": targets]
@@ -1073,10 +1092,10 @@ final class AppModel {
         guard let c = await cursor(), !isExternal(c.path) else { return nil }
         let pop = EditorPopover(pane: focused, rect: c.rect ?? CGRect(x: 40, y: 80, width: 1, height: 1), kind: .info(nil))
         popover = pop
-        let markdown = (try? await analysis("hover", [c.path, c.text, c.line, c.column])) as? String ?? ""
+        let markdown = (try? await analysis("hover", [c.analysisPath, c.text, c.line, c.column])) as? String ?? ""
         if popover?.id == pop.id { popover?.kind = .info(markdown) }
         // A standard library name gets a link into the docs.
-        if let docs = await docsTarget(path: c.path, text: c.text, line: c.line, column: c.column), popover?.id == pop.id {
+        if let docs = await docsTarget(path: c.analysisPath, text: c.text, line: c.line, column: c.column), popover?.id == pop.id {
             popover?.docs = docs
         }
         return markdown
@@ -1208,7 +1227,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>][&docs=<version>/<ref, # as %23>][&settings][&newfile=<dir>][&move=<path>][&trash]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&cells][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>][&docs=<version>/<ref, # as %23>][&settings][&newfile=<dir>][&move=<path>][&trash]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1231,6 +1250,10 @@ final class AppModel {
         if hook["run"] != nil {
             try? await Task.sleep(for: .milliseconds(300))
             await run()
+        }
+        if hook["cells"] != nil {
+            try? await Task.sleep(for: .milliseconds(300))
+            notebookCommand("runAll")
         }
         switch hook["pane"] {
         case "console": if wide { consoleDocked = true } else { consoleDetent = .half }

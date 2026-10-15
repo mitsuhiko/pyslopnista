@@ -478,7 +478,7 @@ def render_app_docs(root: Path, release: str) -> int:
         tree = _parse(src.read_text())
         title = re.sub(r"[`*]", "", tree[0]["title"]) if tree else stem
         # turtle's page is about the app; the module itself is the standard library's.
-        module = None if stem in ("index", "turtle") else stem
+        module = None if stem in ("index", "turtle", "notebooks") else stem
         content = "".join(_render(n, module) for n in tree)
         crumbs = f'<li><a href="../index.html">{release} Documentation</a> &#187;</li>\n'
         if stem != "index":

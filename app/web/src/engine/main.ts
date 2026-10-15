@@ -43,6 +43,9 @@ const commands: Record<string, Command> = {
   // Runs end much later; the host follows them through the session state.
   runFile: ({ path, code }) => void session.runFile(path, code),
   runConsole: ({ source }) => void session.runConsole(source),
+  // Notebook cells (D44): false when another program is running.
+  runCells: ({ path, cells, source }) => session.runCells(path, cells ?? [], source ?? ""),
+  restartKernel: ({ path }) => session.restartKernel(path),
   submitInput: ({ text }) => session.submitInput(text),
   stop: () => session.stop(),
   pause: () => session.pause(),

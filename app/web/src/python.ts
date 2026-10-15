@@ -14,6 +14,8 @@ export interface RunOptions {
   filename?: string;
   cwd?: string; // directory inside the interpreter's file system (the mounted folder, see attach)
   repl?: boolean; // run as console input (shows the value of a final expression)
+  /** Run as a notebook cell (D44); `prepare` is the notebook's source when the kernel is new (its dependencies). */
+  cell?: { count: number; prepare?: string | null };
   breakpoints?: Record<string, number[]>; // project-relative path -> lines (D23)
 }
 
@@ -57,6 +59,8 @@ export class PyWorker {
   onOutput: (stream: Stream, text: string) => void = () => {};
   onInput: () => Promise<string | null> = async () => null;
   onUIRender: (json: string) => void = () => {};
+  /** A rich output, an error of a cell, display() (JSON, D44). */
+  onDisplay: (json: string) => void = () => {};
   onCrash: (error: string) => void = () => {};
   /** A debugger message; the returned promise is the next command (D23). */
   onDebug: (message: any) => Promise<unknown> = async () => ({ op: "continue" });
@@ -108,6 +112,9 @@ export class PyWorker {
         break;
       case "ui-render":
         this.onUIRender(msg.tree);
+        break;
+      case "display":
+        this.onDisplay(msg.json);
         break;
       case "turtle":
         this.onTurtle(msg.batches);

@@ -217,6 +217,8 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   });
   py.registerJsModule("_pyslophost", {
     image: (b64) => postMessage({ type: "output", stream: "image", text: b64 }),
+    // Rich outputs and errors of notebook cells, display() (D44): JSON.
+    display: (json) => (flushTurtle(), postMessage({ type: "display", json })),
     status: (text) => postMessage({ type: "output", stream: "system", text: text + "\n" }),
     // The debugger's blocking round trip (_pyslop_debug.py); null when interrupted.
     debug: (json) => {
@@ -277,7 +279,7 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   runPlumbing([
     "import sys",
     "sys.path.append('/lib/pyslop')",
-    "import _pyslop, _pyslop_debug",
+    "import _pyslop, _pyslop_debug, _pyslop_notebook",
     interruptInts ? "import host\n_pyslop_debug.install(host.sleep)\ndel host" : "_pyslop_debug.install()",
   ].join("\n"));
   postMessage({
@@ -324,7 +326,19 @@ async function callRuntime(module, name, ...args) {
   }
 }
 
-async function run({ code, filename, cwd, mount: token, repl, indexURL, breakpoints }) {
+/** What a notebook cell is as Python (its magics as calls), for finding its imports. */
+function cellPython(code) {
+  const nb = py.pyimport("_pyslop_notebook");
+  try {
+    return nb.transform_cell(code);
+  } catch {
+    return "";
+  } finally {
+    nb.destroy();
+  }
+}
+
+async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, breakpoints }) {
   const t0 = performance.now();
   try {
     if (token && cwd) {
@@ -336,30 +350,38 @@ async function run({ code, filename, cwd, mount: token, repl, indexURL, breakpoi
       py.FS.chdir(cwd);
       runPlumbing(`import sys\nif ${JSON.stringify(cwd)} not in sys.path: sys.path.insert(0, ${JSON.stringify(cwd)})\nsys.argv = [${JSON.stringify(filename ?? "")}]`);
     }
-    if (!repl) {
+    const index = indexURL ?? new URL("/pypi/simple", location.href).href;
+    if (cell) {
+      // A notebook kernel's first cell (D44): the notebook's dependencies first.
+      if (cell.prepare != null) await callRuntime("_pyslop", "prepare_environment", cell.prepare, cwd ?? "/home/pyodide", index);
+    } else if (!repl) {
       // Declared dependencies (PEP 723 or pyproject.toml) first, then
       // Pyodide packages that are imported but not declared.
-      await callRuntime("_pyslop", "prepare_environment", code, cwd ?? "/home/pyodide", indexURL ?? new URL("/pypi/simple", location.href).href);
+      await callRuntime("_pyslop", "prepare_environment", code, cwd ?? "/home/pyodide", index);
     }
+    // A cell's magics are no Python; IPython is our shim, not Pyodide's package.
+    const python = (cell ? cellPython(code) : code).replace(/^[ \t]*(import|from)[ \t]+IPython\b.*$/gm, "");
     // urllib.request has no Pyodide backend of its own: pyodide-http adds one (sync XHR).
-    if (/^\s*(import|from)\s[^\n#]*\burllib\b/m.test(code)) {
+    if (/^\s*(import|from)\s[^\n#]*\burllib\b/m.test(python)) {
       await py.loadPackage("pyodide-http");
       runPlumbing("import pyodide_http\npyodide_http.patch_urllib()");
     }
     // The device modules hand over images as PIL images (D40): Pillow comes along.
-    if (/^\s*(import|from)\s[^\n#]*\b(photos|clipboard|location)\b/m.test(code)) {
+    if (/^\s*(import|from)\s[^\n#]*\b(photos|clipboard|location)\b/m.test(python)) {
       await py.loadPackage("pillow").catch(() => {}); // not every Python has it (3.15)
     }
-    await py.loadPackagesFromImports(code, {
+    await py.loadPackagesFromImports(python, {
       messageCallback: (m) => m.startsWith("Loading ") && postMessage({ type: "output", stream: "system", text: m.replace(/^Loading /, "Loading packages: ") + "\n" }),
       errorCallback: (m) => postMessage({ type: "output", stream: "stderr", text: m + "\n" }),
     });
     // urllib3 drops User-Agent because browsers forbid setting it; our proxy
     // sets it (the XHR/fetch shim passes it along), so let it through.
-    if (/\b(requests|urllib3)\b/.test(code)) {
+    if (/\b(requests|urllib3)\b/.test(python)) {
       runPlumbing("try:\n    import urllib3.contrib.emscripten.fetch as _f\n    _f.HEADERS_TO_IGNORE = ()\nexcept ImportError:\n    pass");
     }
-    if (repl) {
+    if (cell) {
+      await callRuntime("_pyslop_notebook", "run_cell", code, cell.count, index);
+    } else if (repl) {
       await callRuntime("_pyslop", "repl", code);
     } else {
       await callRuntime("_pyslop_debug", "start", JSON.stringify(breakpoints ?? {}));

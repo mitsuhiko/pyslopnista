@@ -1142,6 +1142,180 @@ export async function selftest() {
 
   const typeNative = (text: string) => call<string>("test.type", { text });
 
+  // -- notebooks (D44) ---------------------------------------------------------------
+
+  const nbInfo = () => editorCall<any>("notebookInfo");
+  const ipynb = (cells: { type?: "code" | "markdown"; source: string }[]) =>
+    JSON.stringify({
+      cells: cells.map((c, i) => ({
+        cell_type: c.type ?? "code", id: `cell${i}`, metadata: {}, source: c.source,
+        ...((c.type ?? "code") === "code" ? { outputs: [], execution_count: null } : {}),
+      })),
+      metadata: {}, nbformat: 4, nbformat_minor: 5,
+    });
+  async function openNotebook(path: string, cells: number) {
+    await app.openFile(path);
+    return until(async () => (await app.editorPath()) === path && (await nbInfo())?.cells?.length === cells && nbInfo(), 10000);
+  }
+  const cellDone = (index: number, timeout = 60000) =>
+    until(async () => {
+      const info = await nbInfo();
+      const c = info?.cells?.[index];
+      return c && c.status === "idle" && c.outputs.length && info.cells.every((x: any) => x.status === "idle") ? info : null;
+    }, timeout);
+  const expect = (cond: unknown, what: string, data: unknown) => {
+    if (!cond) throw new Error(`${what}: ${JSON.stringify(data).slice(0, 1500)}`);
+  };
+
+  await step("notebook_run_all", async () => {
+    await fs.mkdir("Tests").catch(() => {});
+    await fs.mkdir("Tests/nb").catch(() => {});
+    const path = "Tests/nb/test.ipynb";
+    await fs.writeText(path, ipynb([
+      { source: "x = 41\nx + 1" },
+      { type: "markdown", source: "# Title\nSome *text*." },
+      { source: "import sys\nprint('hi')\nprint('oops', file=sys.stderr)" },
+      { source: "from IPython.display import HTML, display\ndisplay(HTML('<b>bold</b>'))\n%time sum(range(10))" },
+      { source: "1/0" },
+      { source: "x * 2" },
+    ]));
+    await openNotebook(path, 6);
+    await editorCall("notebookCommand", "runAll");
+    const info = await cellDone(4);
+    const [c0, , c2, c3, c4, c5] = info.cells;
+    expect(c0.count === 1 && c0.outputs[0]?.type === "execute_result" && c0.outputs[0].text === "42", "value", c0);
+    expect(c2.outputs.some((o: any) => o.name === "stdout" && o.text === "hi\n") && c2.outputs.some((o: any) => o.name === "stderr" && o.text.includes("oops")), "streams", c2);
+    expect(c3.outputs[0]?.mimes?.includes("text/html") && c3.outputs.some((o: any) => o.type === "stream" && o.text.includes("Wall time")) && c3.outputs.some((o: any) => o.type === "execute_result" && o.text === "45"), "display, %time", c3);
+    expect(c4.outputs[0]?.type === "error" && c4.outputs[0].ename === "ZeroDivisionError", "error", c4);
+    expect(c5.count === null && !c5.outputs.length, "Run All stops at an error", c5);
+    expect(info.kernel === "idle" && /^3\./.test(info.python ?? ""), "kernel", info);
+    // The outputs are in the file, as Jupyter writes them.
+    const saved = await until(async () => {
+      const nb = JSON.parse(await fs.readText(path));
+      return nb.cells[4].outputs?.length ? nb : null;
+    }, 5000);
+    expect(saved.cells.map((c: any) => c.id).join() === "cell0,cell1,cell2,cell3,cell4,cell5", "ids kept", saved.cells);
+    expect(saved.cells[0].outputs[0].data["text/plain"].join("") === "42" && saved.cells[0].execution_count === 1, "saved value", saved.cells[0]);
+    expect(saved.cells[1].source.join("") === "# Title\nSome *text*." && saved.nbformat_minor === 5, "saved markdown", saved.cells[1]);
+    // The kernel keeps its variables between cells...
+    await editorCall("notebookRun", 5);
+    const again = await cellDone(5);
+    expect(again.cells[5].outputs[0]?.text === "82" && again.cells[5].count === 5, "kernel state", again.cells[5]);
+    // ...until it restarts.
+    session.restartKernel(path);
+    await until(async () => (await nbInfo()).kernel === "dead", 5000);
+    await editorCall("notebookRun", 5);
+    const fresh = await until(async () => {
+      const i = await nbInfo();
+      return i.cells[5].outputs[0]?.type === "error" && i.cells[5].status === "idle" ? i : null;
+    }, 30000);
+    expect(fresh.cells[5].outputs[0].ename === "NameError" && fresh.cells[5].count === 1, "restarted", fresh.cells[5]);
+  });
+
+  await step("notebook_input_and_plot", async () => {
+    const path = "Tests/nb/input.ipynb";
+    await fs.writeText(path, ipynb([
+      { source: "name = input('Name? ')\nprint('Hi', name)" },
+      // IPython (our shim) first: matplotlib then talks to its shell.
+      { source: "from IPython.display import display\nimport matplotlib.pyplot as plt\nplt.plot([1, 3, 2])\nplt.title('t');" },
+    ]));
+    await openNotebook(path, 2);
+    await editorCall("notebookRun", 0);
+    const title = await appCall<string | null>("notebookAnswer", "Ada");
+    const info = await cellDone(0);
+    expect(title === "Name?" && info.cells[0].outputs.map((o: any) => o.text).join("") === "Name? Ada\nHi Ada\n", "input()", { title, cell: info.cells[0] });
+    await editorCall("notebookRun", 1);
+    const plot = await cellDone(1, 90000);
+    expect(plot.cells[1].outputs.some((o: any) => o.type === "display_data" && o.mimes.includes("image/png")), "figure", plot.cells[1]);
+  });
+
+  // HTML outputs with scripts run in a sandboxed frame, which can't reach the host (D44).
+  await step("notebook_html_sandbox", async () => {
+    const path = "Tests/nb/html.ipynb";
+    const script = [
+      "<div>probe</div><script>",
+      "const report = (s) => parent.postMessage({ nbProbe: s }, '*');",
+      "try { window.webkit.messageHandlers.bridge.postMessage({ op: 'echo', value: 'hi' }).then((v) => report('reached: ' + v), (e) => report('refused: ' + e.message)); }",
+      "catch (e) { report('no bridge: ' + e.message); }",
+      "try { report('parent: ' + parent.document.title); } catch (e) { report('no parent'); }",
+      "</script>",
+    ].join("\n");
+    await fs.writeText(path, ipynb([{ source: `from IPython.display import HTML\nHTML(${JSON.stringify(script)})` }]));
+    await openNotebook(path, 1);
+    await editorCall("notebookRun", 0);
+    await cellDone(0);
+    const probes = await until(async () => {
+      const p = await editorCall<string[]>("frameProbes");
+      return p.length >= 2 ? p : null;
+    }, 10000);
+    expect(probes.includes("no parent") && probes.some((p) => p.startsWith("refused") || p.startsWith("no bridge")) && !probes.some((p) => p.startsWith("reached")), "sandbox", probes);
+    return { probes };
+  });
+
+  await step("notebook_py_cells", async () => {
+    const path = "Tests/nb/cells.py";
+    await fs.writeText(path, "# %%\na = 2\n\n# %% [markdown]\n# Notes\n\n# %%\nprint(a * 21)\n");
+    await openNotebook(path, 3);
+    const pane = await until(() => appCall<any>("notebookPane"), 5000).catch(() => {
+      throw new Error("the host doesn't know the notebook");
+    });
+    expect(pane.kind === "py" && pane.cells === 3, "the host knows", pane);
+    await editorCall("notebookCommand", "runAll");
+    const info = await cellDone(2);
+    expect(info.kind === "py" && info.cells[1].type === "markdown" && info.cells[2].outputs[0]?.text === "42\n", "cells in a .py", info);
+    // Run still runs the file as a script (and ends the kernel).
+    session.clear();
+    await app.run();
+    await until(() => consoleText().includes("42"), 30000).catch(() => {
+      throw new Error(`the script's output: ${consoleText().slice(-300)}`);
+    });
+    await until(idle);
+    await until(async () => (await nbInfo()).kernel === "dead", 5000).catch(async () => {
+      throw new Error(`kernel: ${JSON.stringify(await nbInfo()).slice(0, 300)}`);
+    });
+  });
+
+  await step("notebook_edit_and_analysis", async () => {
+    const path = "Tests/nb/edit.ipynb";
+    await fs.writeText(path, ipynb([
+      { source: "import os\n%matplotlib inline\nvalue = 1\nvalue" },
+      { source: "import json\nimport asyncio\nawait asyncio.sleep(0)\njson.dumps(value)" },
+    ]));
+    await openNotebook(path, 2);
+    // ruff and ty see the code cells: the unused import, not what fits a notebook.
+    const diagnostics = await until(async () => {
+      const d = await editorCall<{ source: string; message: string }[]>("diagnostics");
+      return d.length ? d : null;
+    }, 20000);
+    const sources = diagnostics.map((d) => d.source);
+    expect(sources.includes("ruff F401") && diagnostics.length === 1, "diagnostics", diagnostics);
+    // Cells: add, move, delete; a marker line can't be deleted.
+    await editorCall("setCursor", 2, 1);
+    await editorCall("notebookCommand", "insertMarkdown");
+    let info = await until(async () => ((await nbInfo()).cells.length === 3 ? nbInfo() : null), 3000);
+    expect(info.cells[1].type === "markdown" && info.active === 1, "inserted", info);
+    await editorCall("insert", "## Hello");
+    await editorCall("notebookCommand", "moveDown");
+    info = await nbInfo();
+    expect(info.cells.map((c: any) => c.type).join() === "code,code,markdown" && info.cells[2].source === "## Hello" && info.active === 2, "moved", info);
+    await editorCall("notebookCommand", "deleteCell");
+    info = await nbInfo();
+    expect(info.cells.length === 2 && info.cells.every((c: any) => c.type === "code"), "deleted", info);
+    await editorCall("setCursor", 7, 1); // the start of the second cell
+    const before = await editorCall<string>("text");
+    const after = await editorCall<string>("backspace");
+    expect(before === after, "Backspace at a cell's start", { before: before.slice(0, 300), after: after.slice(0, 300) });
+    // Its JSON, and back.
+    expect((await editorCall("setView", "source")).ok, "source view", null);
+    const json = (await editorCall<{ text: string }>("info")).text;
+    expect(JSON.parse(json).cells.length === 2 && (await appCall("notebookPane"))?.view === "source", "JSON", json.slice(0, 200));
+    expect((await editorCall("setView", "notebook")).ok && (await nbInfo()).cells.length === 2, "notebook view", null);
+    // The template.
+    const created = await appCall<string>("newFromTemplate", "Tests/nb", "fresh", "notebook");
+    const fresh = await openNotebook(created, 2);
+    expect(created === "Tests/nb/fresh.ipynb" && fresh.cells[0].type === "markdown", "template", fresh);
+  });
+
   await step("typing_console", async () => {
     await fs.writeText("Tests/typing.py", "x = 1\n");
     const { done } = await runFile("Tests/typing.py");

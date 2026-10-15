@@ -38,7 +38,8 @@ user and the agent (D37), Home Screen shortcuts that run a program
 (D38), editor themes (D39), iOS device modules with Pythonista's API (D40)
 and file management with a Trash, moving, Quick Look, favorites and
 templates (D41), documented with the Python docs (D42; sources in
-`app/docs/`). Next: the agent on a device (Q22), the rest of D34's list (write
+`app/docs/`), and notebooks: `.ipynb` and `# %%` cells run in a kernel
+with rich output (D44). Next: the agent on a device (Q22), the rest of D34's list (write
 conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 Bundled Python versions and docs archives are pinned in `app/runtimes.json`

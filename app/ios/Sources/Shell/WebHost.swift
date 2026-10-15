@@ -72,6 +72,12 @@ final class WebHost: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDele
             replyHandler(nil, "unknown web view")
             return
         }
+        // Only the pages themselves: a notebook's HTML outputs with scripts run in
+        // sandboxed frames, which must not reach the host (D44).
+        guard message.frameInfo.isMainFrame else {
+            replyHandler(nil, "not available in frames")
+            return
+        }
         let value = body["value"] as? [String: Any] ?? [:]
         if op.hasPrefix("hostfs.") {
             hostFSOperation(op, value, reply: replyHandler)

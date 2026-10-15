@@ -41,6 +41,14 @@ struct DebugScope: Codable, Equatable {
     let variables: [DebugVariable]
 }
 
+/// The interpreter is a notebook's kernel (D44); `cell` is the count of the cell running.
+struct KernelInfo: Codable, Equatable {
+    let path: String
+    let python: String
+    let count: Int
+    let cell: Int?
+}
+
 struct DebugState: Codable, Equatable {
     let stopId: Int
     let firstLineId: Int
@@ -75,6 +83,7 @@ private struct Payload: Codable {
     let debug: DebugState?
     let pausing: Bool
     let canInspect: Bool
+    let kernel: KernelInfo?
 }
 
 @MainActor @Observable
@@ -90,6 +99,7 @@ final class SessionMirror {
     private(set) var debug: DebugState?
     private(set) var pausing = false
     private(set) var canInspect = false
+    private(set) var kernel: KernelInfo?
 
     var running: Bool { status != "idle" }
     var lastRun: RunInfo? { lines.last.flatMap { runs[$0.runId] } }
@@ -121,6 +131,7 @@ final class SessionMirror {
         if debug != p.debug { debug = p.debug }
         if pausing != p.pausing { pausing = p.pausing }
         if canInspect != p.canInspect { canInspect = p.canInspect }
+        if kernel != p.kernel { kernel = p.kernel }
         return true
     }
 

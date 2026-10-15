@@ -87,3 +87,70 @@ button { font: inherit; border: 0; background: none; color: inherit; cursor: poi
 @keyframes flash-line { from { background: color-mix(in srgb, var(--tint) 24%, transparent); } to { background: transparent; } }
 
 .cm-panel.cm-panel-lint ul { max-height: 30vh; font-family: -apple-system, system-ui; font-size: 14px; }
+
+/* -- Notebooks (D44) -------------------------------------------------------------------
+   A .ipynb: a toolbar, cell headers instead of the hidden marker lines, code cells
+   on a tinted card, outputs below them. A .py with # %%: a run button on each marker. */
+:root {
+  --nb-card: color-mix(in srgb, var(--editor-fg, #000) 5%, transparent);
+  --nb-card-active: color-mix(in srgb, var(--tint) 9%, transparent);
+  --nb-ui: -apple-system, system-ui, sans-serif;
+}
+.nb-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 30px; height: 30px;
+  border-radius: 15px; color: var(--secondary); -webkit-user-select: none; user-select: none; font: 600 13px var(--nb-ui);
+}
+.nb-button:active { opacity: 0.6; }
+.nb-button.disabled { opacity: 0.3; pointer-events: none; }
+.nb-button.nb-run { width: 28px; min-width: 28px; height: 28px; color: var(--tint); background: color-mix(in srgb, var(--tint) 13%, transparent); }
+.nb-button.nb-run.running { color: var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); }
+.nb-button.nb-text { padding: 0 10px; background: var(--fill); }
+.nb-button.nb-pill { padding: 0 12px; color: var(--tint); background: color-mix(in srgb, var(--tint) 11%, transparent); }
+.nb-button.nb-pill.stop { color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+
+.nb-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 4px; font-family: var(--nb-ui); }
+.nb-kernel { margin-left: auto; font: 12px var(--nb-ui); color: var(--secondary); white-space: nowrap; }
+.nb-kernel.busy, .nb-kernel.starting { color: var(--pc); }
+.nb-addbar { display: flex; gap: 8px; padding: 14px 12px 8px; }
+
+.nb-header { display: flex; align-items: center; gap: 8px; padding: 12px 10px 4px 12px; font-family: var(--nb-ui); min-height: 30px; }
+.nb-count { font: 12px var(--mono); color: var(--secondary); white-space: pre; }
+.nb-label { font: 600 11px var(--nb-ui); letter-spacing: 0.4px; text-transform: uppercase; color: var(--secondary); padding-left: 4px; }
+.nb-spacer { flex: 1; }
+.nb-tools { display: inline-flex; gap: 2px; align-items: center; }
+
+/* Cells: lines on a card, inset from the edges. */
+.cm-line.cm-nb-line { border-inline: 8px solid transparent; background-clip: padding-box; }
+.cm-line.cm-nb-code { background-color: var(--nb-card); }
+.cm-line.cm-nb-first { border-top-left-radius: 14px 10px; border-top-right-radius: 14px 10px; padding-top: 6px !important; }
+.cm-line.cm-nb-last { border-bottom-left-radius: 14px 10px; border-bottom-right-radius: 14px 10px; padding-bottom: 6px !important; }
+.cm-line.cm-nb-markdown.cm-nb-active, .cm-line.cm-nb-raw { background-color: var(--nb-card); }
+.cm-line.cm-nb-active.cm-nb-code { background-color: var(--nb-card-active); }
+.cm-line.cm-nb-active.cm-activeLine { background-color: var(--nb-card-active); }
+.cm-line.cm-nb-empty-md::before { content: "Markdown"; color: var(--tertiary); font-family: var(--nb-ui); position: absolute; pointer-events: none; }
+
+.nb-md-cell { padding: 2px 18px 2px; cursor: text; }
+.nb-md-cell.empty { color: var(--tertiary); font: 15px var(--nb-ui); padding: 8px 18px; }
+
+.nb-outputs { padding: 6px 14px 4px 18px; display: flex; flex-direction: column; gap: 6px; font-family: var(--nb-ui); min-width: 0; }
+.nb-outputs:empty { display: none; }
+.nb-outputs pre { margin: 0; font: 0.88em/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--editor-fg); }
+.nb-outputs .nb-stream.stderr { color: color-mix(in srgb, var(--red) 75%, var(--editor-fg)); }
+.nb-outputs .nb-error {
+  padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--red) 10%, transparent);
+  border-left: 3px solid var(--red); white-space: pre-wrap;
+}
+.nb-outputs .nb-image { display: block; max-width: 100%; height: auto; border-radius: 4px; align-self: flex-start; }
+.nb-outputs .nb-frame { width: 100%; border: 0; display: block; background: transparent; }
+.nb-outputs .nb-status, .nb-status { font: 13px var(--nb-ui); color: var(--secondary); }
+.nb-outputs .nb-rich { min-width: 0; }
+
+/* A .py's cells: a line above each marker, its run button after it. */
+.cm-line.cm-nb-marker { border-top: 1px solid color-mix(in srgb, var(--editor-fg, #000) 14%, transparent); padding-top: 4px !important; }
+.nb-chip { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; vertical-align: middle; text-indent: 0; }
+.nb-header, .nb-outputs, .nb-md-cell, .nb-toolbar, .nb-addbar { text-indent: 0; }
+.nb-chip .nb-button.nb-run { width: 24px; min-width: 24px; height: 24px; }
+/* Markdown being edited: plain text, not Python. */
+.cm-line.cm-nb-markdown, .cm-line.cm-nb-raw { padding-left: 6px !important; text-indent: 0 !important; }
+.cm-line.cm-nb-markdown span, .cm-line.cm-nb-raw span { color: inherit !important; font-style: normal !important; font-weight: inherit !important; }
+.nb-header.quiet { min-height: 0; padding: 6px 0 0; }
