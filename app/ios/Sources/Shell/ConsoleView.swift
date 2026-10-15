@@ -293,7 +293,7 @@ private struct RunBlock: View {
             .font(.footnote)
             .frame(width: 16)
             Text(run.file.map(basename) ?? "Console").font(.footnote.weight(.semibold))
-            Text("\(run.summary(awaitingInput: s.awaitingInput && last, paused: paused)) · \(time)")
+            Text("\(run.summary(awaitingInput: s.awaitingInput && last, paused: paused))\(run.python.map { " · Python \($0)" } ?? "") · \(time)")
                 .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 0)
             if inspectable {

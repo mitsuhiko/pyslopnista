@@ -37,6 +37,8 @@ struct AgentView: View {
                     .padding()
                 }
                 .scrollDismissesKeyboard(.interactively)
+                // docs: links in answers open the Python docs (D37).
+                .environment(\.openURL, OpenURLAction { url in model.openDocsLink(url) ? .handled : .systemAction })
                 .onChange(of: scrollKey(state)) { _, _ in
                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }

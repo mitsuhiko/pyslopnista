@@ -2,6 +2,7 @@
 // output streaming, stdin, interrupt with escalation, host calls, UI messages,
 // and the project folder the program works in (HostFS, D35).
 import { call } from "./host";
+import { getDefaultPython, runtimeFor } from "./runtimes";
 
 const encoder = new TextEncoder();
 const CHANNEL_BYTES = 8 + 1024 * 1024;
@@ -33,11 +34,12 @@ export interface WorkerInfo {
   isolated: boolean;
 }
 
-function workerOptions() {
+function workerOptions(python: string) {
   const params = new URLSearchParams(location.search);
   return {
-    indexURL: new URL("/pyodide/", location.href).href,
-    packageBaseUrl: new URL("/pkgs/", location.href).href,
+    // Each bundled Python (D37) has its own core and package cache.
+    indexURL: new URL(`/pyodide/${python}/`, location.href).href,
+    packageBaseUrl: new URL(`/pkgs/${python}/`, location.href).href,
     jspi: params.get("jspi") !== "0",
     gcTrampoline: params.get("gc") !== "0",
     pythonFiles: {
@@ -52,6 +54,8 @@ function workerOptions() {
 
 export class PyWorker {
   readonly ready: Promise<WorkerInfo>;
+  /** The runtime ("3.14"). */
+  readonly python: string;
   dead = false;
   onOutput: (stream: Stream, text: string) => void = () => {};
   onInput: () => Promise<string | null> = async () => null;
@@ -74,7 +78,8 @@ export class PyWorker {
   private resolveReady!: (info: WorkerInfo) => void;
   private rejectReady!: (err: Error) => void;
 
-  constructor() {
+  constructor(python = getDefaultPython()) {
+    this.python = runtimeFor(python).python;
     this.worker = new Worker("/runtime/py-worker.js", { type: "module" });
     const isolated = self.crossOriginIsolated && typeof SharedArrayBuffer === "function";
     this.interrupt = isolated ? new Int32Array(new SharedArrayBuffer(4)) : null;
@@ -86,7 +91,7 @@ export class PyWorker {
     this.ready.catch(() => {});
     this.worker.onmessage = (e) => this.handle(e.data);
     this.worker.onerror = (e) => this.rejectReady(new Error(e.message));
-    this.worker.postMessage({ type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, ...workerOptions() });
+    this.worker.postMessage({ type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, ...workerOptions(this.python) });
   }
 
   get running() {
@@ -278,17 +283,52 @@ export class PyWorker {
   }
 }
 
-/** Keeps one booted worker in reserve so a fresh run starts instantly. */
+/**
+ * Keeps a booted worker in reserve so a fresh run starts instantly: one for
+ * the default Python, and one for the last other Python a program used.
+ */
 export class WorkerPool {
-  private spare = new PyWorker();
+  private spares = new Map<string, PyWorker>();
 
-  get spareReady() {
-    return this.spare.ready;
+  constructor() {
+    this.spare(getDefaultPython());
   }
 
-  async take(): Promise<PyWorker> {
-    const worker = this.spare;
-    this.spare = new PyWorker();
+  /** The default runtime's spare (its boot time is shown in Settings). */
+  get spareReady() {
+    return this.spare(getDefaultPython()).ready;
+  }
+
+  private spare(python: string) {
+    let worker = this.spares.get(python);
+    if (!worker || worker.dead) {
+      worker = new PyWorker(python);
+      this.spares.set(python, worker);
+    }
+    return worker;
+  }
+
+  /** Only the default's spare and the one for `keep` stay. */
+  private trim(keep: string) {
+    for (const [python, worker] of this.spares) {
+      if (python !== keep && python !== getDefaultPython()) {
+        worker.terminate("unused");
+        this.spares.delete(python);
+      }
+    }
+  }
+
+  /** The default changed (Settings). */
+  setDefault(python: string) {
+    this.spare(python);
+    this.trim(python);
+  }
+
+  async take(python = getDefaultPython()): Promise<PyWorker> {
+    const worker = this.spare(python);
+    this.spares.delete(python);
+    this.spare(python);
+    this.trim(python);
     await worker.ready;
     return worker;
   }

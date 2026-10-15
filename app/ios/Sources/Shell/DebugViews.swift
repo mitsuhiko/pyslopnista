@@ -188,6 +188,8 @@ struct ValuePopover: View {
 /// ty's hover text: signature or type, then the docstring (a small Markdown subset).
 struct InfoPopover: View {
     let markdown: String?
+    var docs: DocsTarget?
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         ScrollView {
@@ -209,6 +211,16 @@ struct InfoPopover: View {
                     }
                 } else {
                     ProgressView()
+                }
+                if let docs {
+                    Button {
+                        model.popover = nil
+                        model.showDocs(docs)
+                    } label: {
+                        Label("Open Documentation", systemImage: "book")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
             .padding(14)

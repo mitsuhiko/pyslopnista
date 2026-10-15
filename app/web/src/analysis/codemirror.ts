@@ -7,6 +7,7 @@ import type { EditorState, Extension, Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { parse as parseToml } from "smol-toml";
 import { analysis } from "./api";
+import { RUNTIMES } from "../runtimes";
 import type { LineCol, Problem } from "./protocol";
 
 // -- positions ---------------------------------------------------------------------
@@ -75,10 +76,14 @@ export function addDependencyEdit(source: string, requirement: string): { from: 
 let pyodideModules: Set<string> | null = null;
 export async function loadPyodideModules() {
   if (pyodideModules) return pyodideModules;
-  const lock = await (await fetch("/pyodide/pyodide-lock.json")).json();
-  pyodideModules = new Set<string>();
-  for (const pkg of Object.values<{ imports?: string[] }>(lock.packages)) for (const i of pkg.imports ?? []) pyodideModules.add(i);
-  return pyodideModules;
+  // Any bundled Python's packages (D37): the editor doesn't know which one runs the file.
+  const modules = new Set<string>();
+  for (const { python } of RUNTIMES) {
+    const lock = await (await fetch(`/pyodide/${python}/pyodide-lock.json`)).json();
+    for (const pkg of Object.values<{ imports?: string[] }>(lock.packages)) for (const i of pkg.imports ?? []) modules.add(i);
+  }
+  pyodideModules = modules;
+  return modules;
 }
 
 // Modules the runtime provides that ty cannot see.

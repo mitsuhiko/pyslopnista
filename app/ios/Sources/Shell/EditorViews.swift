@@ -120,7 +120,7 @@ struct EditorPaneView: View {
             Group {
                 switch popover.kind {
                 case .value(let expr): ValuePopover(expr: expr)
-                case .info(let markdown): InfoPopover(markdown: markdown)
+                case .info(let markdown): InfoPopover(markdown: markdown, docs: popover.docs)
                 }
             }
             .environment(model)
@@ -313,6 +313,27 @@ private struct EditorChrome: ViewModifier {
         }
     }
 
+    /// Which Python the file runs on; picking one pins its folder (`.python-version`, D37).
+    private func pythonMenu(_ file: String) -> some View {
+        let current = model.filePython
+        let title = current.map { "Python \($0.version)" } ?? "Python \(model.defaultPython)"
+        return Menu {
+            Picker("Python for “\(displayName(dirname(file)))”", selection: Binding(
+                get: { model.folderPin ?? "" },
+                set: { value in Task { await model.setFolderPython(value.isEmpty ? nil : value) } }
+            )) {
+                Text("Default (Python \(model.defaultPython))").tag("")
+                ForEach(Runtimes.all, id: \.python) { Text($0.label).tag($0.python) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label(title, systemImage: "chevron.left.forwardslash.chevron.right")
+            if let current, current.reason != "default" {
+                Text("from \(current.reason)")
+            }
+        }
+    }
+
     private func menu(_ file: String?, external: Bool) -> some View {
         let bps = file.map { model.breakpoints[$0]?.count ?? 0 } ?? 0
         return Menu {
@@ -322,6 +343,7 @@ private struct EditorChrome: ViewModifier {
                     .disabled(external)
                 Button { Task { _ = await model.showInfo() } } label: { Label("Show Info", systemImage: "info.circle") }
                     .disabled(external)
+                Button { model.showDocs() } label: { Label("Python Documentation", systemImage: "book") }
             }
             Section {
                 Button { Task { _ = await model.editorCall(model.focused, "command", ["search"]) } } label: { Label("Find", systemImage: "magnifyingglass") }
@@ -338,6 +360,11 @@ private struct EditorChrome: ViewModifier {
                     Button { model.clearBreakpoints(file) } label: {
                         Label(bps == 1 ? "Remove Breakpoint" : "Remove \(bps) Breakpoints", systemImage: "arrowshape.right")
                     }
+                }
+            }
+            if let file, !external {
+                Section {
+                    pythonMenu(file)
                 }
             }
             Section {

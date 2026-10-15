@@ -2,16 +2,18 @@
 // workers, D6) and code analysis (ruff + ty, D21) for the native app. The host
 // sends commands through window.__engine.command and gets state and events
 // through the bridge.
-import { analysis as client } from "../analysis/client";
 import { analysis, setAnalysis } from "../analysis/api";
+import { analysis as client } from "../analysis/client";
+import { versionedAnalysis } from "../analysis/versioned";
 import { breakpoints } from "../debug/breakpoints";
 import { seedExamples } from "../examples";
 import { call } from "../host";
+import { chooseFor, forgetFolders, label, runtimeFor, setDefaultPython } from "../runtimes";
 import { session } from "../session";
 import { turtleScenes, turtleSync, type TurtleEvent } from "../turtle";
 import { startStateSync } from "./state";
 
-setAnalysis(client);
+setAnalysis(versionedAnalysis);
 
 // UI apps (D26) are drawn natively (D30); ops go to the host as they come.
 session.attachUI((json) => void call("ui.render", { json }).catch(() => {}));
@@ -55,6 +57,15 @@ const commands: Record<string, Command> = {
   uiEvent: ({ id, args }) => session.sendUIEvent(id, args),
   background: () => session.syncInBackground(),
   setBreakpoints: ({ data }) => breakpoints.replaceAll(data ?? {}),
+  // Python versions (D37): the default from Settings, and which one a file runs on.
+  setDefaultPython: ({ python }) => setDefaultPython(python),
+  pythonFor: async ({ path, code }: { path: string; code?: string }) => {
+    forgetFolders();
+    const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    const choice = await chooseFor(dir, code);
+    if (!choice.ok) return { error: choice.error };
+    return { python: choice.python, version: runtimeFor(choice.python).version, label: label(choice.python), reason: choice.reason };
+  },
   analysis: ({ method, args }) => (analysis as any)[method](...(args ?? [])),
   turtle: ({ key, event }: { key: string; event: TurtleEvent }) => turtleScenes.get(key)?.push(event),
   agent: async ({ method, args }: { method: string; args?: unknown[] }) => {

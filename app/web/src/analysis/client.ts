@@ -75,6 +75,10 @@ class AnalysisClient {
     return this.request<null>({ type: "setRoot", dir });
   }
 
+  setPython(python: string) {
+    return this.request<null>({ type: "setPython", python });
+  }
+
   format(text: string) {
     return this.request<string>({ type: "format", text });
   }

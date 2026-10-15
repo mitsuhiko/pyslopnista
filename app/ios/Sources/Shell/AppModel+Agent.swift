@@ -205,6 +205,14 @@ extension AppModel {
             return NSNull()
         case "format":
             return try await ideFormat(path, name)
+        case "docs":
+            let version = value["version"] as? String ?? defaultPython
+            let ref = value["ref"] as? String ?? ""
+            guard let page = await DocsIndex.shared.read(ref, version: version) else {
+                throw IDEError(message: "No such docs section: \(ref) (Python \(version)). Use docs_search to find refs.")
+            }
+            showDocs(DocsTarget(version: version, ref: ref))
+            return ["message": "Showing the Python \(version) docs: \(page.title)."]
         default:
             throw IDEError(message: "unknown IDE operation")
         }

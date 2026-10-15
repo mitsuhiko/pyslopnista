@@ -55,6 +55,8 @@ struct EditorPopover: Identifiable, Equatable {
     let pane: Int
     let rect: CGRect
     var kind: Kind
+    /// Show Info: the docs of what is at the cursor (D37), once looked up.
+    var docs: DocsTarget?
 }
 
 struct BreakpointMenu: Identifiable, Equatable {
@@ -131,6 +133,12 @@ final class AppModel {
     var consoleInput = ""
     var programInput = ""
     var consoleHistory: [String] = []
+    /// Python versions (D37): the default (Settings), and what the current file runs on.
+    var defaultPython = Runtimes.defaultPython
+    var filePython: PythonChoice?
+    /// The Python the current file's folder pins in its own `.python-version`.
+    var folderPin: String?
+    @ObservationIgnored let docs = DocsPresenter()
 
     @ObservationIgnored private var lastUsed: [String: Date] = [:]
     @ObservationIgnored private var writes: Task<Void, Never>?
@@ -202,6 +210,7 @@ final class AppModel {
     private func loadDefaults() {
         let d = UserDefaults.standard
         if let data = d.data(forKey: "settings"), let s = try? JSONDecoder().decode(EditorSettings.self, from: data) { settings = s }
+        if let python = d.string(forKey: "python.default"), Runtimes.runtime(python) != nil { defaultPython = python }
         if let data = d.data(forKey: "breakpoints"), let b = try? JSONDecoder().decode([String: [Breakpoint]].self, from: data) { breakpoints = b }
         if let data = d.data(forKey: "tabs"), let saved = try? JSONDecoder().decode([Pane].self, from: data), !saved.isEmpty {
             panes = Array(saved.prefix(2)).map { Pane(tabs: $0.tabs.filter { !isExternal($0) }, active: $0.active.flatMap { isExternal($0) ? nil : $0 }) }
@@ -278,8 +287,10 @@ final class AppModel {
             engine.markReady()
             host.unmountAll() // left by a page that reloaded
             Task {
+                await command("setDefaultPython", ["python": defaultPython])
                 await command("setBreakpoints", ["data": breakpointsJSON()])
                 await syncAnalysisRoot(force: true)
+                await refreshFilePython()
             }
             reply(nil, nil)
         case (.engine, "session.state"):
@@ -328,6 +339,8 @@ final class AppModel {
                     reply(nil, error.localizedDescription)
                 }
             }
+        case (.engine, _) where op.hasPrefix("docs."):
+            handleDocs(op, value, reply)
         case (.engine, "agent.flushEditors"):
             // The agent is about to read files: what was typed must be on disk.
             Task {
@@ -926,6 +939,10 @@ final class AppModel {
         popover = pop
         let markdown = (try? await analysis("hover", [c.path, c.text, c.line, c.column])) as? String ?? ""
         if popover?.id == pop.id { popover?.kind = .info(markdown) }
+        // A standard library name gets a link into the docs.
+        if let docs = await docsTarget(path: c.path, text: c.text, line: c.line, column: c.column), popover?.id == pop.id {
+            popover?.docs = docs
+        }
         return markdown
     }
 
@@ -1055,7 +1072,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>][&docs=<version>/<ref, # as %23>]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1094,6 +1111,10 @@ final class AppModel {
                 if let project = agent.state.root { _ = await agentCall("newConversation", [project, NSNull()]) }
                 agentSend(prompt)
             }
+        }
+        if let target = hook["docs"], let url = URL(string: "docs:\(target.replacingOccurrences(of: "#", with: "%23"))") {
+            try? await Task.sleep(for: .milliseconds(300))
+            _ = openDocsLink(url)
         }
         if hook["focus"] == "console" {
             try? await Task.sleep(for: .milliseconds(600))

@@ -536,6 +536,118 @@ export async function selftest() {
     if (!out.includes("requires Python <3.10") || out.includes("should not run")) throw new Error(out);
   });
 
+  // -- Python versions and docs (D37) -----------------------------------------------
+
+  const lastRun = () => Object.values(session.getSnapshot().runs).at(-1);
+
+  await step("python_versions", async () => {
+    await fs.mkdir("Tests/py").catch(() => {});
+    await fs.remove("Tests/py/.python-version").catch(() => {});
+    const code = "import sys\nprint('on', sys.version.split()[0])\n";
+    await fs.writeText("Tests/py/v.py", code);
+    let { done } = await runFile("Tests/py/v.py");
+    await done;
+    if (!consoleText().includes("on 3.14.2") || lastRun()?.python !== "3.14.2") throw new Error(`default: ${consoleText()} ${lastRun()?.python}`);
+    // The folder pins 3.15, as the ⋯ menu writes it.
+    await appCall("setFolderPython", "3.15");
+    if ((await fs.readText("Tests/py/.python-version")).trim() !== "3.15") throw new Error("no .python-version");
+    const native = await appCall("filePython");
+    if (native.python !== "3.15" || native.pin !== "3.15") throw new Error(`native: ${JSON.stringify(native)}`);
+    ({ done } = await runFile("Tests/py/v.py"));
+    await done;
+    if (!consoleText().includes("on 3.15.0rc1") || lastRun()?.python !== "3.15.0rc1") throw new Error(`pinned: ${consoleText()}`);
+    // 3.15's packages come from its own CDN folder and cache.
+    ({ done } = await runFile("Tests/py/v.py", "import numpy, sys\nprint('numpy', numpy.__version__, 'on', sys.version_info[:2])\n"));
+    await done;
+    if (!/numpy \S+ on \(3, 15\)/.test(consoleText())) throw new Error(`numpy on 3.15: ${consoleText()}`);
+    await appCall("setFolderPython", null);
+    if (await fs.exists("Tests/py/.python-version")) throw new Error(".python-version not removed");
+    // requires-python picks a version: >=3.15 needs the preview, >=3.10 keeps the default.
+    ({ done } = await runFile("Tests/py/v.py", '# /// script\n# requires-python = ">=3.15"\n# ///\n' + code));
+    await done;
+    if (!consoleText().includes("on 3.15.0rc1")) throw new Error(`requires >=3.15: ${consoleText()}`);
+    ({ done } = await runFile("Tests/py/v.py", '# /// script\n# requires-python = ">=3.10"\n# ///\n' + code));
+    await done;
+    if (!consoleText().includes("on 3.14.2")) throw new Error(`requires >=3.10: ${consoleText()}`);
+    // The default from Settings.
+    await appCall("setDefaultPython", "3.15");
+    await until(async () => (await appCall("filePython")).python === "3.15", 5000);
+    ({ done } = await runFile("Tests/py/v.py", code));
+    await done;
+    const onDefault = consoleText();
+    await appCall("setDefaultPython", "3.14");
+    if (!onDefault.includes("on 3.15.0rc1")) throw new Error(`default 3.15: ${onDefault}`);
+    await until(async () => (await appCall("filePython")).python === "3.14", 5000);
+  });
+
+  await step("docs_index", async () => {
+    const search = (query: string, version = "3.14") => call<{ ref: string; title: string; link: string }[]>("docs.search", { query, version, limit: 8 });
+    const loads = await search("json.loads");
+    if (loads[0]?.ref !== "library/json.html#json.loads" || loads[0].link !== "docs:3.14/library/json.html#json.loads") throw new Error(JSON.stringify(loads.slice(0, 3)));
+    const words = await search("template strings");
+    if (!words.some((h) => h.ref.startsWith("library/string.templatelib.html"))) throw new Error(`words: ${JSON.stringify(words.map((h) => h.ref))}`);
+    const page = await call<{ title: string; markdown: string } | null>("docs.read", { ref: "library/json.html#json.loads", version: "3.14" });
+    if (!page?.markdown.includes("Deserialize") && !page?.markdown.includes("deserialize")) throw new Error(`read: ${page?.markdown.slice(0, 200)}`);
+    const section = await call<{ markdown: string } | null>("docs.read", { ref: "library/json.html#basic-usage", version: "3.14" });
+    if (!section?.markdown.includes("`json.dump(")) throw new Error(`section: ${section?.markdown.slice(0, 300)}`);
+    const v315 = await search("json.loads", "3.15");
+    if (v315[0]?.ref !== "library/json.html#json.loads") throw new Error(`3.15: ${JSON.stringify(v315.slice(0, 2))}`);
+    return { results: words.length, sectionChars: section.markdown.length };
+  });
+
+  await step("docs_viewer", async () => {
+    await appCall("showDocs", "3.14", "library/json.html#json.loads");
+    let state = await until(async () => {
+      const s = await appCall("docsState");
+      return s.shown && s.ref === "library/json.html#json.loads" && /json/.test(s.title ?? "") ? s : null;
+    }, 10000);
+    const hits = await appCall<string[]>("docsSearch", "pathlib.Path.glob");
+    if (hits[0] !== "library/pathlib.html#pathlib.Path.glob") throw new Error(`viewer search: ${JSON.stringify(hits)}`);
+    // An agent's docs: link opens the viewer at the other version.
+    await appCall("docsLink", "docs:3.15/library/os.html#os.listdir");
+    state = await until(async () => {
+      const s = await appCall("docsState");
+      return s.version === "3.15" && s.ref === "library/os.html#os.listdir" ? s : null;
+    }, 10000);
+    await appCall("closeDocs");
+    await until(async () => !(await appCall("docsState")).shown, 5000);
+    return { title: state.title };
+  });
+
+  await step("help_opens_docs", async () => {
+    await fs.writeText("Tests/py/h.py", "import json, pathlib\n");
+    const { done } = await runFile("Tests/py/h.py");
+    await done;
+    const expectDocs = async (source: string, ref: string) => {
+      await session.runConsole(source);
+      await until(idle);
+      await until(async () => (await appCall("docsState")).ref === ref, 8000).catch(async () => {
+        throw new Error(`${source}: ${JSON.stringify(await appCall("docsState"))} ${consoleText().slice(-300)}`);
+      });
+    };
+    await expectDocs("help(json.loads)", "library/json.html#json.loads");
+    if (!consoleText().includes("Opened the Python 3.14 documentation")) throw new Error(consoleText());
+    await expectDocs("help(pathlib.Path.glob)", "library/pathlib.html#pathlib.Path.glob");
+    await expectDocs("help(str.split)", "builtins/stdtypes.html#str.split");
+    await expectDocs("help('json')", "library/json.html#module-json");
+    await appCall("closeDocs");
+    // Not the standard library: pydoc's text, as before.
+    await session.runConsole("class Mine:\n    'My own class.'\nhelp(Mine)");
+    await until(idle);
+    if (!consoleText().includes("My own class.") || (await appCall("docsState")).shown) throw new Error(`pydoc: ${consoleText().slice(-300)}`);
+  });
+
+  await step("show_info_docs", async () => {
+    const text = "import json\nimport pathlib\njson.loads('1')\npathlib.Path('.').glob('*')\n";
+    await openWith("Tests/py/info.py", text);
+    const loads = await appCall("docsTarget", "Tests/py/info.py", text, 3, 8);
+    if (loads?.ref !== "library/json.html#json.loads") throw new Error(`json.loads: ${JSON.stringify(loads)}`);
+    const glob = await appCall("docsTarget", "Tests/py/info.py", text, 4, 20);
+    if (glob?.ref !== "library/pathlib.html#pathlib.Path.glob") throw new Error(`glob: ${JSON.stringify(glob)}`);
+    const module = await appCall("docsTarget", "Tests/py/info.py", text, 1, 9);
+    if (module?.ref !== "library/json.html#module-json") throw new Error(`module: ${JSON.stringify(module)}`);
+  });
+
   // -- debugger (D23) --------------------------------------------------------------
 
   await fs.mkdir("Tests").catch(() => {});
@@ -1037,6 +1149,53 @@ export async function selftest() {
     }, 5000);
     await appCall("closeSheet");
     return { conversations: s.conversations.length, native: native.conversations };
+  });
+
+  // The docs tools (D37): search, read, and show the user.
+  await step("agent-docs", async () => {
+    const { agent } = await import("./agent/service");
+    const { fauxAssistantMessage, fauxText, fauxToolCall } = await import("@earendil-works/pi-ai/providers/faux");
+    const dir = "Tests/agentdocs";
+    await fs.mkdir(dir).catch(() => {});
+    await fs.writeText(`${dir}/main.py`, "print('hi')\n");
+    await app.openFile(`${dir}/main.py`);
+    await appCall("openAgent", dir);
+    await until(async () => (await agent.state()).project === dir, 30000);
+    const faux = agent.useFaux();
+    await agent.newConversation(dir);
+    await agent.setModel("selftest", "faux-1");
+    const tool = (name: string, args: Parameters<typeof fauxToolCall>[1], id: string) =>
+      fauxAssistantMessage([fauxToolCall(name, args, { id })], { stopReason: "toolUse" });
+    faux.setResponses([
+      tool("docs_search", { query: "json.loads" }, "search"),
+      tool("docs_read", { ref: "library/json.html#json.loads" }, "read"),
+      tool("docs_search", { query: "template strings", version: "3.15" }, "search315"),
+      tool("ide_show_docs", { ref: "library/json.html#json.loads" }, "show"),
+      fauxAssistantMessage([fauxText("Done: see [json.loads](docs:3.14/library/json.html#json.loads).")]),
+    ]);
+    await agent.submit("How do I parse JSON?", await appCall("agentIDEState"));
+    const state = await until(async () => {
+      const s = await agent.state();
+      return !s.busy && s.items.at(-1)?.text.startsWith("Done") ? s : null;
+    }, 60000);
+    const tools = Object.fromEntries(state.items.filter((i) => i.kind === "tool").map((i) => [i.id, i]));
+    const expect = (cond: unknown, what: string) => {
+      if (!cond) throw new Error(`${what}: ${JSON.stringify(state.items.map((i) => [i.id, i.status, (i.output ?? i.text).slice(0, 200)]))}`);
+    };
+    expect(Object.values(tools).every((t) => t.status === "done"), "tool statuses");
+    expect(tools.search.output?.includes("ref: library/json.html#json.loads") && tools.search.output.includes("Python 3.14"), "docs_search");
+    expect(tools.read.output?.includes("docs:3.14/library/json.html#json.loads") && /deserialize/i.test(tools.read.output), "docs_read");
+    expect(tools.search315.output?.includes("Python 3.15") && tools.search315.output.includes("string.templatelib"), "docs_search 3.15");
+    expect(tools.show.output?.includes("Showing the Python 3.14 docs"), "ide_show_docs");
+    await until(async () => {
+      const docs = await appCall("docsState");
+      return docs.shown && docs.ref === "library/json.html#json.loads" && /json/.test(docs.title ?? "");
+    }, 8000).catch(async () => {
+      throw new Error(`viewer: ${JSON.stringify(await appCall("docsState"))}`);
+    });
+    await appCall("closeDocs");
+    await until(async () => !(await appCall("docsState")).shown, 5000);
+    await appCall("closeSheet");
   });
 
   await fs.remove("Tests").catch(() => {});

@@ -10,6 +10,7 @@ import { analysis } from "../analysis/api";
 import type { Problem } from "../analysis/protocol";
 import { base64ToBytes, bytesToBase64 } from "../host";
 import { PyWorker } from "../python";
+import { chooseFor, runtimeFor } from "../runtimes";
 import { cleanTraceback } from "../session";
 import type { ProjectEnv } from "./env";
 
@@ -172,7 +173,8 @@ const grepTool = defineTool({
 const runPythonTool = defineTool({
   name: "run_python",
   description:
-    "Run Python (Pyodide, CPython 3.14 in WebAssembly) in a fresh interpreter, with the project folder as the working directory. " +
+    "Run Python (Pyodide: CPython in WebAssembly) in a fresh interpreter, with the project folder as the working directory. " +
+    "The Python version is the one the program would get from the Run button (requires-python, .python-version, else the default). " +
     "Files the program writes go straight into the project. Dependencies: a PEP 723 `# /// script` block in the code or file. " +
     "Returns stdout/stderr, the traceback on failure, and matplotlib figures shown with plt.show() as images. " +
     "input() gets end-of-file; ui apps and turtle windows cannot be shown here.",
@@ -196,7 +198,9 @@ const runPythonTool = defineTool({
       dir = dirOf(p.value);
       filename = baseOf(p.value);
     }
-    const worker = new PyWorker();
+    const choice = await chooseFor(env.appPath(dir), code);
+    if (!choice.ok) return { output: text(`Python version: ${choice.error}`), isError: true };
+    const worker = new PyWorker(choice.python);
     let output = "";
     const images: string[] = [];
     let note = "";
@@ -245,7 +249,8 @@ const runPythonTool = defineTool({
       if (timedOut) report += `Stopped after ${timeout} s.\n`;
       else if (!result.ok && result.error) report += cleanTraceback(result.error) + "\n";
       if (written.length) report += `Files written: ${written.map((p) => p.slice(1)).join(", ")}\n`;
-      report += result.ok ? `Finished in ${Math.round(result.ms)} ms.` : timedOut ? "" : "The program failed.";
+      report += result.ok ? `Finished in ${Math.round(result.ms)} ms` : timedOut ? "" : "The program failed";
+      report += ` (Python ${runtimeFor(choice.python).version}).`;
       return {
         output: [...text(report.trim() || "(no output)"), ...images.map((data) => ({ type: "image" as const, data, mimeType: "image/png" }))],
         isError: !result.ok,

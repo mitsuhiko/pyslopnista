@@ -12,6 +12,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type ToolExecutionResult } from "@earendil-works/pi-durable";
 import { analysis } from "../analysis/api";
 import { call } from "../host";
+import { docsVersion } from "./docs";
 import type { ProjectEnv } from "./env";
 
 /** What the host reports (AppModel+Agent.swift `ideState`). Paths are app paths. */
@@ -29,7 +30,7 @@ export interface IDEState {
   error: string | null;
 }
 
-export const IDE_TOOLS = new Set(["ide_state", "ide_open", "ide_close", "ide_lint", "ide_format"]);
+export const IDE_TOOLS = new Set(["ide_state", "ide_open", "ide_close", "ide_lint", "ide_format", "ide_show_docs"]);
 
 /** Set by the service: which conversation is on screen, and what each one last saw. */
 export const ideHooks = {
@@ -227,7 +228,24 @@ const formatTool = defineTool({
   },
 });
 
+const showDocsTool = defineTool({
+  name: "ide_show_docs",
+  description:
+    "IDE tool: opens the Python documentation for the user, at a ref from docs_search (e.g. library/json.html#json.loads), " +
+    "to show them where something is explained. The result does not contain the text: to read the docs yourself, use docs_read.",
+  parameters: Type.Object({
+    ref: Type.String({ description: "A ref from docs_search, or a page like library/json.html" }),
+    version: Type.Optional(Type.String({ description: "Python version of the docs (default: the project's)" })),
+  }),
+  async execute(args, api) {
+    const version = await docsVersion(api, args.version);
+    const ref = args.ref.replace(/^docs:[\d.]+\//, "").replace(/^\/+/, "");
+    const r = await ide<{ message: string }>(api, "docs", { ref, version });
+    return { output: text(r.message), details: { ref, version } };
+  },
+});
+
 export const IDETools = defineExtension({
   name: "pyslopnista-ide",
-  tools: [stateTool, openTool, closeTool, lintTool, formatTool],
+  tools: [stateTool, openTool, closeTool, lintTool, formatTool, showDocsTool],
 });

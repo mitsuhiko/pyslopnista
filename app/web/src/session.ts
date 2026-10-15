@@ -4,6 +4,7 @@
 import { basename, dirname, haptic, join } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
+import { chooseFor, onDefaultPython, runtimeFor } from "./runtimes";
 import { TurtleScene, turtleScenes } from "./turtle";
 
 /** "turtle": a turtle screen; the line's text is the key of its scene (D29). */
@@ -22,6 +23,7 @@ export interface Run {
   id: number;
   file: string | null; // null: console input
   dir: string; // the folder the interpreter runs in (resolves traceback paths)
+  python: string | null; // the runtime's full version ("3.14.2"), once chosen (D37)
   startedAt: number;
   endedAt: number | null;
   status: RunStatus;
@@ -122,6 +124,10 @@ export class Session {
 
   constructor() {
     this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
+    onDefaultPython((python) => {
+      this.pool.setDefault(python);
+      this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
+    });
     breakpoints.subscribe(() => this.syncBreakpoints());
   }
 
@@ -205,12 +211,17 @@ export class Session {
   private startRun(file: string | null) {
     this.flushOutput();
     const dir = file ? dirname(file) : this.workerDir;
-    const run: Run = { id: this.nextId++, file, dir, startedAt: Date.now(), endedAt: null, status: "running" };
+    const run: Run = { id: this.nextId++, file, dir, python: null, startedAt: Date.now(), endedAt: null, status: "running" };
     this.currentRun = run.id;
     this.stopRequested = false;
     this.set({ runs: { ...this.state.runs, [run.id]: run }, runCounter: this.state.runCounter + 1 });
     this.append("run", "", run.id);
     return run;
+  }
+
+  private setRunPython(python: string) {
+    const run = this.state.runs[this.currentRun];
+    if (run) this.set({ runs: { ...this.state.runs, [run.id]: { ...run, python: runtimeFor(python).version } } });
   }
 
   private endRun(status: RunStatus) {
@@ -229,7 +240,10 @@ export class Session {
     this.startRun(path);
     this.set({ status: "starting", runningFile: path });
     try {
-      const worker = await this.takeWorker(dir);
+      const choice = await chooseFor(dir, code);
+      if (!choice.ok) throw new Error(`Python version: ${choice.error}`);
+      this.setRunPython(choice.python);
+      const worker = await this.takeWorker(dir, choice.python);
       this.set({ status: "running" });
       const result = await worker.run(code, { filename: basename(path), cwd: PROJECT_ROOT, breakpoints: breakpoints.forRun(dir) });
       await this.finishRun(result);
@@ -248,15 +262,23 @@ export class Session {
     const reuse = this.worker && !this.worker.dead;
     if (!reuse || !this.state.runs[this.currentRun]) this.startRun(null);
     this.append("prompt", source);
-    const worker = reuse ? this.worker! : await this.takeWorker(this.workerDir);
+    let worker = this.worker!;
+    if (reuse) {
+      this.setRunPython(worker.python);
+    } else {
+      const choice = await chooseFor(this.workerDir);
+      const python = choice.ok ? choice.python : undefined;
+      worker = await this.takeWorker(this.workerDir, python);
+      this.setRunPython(worker.python);
+    }
     this.setScenesActive(true);
     this.set({ status: "running" });
     const result = await worker.run(source, { repl: true, cwd: PROJECT_ROOT });
     await this.finishRun(result, true);
   }
 
-  private async takeWorker(dir: string) {
-    const worker = await this.pool.take();
+  private async takeWorker(dir: string, python?: string) {
+    const worker = await this.pool.take(python);
     try {
       await worker.attach(dir);
     } catch (e) {

@@ -18,7 +18,7 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 - [later] Several scripts running at once
 - [later] Threads, if a pthreads Pyodide build becomes viable
 - [later] Socket shim (TCP/TLS through the native host) so ssh, smtp/imap and database clients work
-- [maybe] Choose the Python version per project
+- [core] Choose the Python version per project (`requires-python`, `.python-version`): 3.14 and a 3.15 preview are bundled (D37)
 
 ## Packages
 
@@ -71,7 +71,7 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 - [core] `turtle` drawn on a canvas
 - [core] Friendly explanations of errors, from the agent or built in
 - [later] Interactive lessons and exercises with checks
-- [later] Python documentation available offline
+- [core] Python documentation available offline, searchable, opened by `help()` and Show Info; the agent searches and reads it too (D37)
 - [maybe] Classroom features (sharing assignments, collecting submissions)
 
 ## Building apps: UI toolkit

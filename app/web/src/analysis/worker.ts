@@ -17,21 +17,26 @@ const stubHandles = new Map<string, FileHandle>();
 let root: string | null = null;
 const texts = new Map<string, string>();
 let ready: Promise<{ ruff: string; tyMs: number; ruffMs: number }> | null = null;
+let python = "3.14"; // the version ty and ruff check against (setPython)
+
+function ruffWorkspace() {
+  // Ruff's CLI defaults (pyflakes + the E4/E7/E9 errors) plus bugbear: real
+  // mistakes, no style nagging. The playground defaults also enable isort etc.
+  const defaults = RuffWorkspace.defaultSettings();
+  return new RuffWorkspace(
+    { ...defaults, "target-version": `py${python.replace(".", "")}`, lint: { ...defaults.lint, select: ["E4", "E7", "E9", "F", "B"] } },
+    RuffEncoding.Utf16,
+  );
+}
 
 async function init() {
   const t0 = performance.now();
   await initRuff({ module_or_path: ruffWasmUrl });
   const ruffMs = performance.now() - t0;
-  // Ruff's CLI defaults (pyflakes + the E4/E7/E9 errors) plus bugbear: real
-  // mistakes, no style nagging. The playground defaults also enable isort etc.
-  const defaults = RuffWorkspace.defaultSettings();
-  ruff = new RuffWorkspace(
-    { ...defaults, "target-version": "py314", lint: { ...defaults.lint, select: ["E4", "E7", "E9", "F", "B"] } },
-    RuffEncoding.Utf16,
-  );
+  ruff = ruffWorkspace();
   const t1 = performance.now();
   await initTy({ module_or_path: tyWasmUrl });
-  ty = new TyWorkspace(ROOT, PositionEncoding.Utf16, { environment: { "python-version": "3.14" } });
+  ty = new TyWorkspace(ROOT, PositionEncoding.Utf16, { environment: { "python-version": python } });
   // Our runtime modules (ui) become visible to ty through an extra search path;
   // the directory only exists once a file is in it.
   try {
@@ -118,9 +123,9 @@ function setRoot(dir: string) {
 function applyRoot() {
   const extra = stubHandles.size ? [STUBS] : [];
   if (wantedRoot && [...handles.keys()].some((p) => p.startsWith(`${wantedRoot}/`))) extra.push(`${ROOT}/${wantedRoot}`);
-  const key = extra.join("\n");
+  const key = `${python}\n${extra.join("\n")}`;
   if (key === appliedPaths) return;
-  ty.updateOptions({ environment: { "python-version": "3.14", "extra-paths": extra } });
+  ty.updateOptions({ environment: { "python-version": python, "extra-paths": extra } });
   appliedPaths = key;
   root = wantedRoot;
 }
@@ -213,6 +218,15 @@ self.onmessage = async (e: MessageEvent<AnalysisRequest & { id: number }>) => {
         break;
       case "setRoot":
         setRoot(req.dir);
+        result = null;
+        break;
+      case "setPython":
+        if (req.python !== python) {
+          python = req.python;
+          ruff.free();
+          ruff = ruffWorkspace();
+          applyRoot();
+        }
         result = null;
         break;
     }

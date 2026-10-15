@@ -104,6 +104,7 @@ struct FileBrowserView: View {
                     }
                     Section {
                         Button { model.activeSheet = .find } label: { Label("Find in \(displayName(dir))…", systemImage: "magnifyingglass") }
+                        Button { model.showDocs() } label: { Label("Python Documentation", systemImage: "book") }
                         Button { model.activeSheet = .settings } label: { Label("Settings…", systemImage: "gearshape") }
                     }
                 } label: {

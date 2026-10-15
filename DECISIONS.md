@@ -1023,12 +1023,97 @@ simulator only `turtle_catch_example` fails, and it fails the same way
 without this change. The three agent checks also pass in the iPad Pro 13"
 simulator (2026-10-15). Nothing here has been tried on a device.
 
+## D37: Two bundled Pythons (3.14 and a 3.15 preview) and the Python docs on the device
+
+2026-10-15 - Accepted
+
+**Versions.** The app bundles Pyodide `314.0.7` (Python 3.14.2, the
+default) and Pyodide `315.0.0-alpha.2` (Python 3.15.0rc1, labelled
+"preview"). Both are pinned in `app/runtimes.json`, the one list the
+scripts, the engine and the host read. Each has its core under
+`web/pyodide/<python>/`, its packages under `/pkgs/<python>/` (cached per
+Pyodide version, from its own CDN folder: the 3.15 one is `v315.0.0a2`, not
+the npm version) and its docs. 3.13 is not offered.
+
+3.15's Pyodide has only 31 packages (numpy and scipy, no matplotlib,
+pandas or Pillow). Pure-Python wheels from PyPI, `ui` and turtle work.
+
+**Which one a program runs on** (`app/web/src/runtimes.ts`), following uv
+so a project runs the same with `uv run`:
+1. `requires-python` (the PEP 723 block, else `pyproject.toml` in the
+   folder) limits the candidates; none left is an error that names both
+   versions;
+2. a `.python-version` (the folder or one above it) picks one of them;
+3. else the default from Settings;
+4. else the newest stable candidate, a prerelease only when nothing else
+   fits.
+
+Specifiers compare release numbers only, so 3.15.0rc1 satisfies
+`>=3.15`. The ⋯ menu shows the file's version and pins its folder by
+writing `.python-version` (as uv does). The console's run header shows
+the version. The warm pool keeps a spare for the default and for the
+last other version used. ty and ruff check each file against its version
+(the engine sends `setPython` before each request). `run_python` uses the
+same rules and reports the version.
+
+**Docs.** The official HTML archives from docs.python.org, pinned by
+sha256 in `runtimes.json`. The archives are rebuilt in place upstream, so
+`scripts/build-docs.py` refuses a changed one until `--update-pins`. The
+build:
+- prunes the C API, extending, What's New older than two versions, the
+  changelog, the general index, Sphinx's search and images over 1 MB
+  (about 66 -> 35 MB for 3.14);
+- patches each page for the viewer: no site header, sidebar, switchers or
+  scripts beyond Sphinx's own and the copy button, links to pruned pages
+  go to docs.python.org, and a small stylesheet (field lists stacked on
+  phones, the target entry highlighted). The theme's dark mode follows
+  the system;
+- writes `docs.sqlite`: Markdown chunks (one per section, API entry and
+  glossary term; about 13,500), an FTS5 index (porter, bm25 weighted to
+  titles and names) and a symbol table (about 10,800 names). About 19 MB.
+
+The official HTML was chosen over EPUB: iOS has no EPUB view to embed,
+and the EPUB is the same XHTML with a plainer stylesheet and no dark mode.
+The HTML's theme already has a mobile layout. The text archive has no
+anchors, so the Markdown is derived from the same HTML, and refs are the
+same in the viewer and for the agent.
+
+**Using them:**
+- **Viewer** (`Shell/DocsView.swift`): a web view on
+  `app://app/docs/<python>/`, native search over the index, back/forward,
+  a version switch, links out open in Safari. Presented with UIKit over
+  whatever is on screen, so it also opens over the agent's sheet. From
+  the ⋯ menus, ⌘⇧0, Show Info ("Open Documentation" when ty resolves the
+  name into the standard library) and `docs:<version>/<ref>` links in the
+  agent's answers.
+- **`help(x)`** in Python opens the viewer for standard library objects
+  (private modules are mapped to the public name: `pathlib._local.Path`
+  is documented as `pathlib.Path`) and falls back to pydoc's text.
+- **Agent:** `docs_search` (names first, then words), `docs_read` (a
+  section with its subsections or one entry, as Markdown, in parts of
+  16,000 characters) and the IDE tool `ide_show_docs`. The version
+  defaults to the project's. The prompt asks the model to look things up
+  rather than guess, especially recent APIs.
+- The host searches (`DocsIndex.swift`, the system SQLite with FTS5,
+  opened `immutable`).
+
+The 3.14 docs are 3.14.8's while the runtime is 3.14.2, and the 3.15
+docs are a snapshot of the 3.15 branch (2026-10-15) while the runtime is
+3.15.0rc1. Patch releases rarely change the docs.
+
+Evidence: the self-test's `python_versions`, `docs_index`, `docs_viewer`,
+`help_opens_docs`, `show_info_docs` and `agent-docs` checks. All 52 checks
+pass in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15). Not
+tried on a device: the bundle size, memory with workers of two versions,
+and 3.15 in WKWebView there (Q23).
+
 ## Proposed (not yet decided)
 
 (none)
 
 ## Open questions
 
+- **Q23:** On a device: the app size with two cores and two sets of docs (about 27 MB of cores and 70 MB of HTML, plus 40 MB of indexes, before App Store compression), memory when workers of both versions are warm, and whether 3.15's Pyodide (Emscripten 6) works in WKWebView there as 3.14's does (D13).
 - **Q21:** Provider terms and App Review for subscription sign-ins (Claude Pro/Max, ChatGPT) used from a third-party app.
 - **Q22:** On a device, does `ASWebAuthenticationSession` reach the app's loopback listener (the simulator shares the Mac's network)? If not, Anthropic, Codex and Radius still have copy-code or device-code sign-ins; Sign in with ChatGPT and OpenRouter would not work.
 - **Q2:** Can WebKit evict `app://` web storage? It survives relaunch and reinstall, but `persist()` is denied (`spikes/ios-host/`).

@@ -294,10 +294,17 @@ struct SettingsView: View {
                         .lineLimit(model.settings.wrap ? nil : 2)
                         .fixedSize(horizontal: !model.settings.wrap, vertical: true)
                 }
-                if let ms = model.session.bootMs {
-                    Section("Python") {
+                Section {
+                    Picker("Default Version", selection: Binding(get: { model.defaultPython }, set: { model.setDefaultPython($0) })) {
+                        ForEach(Runtimes.all, id: \.python) { Text($0.label).tag($0.python) }
+                    }
+                    if let ms = model.session.bootMs {
                         LabeledContent("Interpreter start", value: "\(Int(ms)) ms")
                     }
+                } header: {
+                    Text("Python")
+                } footer: {
+                    Text("Programs run on the default unless their requires-python or a .python-version file in their folder asks for another version.")
                 }
             }
             .navigationTitle("Settings")

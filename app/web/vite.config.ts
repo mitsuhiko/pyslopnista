@@ -1,9 +1,12 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
-const PYODIDE_VERSION = "314.0.7";
-const PYODIDE_DIR = join(import.meta.dirname, "..", "vendor", `pyodide-${PYODIDE_VERSION}`);
+// The bundled Pythons (D37): /pyodide/<python>/ and /docs/<python>/ from vendor/, /pkgs/<python>/ from the CDN.
+const RUNTIMES: { python: string; pyodide: string; cdn: string }[] = JSON.parse(
+  readFileSync(join(import.meta.dirname, "..", "runtimes.json"), "utf8"),
+).runtimes;
+const VENDOR = join(import.meta.dirname, "..", "vendor");
 
 const HOP_HEADERS = new Set(["host", "origin", "referer", "connection", "content-length", "accept-encoding", "x-pyslop-headers", "cookie"]);
 const DROPPED = new Set(["content-encoding", "content-length", "transfer-encoding", "connection", "keep-alive", "cross-origin-opener-policy", "cross-origin-embedder-policy", "cross-origin-resource-policy"]);
@@ -37,7 +40,7 @@ async function proxyHttp(req: import("node:http").IncomingMessage, res: import("
 }
 
 // Mirrors the iOS host for `npm run dev`: cross-origin isolation headers on
-// everything, /pyodide/ from the vendored core, /pkgs/ proxied to the CDN.
+// everything, /pyodide/ and /docs/ from vendor/, /pkgs/ proxied to the CDN.
 function hostShim(): Plugin {
   return {
     name: "pyslopnista-host-shim",
@@ -47,14 +50,28 @@ function hostShim(): Plugin {
         res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
         res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
         const url = req.url?.split("?")[0] ?? "";
-        if (url.startsWith("/pyodide/")) {
-          const file = join(PYODIDE_DIR, url.slice("/pyodide/".length));
+        const local = /^\/(pyodide|docs)\/([\d.]+)\/(.*)$/.exec(url);
+        const runtime = local && RUNTIMES.find((r) => r.python === local[2]);
+        if (local && runtime) {
+          const dir = local[1] === "pyodide" ? join(VENDOR, `pyodide-${runtime.pyodide}`) : join(VENDOR, `docs-${runtime.python}`, "html");
+          const file = join(dir, local[3]);
           if (existsSync(file) && statSync(file).isFile()) {
-            const type = file.endsWith(".wasm") ? "application/wasm" : file.endsWith("js") ? "text/javascript" : "application/octet-stream";
+            const type = file.endsWith(".wasm") ? "application/wasm" : file.endsWith("js") ? "text/javascript" : file.endsWith(".html") ? "text/html" : file.endsWith(".css") ? "text/css" : "application/octet-stream";
             res.setHeader("Content-Type", type);
             createReadStream(file).pipe(res);
             return;
           }
+        }
+        const pkg = /^\/pkgs\/([\d.]+)\/(.+)$/.exec(url);
+        const pkgRuntime = pkg && RUNTIMES.find((r) => r.python === pkg[1]);
+        if (pkg && pkgRuntime) {
+          fetch(pkgRuntime.cdn + pkg[2])
+            .then(async (r) => {
+              res.statusCode = r.status;
+              res.end(Buffer.from(await r.arrayBuffer()));
+            })
+            .catch((e) => { res.statusCode = 502; res.end(String(e)); });
+          return;
         }
         if (url.startsWith("/pypi/simple/")) {
           // Same contract as the iOS host: Simple JSON API with file URLs pointing back here.
@@ -113,14 +130,5 @@ export default defineConfig({
     target: "es2023",
     sourcemap: true,
     rollupOptions: { input: { engine: join(import.meta.dirname, "engine.html"), editor: join(import.meta.dirname, "editor.html") } },
-  },
-  server: {
-    proxy: {
-      "/pkgs": {
-        target: `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full`,
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/pkgs/, ""),
-      },
-    },
   },
 });

@@ -15,6 +15,7 @@ struct RunInfo: Codable, Equatable {
     let id: Int
     let file: String?
     let dir: String
+    let python: String? // "3.14.2", once chosen (D37)
     let startedAt: Double
     let endedAt: Double?
     let status: String // running, ok, error, stopped, crashed

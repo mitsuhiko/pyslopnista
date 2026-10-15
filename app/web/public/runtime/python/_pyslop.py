@@ -2,10 +2,13 @@
 
 - inline matplotlib: ``plt.show()`` sends PNGs to the console
 - ``repl(source)``: run console input in ``__main__`` with REPL semantics
+- ``help(x)`` for the standard library opens the bundled docs (D37)
+- ``prepare_environment``: PEP 723 / pyproject.toml dependencies
 """
 
 import ast
 import base64
+import builtins
 import importlib.abc
 import importlib.machinery
 import io
@@ -52,6 +55,69 @@ class _PyplotHook(importlib.abc.MetaPathFinder):
 
 
 sys.meta_path.insert(0, _PyplotHook())
+
+
+# -- help() opens the documentation (D37) ------------------------------------------
+
+_original_help = builtins.help
+# Where the docs describe what a module defines elsewhere.
+_DOCUMENTED_AS = {"posixpath": "os.path", "ntpath": "os.path"}
+
+
+def _docs_symbol(obj):
+    """The docs' name for obj ("json.loads", "str.split", "pathlib.Path.glob"), or None."""
+    import inspect
+    import types
+
+    if isinstance(obj, str):
+        return obj.strip() or None
+    if isinstance(obj, types.ModuleType):
+        name = obj.__name__
+    else:
+        if not (inspect.isclass(obj) or inspect.isroutine(obj) or isinstance(obj, property)):
+            obj = type(obj)
+        qualname = getattr(obj, "__qualname__", None) or getattr(obj, "__name__", None)
+        if not qualname:
+            return None
+        module = getattr(obj, "__module__", None) or "builtins"
+        name = qualname if module == "builtins" else f"{module}.{qualname}"
+    top = name.split(".")[0]
+    if top not in sys.stdlib_module_names and top not in dir(builtins):
+        return None  # not the standard library: pydoc's text
+    module, _, rest = name.partition(".")
+    module = _DOCUMENTED_AS.get(module, module)
+    # Private implementation modules (pathlib._local.Path) are documented under the public one.
+    parts = [module] + [p for p in rest.split(".") if p and not (p.startswith("_") and not p.startswith("__"))]
+    return ".".join(parts)
+
+
+class _Helper:
+    """help(x) for the standard library opens the Python docs in the app; the rest is pydoc's."""
+
+    def __repr__(self):
+        return repr(_original_help)
+
+    def __call__(self, *args, **kwds):
+        if len(args) == 1 and not kwds:
+            try:
+                symbol = _docs_symbol(args[0])
+            except Exception:
+                symbol = None
+            if symbol:
+                try:
+                    import host
+
+                    version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+                    title = host.call_sync("docs.show", {"symbol": symbol, "version": version})
+                except Exception:
+                    title = None
+                if isinstance(title, str) and title:
+                    print(f"Opened the Python {version} documentation: {title}")
+                    return None
+        return _original_help(*args, **kwds)
+
+
+builtins.help = _Helper()
 
 
 # -- console ------------------------------------------------------------------------

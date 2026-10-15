@@ -1,0 +1,417 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.14"
+# dependencies = ["beautifulsoup4==4.13.4", "lxml==6.0.0", "markdownify==1.1.0"]
+# ///
+"""Build the Python documentation the app bundles (D37), one set per runtime
+in runtimes.json, into vendor/docs-<python>/:
+
+- html/: the official HTML archive (pinned by its sha256), pruned (C API,
+  old What's New pages, the general index, Sphinx's search) and patched for
+  the app's viewer: no site header, sidebar or theme switcher, our
+  stylesheet, links to pruned pages go to docs.python.org.
+- docs.sqlite: the same pages as Markdown chunks (one per section, API entry
+  and glossary term) with an FTS5 index and a symbol table, for the agent's
+  docs_search / docs_read and the viewer's search.
+
+Does nothing when the output matches the pinned archive and this script.
+`--update-pins` downloads the current archives and pins them.
+"""
+
+import argparse
+import hashlib
+import json
+import re
+import shutil
+import sqlite3
+import sys
+import urllib.request
+import zipfile
+from pathlib import Path, PurePosixPath
+
+from bs4 import BeautifulSoup, NavigableString, Tag
+from markdownify import MarkdownConverter
+
+APP = Path(__file__).resolve().parent.parent
+VENDOR = APP / "vendor"
+RUNTIMES = APP / "runtimes.json"
+SCRIPT_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+
+PRUNE_DIRS = ["_sources", "c-api", "extending"]
+PRUNE_GLOBS = [
+    "genindex*.html", "searchindex.js", "search.html", "404.html", "improve-page*.html", "download.html",
+    "objects.inv", "_rediraffe_redirected.json", "whatsnew/changelog.html", "whatsnew/2.*.html",
+    "_static/opensearch.xml", "_static/searchtools.js", "_static/rtd_switcher.js", "_static/search-focus.js",
+    "_static/themetoggle.js", "_static/menu.js", "_static/language_data.js", "_static/changelog_search.js",
+    "_static/glossary_search.js", "_static/glossary.json", "_static/sidebar.js",
+]
+KEEP_SCRIPTS = {"documentation_options.js", "doctools.js", "sphinx_highlight.js", "copybutton.js"}
+MAX_IMAGE = 1_000_000  # bigger images (animated GIFs) load from docs.python.org
+NOT_INDEXED = {"index.html", "contents.html", "py-modindex.html", "copyright.html", "license.html", "about.html", "bugs.html"}
+OBJECT_KINDS = {
+    "function", "class", "method", "classmethod", "staticmethod", "attribute", "property", "data",
+    "exception", "decorator", "module", "type", "opcode", "pdbcommand", "envvar", "cmdoption",
+}
+
+CSS = """\
+/* Pyslopnista: the docs in the app's viewer (scripts/build-docs.py). */
+:root { color-scheme: light dark; -webkit-text-size-adjust: 100%; }
+html { scroll-padding-top: 8px !important; }
+body { margin: 0 !important; }
+div.mobile-nav, div.sphinxsidebar, div.inline-search, .theme-selector-label { display: none !important; }
+div.documentwrapper { float: none; width: 100%; }
+div.bodywrapper { margin: 0 !important; }
+div.body { min-width: 0 !important; max-width: 52em; margin: 0 auto; padding: 4px 16px 32px !important; }
+div.related { margin: 0 !important; padding: 8px 16px !important; line-height: 1.4 !important; font-size: 0.8rem; }
+div.related h3 { display: none; }
+div.related ul { margin: 0; padding: 0; white-space: normal !important; }
+div.related li { display: inline !important; float: none !important; white-space: normal !important; }
+div.footer { font-size: 0.7rem; padding: 16px; margin: 0 !important; }
+pre { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+dt:target, :target > dt, span.highlighted { background-color: rgba(255, 210, 0, 0.3) !important; }
+@media (max-width: 700px) {
+  div.body dl.field-list { display: block; }
+  div.body dl.field-list > dt { background: none; padding: 0; margin: 12px 0 4px; }
+  div.body dl.field-list > dd { margin-inline-start: 0; }
+  div.body dd { margin-inline-start: 12px; }
+}
+"""
+
+
+# -- fetching and pruning ---------------------------------------------------------
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def fetch(runtime: dict, update_pins: bool) -> Path:
+    docs = runtime["docs"]
+    cache = VENDOR / "docs-archives"
+    cache.mkdir(parents=True, exist_ok=True)
+    pinned = cache / f"python-{runtime['python']}-docs-html-{docs['sha256'][:12]}.zip"
+    if pinned.exists() and not update_pins:
+        return pinned
+    print(f"downloading {docs['url']}", file=sys.stderr)
+    tmp = cache / "download.tmp"
+    with urllib.request.urlopen(docs["url"]) as response, tmp.open("wb") as f:
+        shutil.copyfileobj(response, f)
+    digest = sha256(tmp)
+    if digest != docs["sha256"]:
+        if not update_pins:
+            tmp.unlink()
+            sys.exit(
+                f"error: {docs['url']} changed upstream (sha256 {digest}, pinned {docs['sha256']}).\n"
+                "The archives are rebuilt in place; run scripts/build-docs.py --update-pins to pin the new one."
+            )
+        docs["sha256"] = digest
+        pins = json.loads(RUNTIMES.read_text())
+        for r in pins["runtimes"]:
+            if r["python"] == runtime["python"]:
+                r["docs"]["sha256"] = digest
+        RUNTIMES.write_text(json.dumps(pins, indent=2) + "\n")
+        print(f"pinned {runtime['python']} docs at {digest}", file=sys.stderr)
+    target = cache / f"python-{runtime['python']}-docs-html-{digest[:12]}.zip"
+    tmp.rename(target)
+    return target
+
+
+def prune(root: Path, python: str) -> None:
+    for d in PRUNE_DIRS:
+        shutil.rmtree(root / d, ignore_errors=True)
+    for pattern in PRUNE_GLOBS:
+        for p in root.glob(pattern):
+            p.unlink()
+    # What's New: this version and the two before it.
+    minor = int(python.split(".")[1])
+    for p in (root / "whatsnew").glob("3.*.html"):
+        if int(p.stem.split(".")[1]) < minor - 2:
+            p.unlink()
+    for p in (root / "_images").glob("*"):
+        if p.is_file() and p.stat().st_size > MAX_IMAGE:
+            p.unlink()
+
+
+# -- HTML for the viewer -----------------------------------------------------------
+
+
+def patch(soup: BeautifulSoup, rel: PurePosixPath, root: Path, python: str) -> None:
+    up = "../" * (len(rel.parts) - 1)
+    for sel in ["div.mobile-nav", "div.sphinxsidebar", "link[rel=search]", "link[rel=index]"]:
+        for el in soup.select(sel):
+            el.decompose()
+    related = soup.select("div.related")
+    for el in related[1:]:
+        el.decompose()
+    if related:
+        top = related[0]
+        for li in top.select("li.right, li.switchers, li.root-icon"):
+            li.decompose()
+        for li in top.select("li"):
+            a = li.find("a")
+            if a is None or (a.get("href") or "").startswith("https://www.python.org"):
+                li.decompose()
+    for script in soup.find_all("script"):
+        src = script.get("src")
+        if not src or PurePosixPath(src.split("?")[0]).name not in KEEP_SCRIPTS:
+            script.decompose()
+    # Links: root-relative ones become relative, pruned pages go online.
+    for tag, attr in (("a", "href"), ("img", "src"), ("link", "href")):
+        for el in soup.find_all(tag):
+            value = el.get(attr)
+            if not value or value.startswith("#") or re.match(r"^[a-z][a-z0-9+.-]*:", value):
+                continue
+            path, _, fragment = value.partition("#")
+            path = path.split("?")[0]
+            if path.startswith("/"):
+                target = PurePosixPath(path.lstrip("/"))
+            else:
+                target = PurePosixPath(*_normalize(rel.parent.parts + PurePosixPath(path).parts))
+            if not (root / target).exists():
+                if tag == "link":
+                    el.decompose()
+                    continue
+                el[attr] = f"https://docs.python.org/{python}/{target}" + (f"#{fragment}" if fragment else "")
+            elif path.startswith("/"):
+                el[attr] = up + str(target) + (f"#{fragment}" if fragment else "")
+    head = soup.head
+    if head is not None:
+        head.append(soup.new_tag("meta", attrs={"name": "color-scheme", "content": "light dark"}))
+        head.append(soup.new_tag("link", attrs={"rel": "stylesheet", "href": f"{up}_static/pyslop.css"}))
+
+
+def _normalize(parts: tuple[str, ...]) -> list[str]:
+    out: list[str] = []
+    for p in parts:
+        if p == "..":
+            if out:
+                out.pop()
+        elif p not in (".", ""):
+            out.append(p)
+    return out
+
+
+# -- Markdown chunks for search ----------------------------------------------------
+
+
+class Markdown(MarkdownConverter):
+    def convert_pre(self, el, text, parent_tags):
+        code = el.get_text()
+        if not code.strip():
+            return ""
+        lang = ""
+        for node in (el.parent, el.parent.parent if el.parent else None):
+            for cls in (node.get("class", []) if isinstance(node, Tag) else []):
+                if cls.startswith("highlight-"):
+                    lang = cls.removeprefix("highlight-")
+        lang = {"python3": "python", "pycon": "pycon", "default": "python", "py": "python", "none": "", "text": ""}.get(lang, lang)
+        return f"\n\n```{lang}\n{code.rstrip()}\n```\n\n"
+
+    def convert_p(self, el, text, parent_tags):
+        if "admonition-title" in el.get("class", []):
+            return f"\n\n**{text.strip()}:**\n\n"
+        return super().convert_p(el, text, parent_tags)
+
+
+def markdown(html: str) -> str:
+    md = Markdown(
+        heading_style="ATX", bullets="-", strip=["a", "img"], escape_underscores=False, escape_asterisks=False,
+        escape_misc=False,
+    ).convert(html)
+    return re.sub(r"\n{3,}", "\n\n", md).strip()
+
+
+def clean_text(el: Tag) -> str:
+    for junk in el.select("a.headerlink, a.reference.internal > span.viewcode-link, .viewcode-link"):
+        junk.decompose()
+    return re.sub(r"\s+", " ", el.get_text()).strip().rstrip("¶").strip()
+
+
+def object_kind(dl: Tag) -> str | None:
+    classes = dl.get("class", [])
+    if dl.name != "dl" or "py" not in classes and "std" not in classes:
+        return None
+    for c in classes:
+        if c in OBJECT_KINDS:
+            return c
+    return None
+
+
+class Indexer:
+    def __init__(self, db: sqlite3.Connection):
+        self.db = db
+        self.ord = 0
+        self.page = 0
+
+    def index(self, soup: BeautifulSoup, rel: str) -> None:
+        body = soup.select_one('div.body[role="main"]') or soup.select_one("div.body")
+        if body is None:
+            return
+        title = soup.title.get_text() if soup.title else rel
+        title = re.split(r"\s+\u2014\s+Python [\d.a-z]+ documentation", title)[0].strip()
+        self.page = self.db.execute("INSERT INTO pages(path, title) VALUES (?, ?)", (rel, title)).lastrowid
+        self.ord = 0
+        sections = body.find_all("section", recursive=False)
+        if not sections:
+            self.chunk("section", "", title, [], 0, lambda: self.content(body, [title], 0))
+        for sec in sections:
+            self.section(sec, [], 0)
+
+    def chunk(self, kind, anchor, title, crumbs, depth, fill, symbols=()):
+        start = self.ord
+        self.ord += 1
+        cid = self.db.execute(
+            "INSERT INTO chunks(page, ord, end_ord, depth, kind, anchor, title, symbol, breadcrumb, body) VALUES (?,?,?,?,?,?,?,?,?,'')",
+            (self.page, start, start, depth, kind, anchor, title, " ".join(s for s, _ in symbols), " › ".join(crumbs)),
+        ).lastrowid
+        for name, skind in symbols:
+            self.db.execute("INSERT INTO symbols(name, lower, chunk, kind) VALUES (?,?,?,?)", (name, name.lower(), cid, skind))
+        body = fill()
+        self.db.execute("UPDATE chunks SET body = ?, end_ord = ? WHERE id = ?", (body, self.ord - 1, cid))
+
+    def section(self, sec: Tag, crumbs: list[str], depth: int) -> None:
+        heading = sec.find(re.compile(r"^h[1-6]$"), recursive=False)
+        title = clean_text(heading) if heading else ""
+        ids = [sec.get("id", "")] + [s.get("id") for s in sec.find_all("span", recursive=False) if s.get("id")]
+        modules = [i.removeprefix("module-") for i in ids if i and i.startswith("module-")]
+        kind = "module" if modules else "section"
+        anchor = sec.get("id", "")
+        self.chunk(kind, anchor, title, crumbs, depth, lambda: self.content(sec, crumbs + [title], depth, skip=heading),
+                   symbols=[(m, "module") for m in modules])
+
+    def obj(self, dl: Tag, kind: str, crumbs: list[str], depth: int) -> None:
+        # One entry: one or more signatures (dt) and the description (dd).
+        dts = dl.find_all("dt", recursive=False)
+        dd = dl.find("dd", recursive=False)
+        ids = [dt.get("id") for dt in dts if dt.get("id")]
+        if not ids:
+            return
+        signature = " | ".join(clean_text(dt) for dt in dts)
+        name = ids[0]
+        self.chunk(kind, name, signature, crumbs, depth,
+                   lambda: self.content(dd, crumbs + [name], depth) if dd else "",
+                   symbols=[(i, kind) for i in dict.fromkeys(ids)])
+
+    def glossary(self, dl: Tag, crumbs: list[str], depth: int) -> None:
+        for dt in dl.find_all("dt", recursive=False):
+            dd = dt.find_next_sibling("dd")
+            term = clean_text(dt)
+            self.chunk("term", dt.get("id", ""), term, crumbs, depth, lambda dd=dd: markdown(dd.decode_contents()) if dd else "")
+
+    def content(self, node: Tag, crumbs: list[str], depth: int, skip: Tag | None = None) -> str:
+        """Markdown of node's own content; sections and API entries inside it become chunks of their own."""
+        parts: list[str] = []
+        for child in node.children:
+            if child is skip:
+                continue
+            if isinstance(child, NavigableString):
+                if child.strip():
+                    parts.append(str(child))
+                continue
+            if not isinstance(child, Tag):
+                continue
+            kind = object_kind(child)
+            if child.name == "section":
+                self.section(child, crumbs, depth + 1)
+            elif kind:
+                self.obj(child, kind, crumbs, depth + 1)
+            elif child.name == "dl" and "glossary" in child.get("class", []):
+                self.glossary(child, crumbs, depth + 1)
+            else:
+                parts.append(str(child))
+        return markdown("".join(parts))
+
+
+SCHEMA = """
+CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE pages(id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, title TEXT NOT NULL);
+CREATE TABLE chunks(
+  id INTEGER PRIMARY KEY, page INTEGER NOT NULL, ord INTEGER NOT NULL, end_ord INTEGER NOT NULL,
+  depth INTEGER NOT NULL, kind TEXT NOT NULL, anchor TEXT NOT NULL, title TEXT NOT NULL,
+  symbol TEXT NOT NULL, breadcrumb TEXT NOT NULL, body TEXT NOT NULL
+);
+CREATE INDEX chunks_page ON chunks(page, ord);
+CREATE INDEX chunks_anchor ON chunks(anchor);
+CREATE TABLE symbols(name TEXT NOT NULL, lower TEXT NOT NULL, chunk INTEGER NOT NULL, kind TEXT NOT NULL);
+CREATE INDEX symbols_name ON symbols(name);
+CREATE INDEX symbols_lower ON symbols(lower);
+CREATE VIRTUAL TABLE chunks_fts USING fts5(
+  title, symbol, breadcrumb, body, content='chunks', content_rowid='id', tokenize='porter unicode61'
+);
+"""
+
+
+# -- build --------------------------------------------------------------------------
+
+
+def build(runtime: dict, update_pins: bool, force: bool) -> None:
+    python = runtime["python"]
+    out = VENDOR / f"docs-{python}"
+    stamp = f"{runtime['docs']['sha256']} {SCRIPT_HASH}\n"
+    if not force and not update_pins and (out / ".stamp").exists() and (out / ".stamp").read_text() == stamp:
+        return
+    archive = fetch(runtime, update_pins)
+    stamp = f"{runtime['docs']['sha256']} {SCRIPT_HASH}\n"
+    work = VENDOR / f"docs-{python}.tmp"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(work / "raw")
+    (root,) = [p for p in (work / "raw").iterdir() if p.is_dir()]
+    prune(root, python)
+
+    db = sqlite3.connect(work / "docs.sqlite")
+    db.executescript(SCHEMA)
+    indexer = Indexer(db)
+    release = python
+    pages = sorted(root.rglob("*.html"))
+    for page in pages:
+        rel = PurePosixPath(page.relative_to(root).as_posix())
+        soup = BeautifulSoup(page.read_bytes(), "lxml")
+        if soup.title and (m := re.search(r"Python ([\d.a-z]+) documentation", soup.title.get_text())):
+            release = m.group(1)
+        if str(rel) not in NOT_INDEXED:
+            indexer.index(BeautifulSoup(page.read_bytes(), "lxml"), str(rel))
+        patch(soup, rel, root, python)
+        page.write_text(str(soup), encoding="utf-8")
+    (root / "_static" / "pyslop.css").write_text(CSS)
+    db.executemany("INSERT INTO meta(key, value) VALUES (?, ?)", [
+        ("python", python), ("release", release), ("archive_sha256", runtime["docs"]["sha256"]), ("source", runtime["docs"]["url"]),
+    ])
+    db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
+    db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('optimize')")
+    db.commit()
+    chunks = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
+    symbols = db.execute("SELECT count(*) FROM symbols").fetchone()[0]
+    db.execute("VACUUM")
+    db.close()
+
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
+    root.rename(out / "html")
+    (work / "docs.sqlite").rename(out / "docs.sqlite")
+    shutil.rmtree(work)
+    (out / ".stamp").write_text(stamp)
+    size = sum(p.stat().st_size for p in (out / "html").rglob("*") if p.is_file())
+    print(
+        f"built docs {release} into {out.relative_to(APP)}: {len(pages)} pages, {size / 1e6:.0f} MB HTML, "
+        f"{chunks} chunks, {symbols} symbols, {(out / 'docs.sqlite').stat().st_size / 1e6:.0f} MB index",
+        file=sys.stderr,
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--update-pins", action="store_true", help="download the current archives and pin them")
+    parser.add_argument("--force", action="store_true", help="rebuild even when up to date")
+    args = parser.parse_args()
+    for runtime in json.loads(RUNTIMES.read_text())["runtimes"]:
+        build(runtime, args.update_pins, args.force)
+
+
+if __name__ == "__main__":
+    main()

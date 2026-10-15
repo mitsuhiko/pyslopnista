@@ -1,0 +1,26 @@
+{
+  "default": "3.14",
+  "runtimes": [
+    {
+      "python": "3.14",
+      "version": "3.14.2",
+      "pyodide": "314.0.7",
+      "cdn": "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/",
+      "docs": {
+        "url": "https://docs.python.org/3.14/archives/python-3.14-docs-html.zip",
+        "sha256": "07fbe835873bfc0fd6659469b130781eb9da3069f80dbd4774879cae7f2fb5c7"
+      }
+    },
+    {
+      "python": "3.15",
+      "version": "3.15.0rc1",
+      "pyodide": "315.0.0-alpha.2",
+      "cdn": "https://cdn.jsdelivr.net/pyodide/v315.0.0a2/full/",
+      "prerelease": true,
+      "docs": {
+        "url": "https://docs.python.org/3.15/archives/python-3.15-docs-html.zip",
+        "sha256": "9e7c51979501ef0404e0a231a3ef9ad5dae763b4a76aaf788db6e176eb51a043"
+      }
+    }
+  ]
+}

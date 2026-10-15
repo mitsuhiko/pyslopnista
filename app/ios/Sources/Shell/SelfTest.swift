@@ -42,6 +42,30 @@ enum SelfTest {
             await model.openLocation(str(0) ?? "", line: int(1), column: int(2), keepConsole: true)
         case "currentFile":
             return model.file ?? NSNull()
+        case "docsState":
+            return model.docsState
+        case "closeDocs":
+            model.closeDocs()
+        case "showDocs":
+            model.showDocs(DocsTarget(version: str(0) ?? model.defaultPython, ref: str(1)))
+        case "docsLink":
+            return model.openDocsLink(URL(string: str(0) ?? "")!)
+        case "docsSearch":
+            // The viewer's own search field, as typing in it would.
+            model.docs.browser?.query = str(0) ?? ""
+            model.docs.browser?.search(str(0) ?? "")
+            try await Task.sleep(for: .milliseconds(600))
+            return model.docs.browser?.results.prefix(5).map { $0.ref } ?? []
+        case "docsTarget":
+            return await model.docsTarget(path: str(0) ?? "", text: str(1) ?? "", line: int(2) ?? 1, column: int(3) ?? 1)
+                .map { ["version": $0.version, "ref": $0.ref ?? ""] as [String: Any] } ?? NSNull()
+        case "setDefaultPython":
+            model.setDefaultPython(str(0) ?? Runtimes.defaultPython)
+        case "filePython":
+            await model.refreshFilePython()
+            return ["python": model.filePython?.python as Any? ?? NSNull(), "pin": model.folderPin as Any? ?? NSNull()] as [String: Any]
+        case "setFolderPython":
+            await model.setFolderPython(str(0))
         case "editor":
             let inner = args.indices.contains(1) ? args[1] as? [Any] ?? [] : []
             return try await model.editors[model.focused].call(str(0) ?? "", inner) ?? NSNull()

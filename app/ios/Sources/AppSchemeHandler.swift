@@ -6,7 +6,8 @@ import WebKit
 /// Serves the bundled web app under `app://app/` with cross-origin isolation
 /// headers (D9) and acts as an offline-capable cache for package downloads:
 ///
-/// - `/pkgs/<file>`: Pyodide's packages, cache-first from the jsDelivr CDN (D12)
+/// - `/pkgs/<python>/<file>`: Pyodide's packages, cache-first from the jsDelivr
+///   CDN (D12), per bundled Python (D37)
 /// - `/pypi/simple/<name>/`: PyPI's Simple JSON API (PEP 691); cached for 10 min,
 ///   then network-first with the cache as offline fallback; file URLs are
 ///   rewritten to `/pypi-files/`
@@ -24,14 +25,13 @@ import WebKit
 @MainActor
 final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelegate {
     static let scheme = "app"
-    static let pyodideVersion = "314.0.7"
-    static let packageCDN = URL(string: "https://cdn.jsdelivr.net/pyodide/v\(pyodideVersion)/full/")!
     static let pypiSimple = URL(string: "https://pypi.org/simple/")!
     static let pypiFiles = URL(string: "https://files.pythonhosted.org/")!
     static let simpleJSON = "application/vnd.pypi.simple.v1+json"
 
     private let root: URL
-    private let packageCache: URL
+    /// Downloaded Pyodide packages, one folder per Pyodide version.
+    private let packageCaches: URL
     private let pypiCache: URL
     private var activeTasks = Set<ObjectIdentifier>()
     /// Python programs' file operations (`/__fs`).
@@ -50,9 +50,11 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
     init(root: URL) {
         self.root = root.standardizedFileURL
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        packageCache = support.appendingPathComponent("pyodide-packages/\(Self.pyodideVersion)", isDirectory: true)
+        let packageCaches = support.appendingPathComponent("pyodide-packages", isDirectory: true)
+        self.packageCaches = packageCaches
         pypiCache = support.appendingPathComponent("pypi", isDirectory: true)
-        for dir in [packageCache, pypiCache.appendingPathComponent("simple"), pypiCache.appendingPathComponent("files")] {
+        let packageDirs = Runtimes.all.map { packageCaches.appendingPathComponent($0.pyodide, isDirectory: true) }
+        for dir in packageDirs + [pypiCache.appendingPathComponent("simple"), pypiCache.appendingPathComponent("files")] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }
@@ -226,12 +228,14 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
 
     // MARK: Pyodide packages (cache-first)
 
-    private func servePackage(_ task: any WKURLSchemeTask, name: String) {
-        guard Self.isSafeComponent(name) else {
-            respond(task, status: 400, body: Data("bad package name".utf8), mime: "text/plain")
+    private func servePackage(_ task: any WKURLSchemeTask, name path: String) {
+        let parts = path.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let runtime = Runtimes.runtime(parts[0]), Self.isSafeComponent(parts[1]) else {
+            respond(task, status: 400, body: Data("bad package path".utf8), mime: "text/plain")
             return
         }
-        cacheFirst(task, cached: packageCache.appendingPathComponent(name), remote: Self.packageCDN.appendingPathComponent(name))
+        let cached = packageCaches.appendingPathComponent(runtime.pyodide, isDirectory: true).appendingPathComponent(parts[1])
+        cacheFirst(task, cached: cached, remote: runtime.cdn.appendingPathComponent(parts[1]))
     }
 
     // MARK: PyPI
@@ -294,13 +298,25 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
             return
         }
         Task { @MainActor in
-            do {
-                let (data, response) = try await URLSession.shared.data(from: remote)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 500
-                if status == 200 { try? data.write(to: cached, options: .atomic) }
-                self.respond(task, status: status, body: data, mime: "application/octet-stream", extra: ["X-Cache": "miss"])
-            } catch {
-                self.respond(task, status: 502, body: Data("download failed (offline?): \(error.localizedDescription)".utf8), mime: "text/plain")
+            // CDNs answer 5xx now and then while they fetch a file the first time: try again.
+            for attempt in 0..<3 {
+                do {
+                    let (data, response) = try await URLSession.shared.data(from: remote)
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 500
+                    if status >= 500 && attempt < 2 {
+                        try? await Task.sleep(for: .milliseconds(500 * (attempt + 1)))
+                        continue
+                    }
+                    if status == 200 { try? data.write(to: cached, options: .atomic) }
+                    self.respond(task, status: status, body: data, mime: "application/octet-stream", extra: ["X-Cache": "miss"])
+                } catch {
+                    if attempt < 2, (error as? URLError)?.code != .notConnectedToInternet {
+                        try? await Task.sleep(for: .milliseconds(500 * (attempt + 1)))
+                        continue
+                    }
+                    self.respond(task, status: 502, body: Data("download failed (offline?): \(error.localizedDescription)".utf8), mime: "text/plain")
+                }
+                return
             }
         }
     }

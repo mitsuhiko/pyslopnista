@@ -39,4 +39,5 @@ export type AnalysisRequest =
   | { type: "definition"; path: string; text: string; line: number; column: number }
   | { type: "source"; path: string } // text of an "ext:" path
   | { type: "setRoot"; dir: string } // the run's folder: sibling modules are importable
+  | { type: "setPython"; python: string } // the Python version to check against ("3.14", D37)
   | { type: "state" }; // diagnostics: root, known files, when the worker started

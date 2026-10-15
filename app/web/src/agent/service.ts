@@ -42,6 +42,7 @@ import { cancelLogin, login } from "./login";
 import { Prompt } from "./prompt";
 import { installProxyFetch } from "./proxy";
 import { BridgeSqlite } from "./sqlite";
+import { DocsTools } from "./docs";
 import { ProjectTools } from "./tools";
 
 const ctx = BACKGROUND_CONTEXT;
@@ -262,6 +263,7 @@ export class AgentService {
       registry.install(Prompt);
       registry.install(ProjectTools);
       registry.install(IDETools);
+      registry.install(DocsTools);
       const harness = await Harness.open(
         storage,
         {
