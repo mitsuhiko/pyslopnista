@@ -1351,6 +1351,16 @@ export async function selftest() {
       if (value !== "len([1, 2])") throw new Error(`field has ${JSON.stringify(value)}`);
       await app.submitField("console");
       await until(() => consoleText().includes("len([1, 2])2"));
+      // Touch and hold: the alternate, and not the key's own text.
+      await app.clearField("console");
+      await app.focusField("console");
+      await sleep(600);
+      await typeNative("1 ");
+      const held = await keyBar(["hold:=", "hold:("]);
+      if (typeof held === "string") throw new Error(held);
+      await sleep(200);
+      const holdValue = await app.fieldValue("console");
+      if (holdValue !== "1 ==)") throw new Error(`after holding = and (: ${JSON.stringify(holdValue)}`);
       return { shown: tapped.shown };
     } finally {
       await app.clearField("console");

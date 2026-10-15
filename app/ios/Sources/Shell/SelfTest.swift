@@ -15,7 +15,7 @@ enum SelfTest {
                 case "test.ui": reply(ui(model, value), nil)
                 case "test.type": reply(await type(value["text"] as? String ?? ""), nil)
                 case "test.turtle": reply(turtle(model, value), nil)
-                case "test.keybar": reply(keyBar(value["keys"] as? [String] ?? []), nil)
+                case "test.keybar": reply(await keyBar(value["keys"] as? [String] ?? []), nil)
                 case "test.hideKeyboard": reply(hideKeyboard(), nil)
                 case "test.link":
                     // Link a folder outside Documents without the picker.
@@ -258,7 +258,8 @@ enum SelfTest {
 
     /// Tap keys on the key bar of whatever has focus, by their labels (also
     /// when it is collapsed for a hardware keyboard); reports whether it shows.
-    private static func keyBar(_ labels: [String]) -> Any {
+    /// Taps keys of the bar; "hold:<label>" touches and holds one.
+    private static func keyBar(_ labels: [String]) async -> Any {
         guard let responder = UIResponder.current else { return "no first responder" }
         guard let bar = responder.inputAccessoryView else { return "no key bar on \(Swift.type(of: responder))" }
         let shown = bar.intrinsicContentSize.height > 0 && !bar.subviews.allSatisfy(\.isHidden)
@@ -268,8 +269,11 @@ enum SelfTest {
             return nil
         }
         for label in labels {
-            guard let key = find(bar, label) else { return "no key \(label)" }
+            let hold = label.hasPrefix("hold:")
+            let name = hold ? String(label.dropFirst(5)) : label
+            guard let key = find(bar, name) else { return "no key \(name)" }
             key.sendActions(for: .touchDown)
+            if hold { try? await Task.sleep(for: .seconds(KeyboardAccessory.holdDuration + 0.25)) }
             key.sendActions(for: .touchUpInside)
         }
         return ["shown": shown]

@@ -323,7 +323,7 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
             title.font = UIFont.monospacedSystemFont(ofSize: 19, weight: .regular)
             config.attributedTitle = title
         }
-        let button = UIButton(configuration: config)
+        let button = KeyButton(configuration: config)
         button.tag = tag
         // Our own pressed state (the plain style would only dim the glyph).
         button.configurationUpdateHandler = { button in
@@ -336,54 +336,53 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
         button.addTarget(self, action: #selector(keyDown(_:)), for: .touchDown)
         button.addTarget(self, action: #selector(keyUp(_:)), for: .touchUpInside)
         // Scrolling the bar cancels the touch: no key.
-        button.addTarget(self, action: #selector(keyCancel(_:)), for: [.touchUpOutside, .touchCancel])
-        if key.alternate != nil {
-            // A long press does more: a small dot in the corner, inside the key.
-            let dot = UIView()
-            dot.isUserInteractionEnabled = false
-            dot.backgroundColor = .tertiaryLabel
-            dot.layer.cornerRadius = 1.5
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            button.addSubview(dot)
-            NSLayoutConstraint.activate([
-                dot.widthAnchor.constraint(equalToConstant: 3), dot.heightAnchor.constraint(equalToConstant: 3),
-                dot.topAnchor.constraint(equalTo: button.topAnchor, constant: 5),
-                dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -5),
-            ])
-            let press = UILongPressGestureRecognizer(target: self, action: #selector(longPress(_:)))
-            press.minimumPressDuration = 0.35
-            button.addGestureRecognizer(press)
-        }
+        button.addTarget(self, action: #selector(keyCancel(_:)), for: [.touchUpOutside, .touchCancel, .touchDragExit])
+        // Touch and hold does more: a small dot next to the symbol says so.
+        button.hasAlternate = key.alternate != nil
         return button
     }
 
     // MARK: actions
 
-    private var longPressed = Set<Int>()
+    /// Touch and hold: timed from the key's own touch events. A gesture
+    /// recognizer on the key never won against the interactive glass and the
+    /// scroll view around it.
+    static let holdDuration: TimeInterval = 0.35
+    private var holdTimer: Timer?
+    /// The key whose alternate fired: its release does nothing.
+    private var held: UIButton?
 
     @objc private func keyDown(_ sender: UIButton) {
         UIDevice.current.playInputClick()
+        holdTimer?.invalidate()
+        held = nil
+        guard Self.keys.indices.contains(sender.tag), let alternate = Self.keys[sender.tag].alternate else { return }
+        holdTimer = Timer.scheduledTimer(withTimeInterval: Self.holdDuration, repeats: false) { [weak self, weak sender] _ in
+            MainActor.assumeIsolated {
+                guard let self, let sender else { return }
+                self.held = sender
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                self.send(alternate, from: sender)
+            }
+        }
     }
 
     @objc private func keyCancel(_ sender: UIButton) {
-        longPressed.remove(sender.tag)
+        holdTimer?.invalidate()
+        held = nil
     }
 
     @objc private func keyUp(_ sender: UIButton) {
-        if longPressed.remove(sender.tag) != nil { return }
+        holdTimer?.invalidate()
+        if held === sender {
+            held = nil
+            return
+        }
         if sender.tag == -1 {
             send("dismiss", from: sender)
         } else if Self.keys.indices.contains(sender.tag) {
             send(Self.keys[sender.tag].action, from: sender)
         }
-    }
-
-    @objc private func longPress(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began, let button = gesture.view as? UIButton,
-              Self.keys.indices.contains(button.tag), let alternate = Self.keys[button.tag].alternate else { return }
-        longPressed.insert(button.tag)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        send(alternate, from: button)
     }
 
     private func send(_ action: String, from key: UIView) {
@@ -451,6 +450,31 @@ extension KeyboardAccessory {
             if back > 0, let range = field.selectedTextRange, let p = field.position(from: range.start, offset: -back) { caret(p) }
         }
         field.sendActions(for: .editingChanged)
+    }
+}
+
+/// A key of the bar; one that does more when held has a dot next to its symbol.
+private final class KeyButton: UIButton {
+    private let dot = UIView()
+
+    var hasAlternate = false {
+        didSet {
+            if hasAlternate && dot.superview == nil {
+                dot.isUserInteractionEnabled = false
+                dot.backgroundColor = .tertiaryLabel
+                dot.layer.cornerRadius = 1.5
+                addSubview(dot)
+            }
+            dot.isHidden = !hasAlternate
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard hasAlternate else { return }
+        // Just above and right of the symbol, like a superscript, not in the key's corner.
+        let glyph = (configuration?.image != nil ? imageView?.frame : titleLabel?.frame) ?? bounds
+        dot.frame = CGRect(x: min(bounds.maxX - 4, glyph.maxX + 1), y: max(1, glyph.minY - 1), width: 3, height: 3)
     }
 }
 
