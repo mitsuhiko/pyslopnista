@@ -200,6 +200,70 @@ struct FileStore: Sendable {
         ]
     }
 
+    // MARK: staging for linked folders (HostFS, D35)
+
+    let maxStagingBytes = 512 * 1024 * 1024
+
+    /// Copy a linked folder's files (and folders) into `staging`, with
+    /// coordinated reads; files only in the cloud are downloaded first.
+    func snapshot(_ base: URL, into staging: URL) throws {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
+        guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: keys, options: []) else { return }
+        let basePath = base.standardizedFileURL.path.hasSuffix("/") ? base.standardizedFileURL.path : base.standardizedFileURL.path + "/"
+        var total = 0
+        for case let url as URL in walker {
+            var file = url
+            let name = url.lastPathComponent
+            let values = try url.resourceValues(forKeys: Set(keys))
+            if name == "__pycache__" {
+                walker.skipDescendants()
+                continue
+            }
+            if name.hasPrefix(".") {
+                guard values.isRegularFile == true, let real = Self.placeholderName(name) else {
+                    if values.isDirectory == true { walker.skipDescendants() }
+                    continue
+                }
+                file = url.deletingLastPathComponent().appendingPathComponent(real)
+            }
+            let rel = String(file.standardizedFileURL.path.dropFirst(basePath.count))
+            let target = staging.appendingPathComponent(rel)
+            if values.isDirectory == true {
+                try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+                continue
+            }
+            guard values.isRegularFile == true else { continue }
+            total += values.fileSize ?? 0
+            if total > maxStagingBytes { throw StoreError(description: "the folder is larger than \(maxStagingBytes / 1024 / 1024) MB") }
+            if file != url || Self.isEvicted(file) { try? FileManager.default.startDownloadingUbiquitousItem(at: file) }
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try coordinate(file, linked: true) { try FileManager.default.copyItem(at: $0, to: target) }
+        }
+    }
+
+    /// Write one staged change back into a linked folder, coordinated: a
+    /// file (its staged copy), a new folder, or a removal (no source).
+    func writeBack(_ source: URL?, to target: URL, isDirectory: Bool) throws {
+        if isDirectory {
+            try coordinate(target, linked: true, writing: []) {
+                try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)
+            }
+        } else if let source {
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try coordinate(target, linked: true, writing: .forReplacing) { url in
+                if FileManager.default.fileExists(atPath: url.path) {
+                    _ = try FileManager.default.replaceItemAt(url, withItemAt: source)
+                } else {
+                    try FileManager.default.moveItem(at: source, to: url)
+                }
+            }
+        } else {
+            try coordinate(target, linked: true, writing: .forDeleting) { url in
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            }
+        }
+    }
+
     /// All files below path (recursively), relative to path, base64 encoded.
     func tree(_ path: String) throws -> [[String: String]] {
         let (base, linked) = try locate(path)

@@ -793,6 +793,95 @@ provider) drives every tool against a real folder. The check confirms:
 
 It passes with the other 42 checks on the iPhone 17 simulator (2026-10-15).
 
+## D35: Programs use the project's files in place; linked folders through a local copy
+
+2026-10-15 - Accepted (supersedes D27; changes D20 and D28)
+
+A run no longer copies its folder into MEMFS and writes changed files back.
+The worker mounts the folder as `HOSTFS`, an Emscripten file system
+(`app/web/public/runtime/hostfs.js`, modelled on NODEFS) whose operations
+go to `HostFS.swift` as synchronous XHRs (`POST /__fs` on the scheme
+handler). That handler does the real `open`/`pread`/`pwrite`/`fsync`. The
+mount sits at the same path as the copy did (`/home/pyodide/project`), so
+tracebacks, the debugger and `>>>` are unchanged.
+
+What this changes:
+- **Writes:** they land in the file itself, page by page. SQLite works on
+  the real database with its journal, and a killed program is a crash that
+  SQLite recovers from.
+- **No copies:** nothing is copied at the start, so big folders cost
+  nothing.
+- **Gone:** the manifest, the write-back ordering and the 64 MB tree limit.
+
+Every call is a round trip (0.1-0.2 ms on the simulator), so the worker
+keeps three things (`spikes/host-fs/`):
+- **A write-behind queue** for all files:
+  - It goes to the host in one call before any other call, so the host
+    sees every operation in program order.
+  - It is also sent when the program idles (every 250 ms), blocks
+    (`input()`, sleep, the debugger, turtle) or ends.
+  - A killed worker loses at most what is queued, as if it had crashed a
+    moment earlier. The spike's crash test confirms SQLite recovers from
+    that.
+- **A stat cache:** missing files included, entries live for 1 s.
+- **A 64 KB block read cache:** checked against size and mtime when a file
+  is opened, dropped where this worker writes.
+
+Both caches are dropped when the mount's generation changes. The host
+raises it when the app (editor, agent, file browser) or another interpreter
+changes project files; each reply carries it.
+
+Linked folders (iCloud Drive, file providers, other apps) are not used in
+place: every operation would need `NSFileCoordinator`, and a file provider
+can't be trusted with page-level writes into a database. Instead:
+- **Mounting** copies the folder into `Caches/Staging/<mount>` with
+  coordinated reads (downloading what is only in the cloud; 512 MB at
+  most).
+- **The program** works on that local copy.
+- **Sync back:** `HostFS` records which paths the program changed, and
+  writes them back with coordinated writes:
+  - after 0.3 s of quiet (at least every 2 s while the program keeps
+    writing);
+  - when a run ends;
+  - when the app goes to the background;
+  - at unmount.
+  Journals go first, then files, then folders and removals. The copy is
+  cloned first (APFS), so the program can keep writing meanwhile.
+
+Also:
+- **Notifications:** the host tells the views about changed files itself
+  (file list, open tabs, ty's folder). The page's write-back path is gone.
+- **Agent:** `run_python` mounts the folder the same way and reports the
+  files the host saw change.
+- **`PYTHONDONTWRITEBYTECODE`:** imports of sibling modules no longer leave
+  `__pycache__` in the user's folders.
+
+What it costs, and what is open:
+- **Many small files are slow:** creating, writing and closing one is
+  about 6 calls, about 0.5 ms each on the simulator.
+- **SQLite is close to MEMFS with the caches:** a todo-style save takes
+  about 2 ms.
+- **Outside edits during a run** (Files app, iCloud) are seen within 1 s
+  for stats. Contents are only checked when a file is opened.
+- **No real file locks:** Emscripten answers `F_SETLK` itself, so two
+  interpreters writing the same database (a run and the agent's
+  `run_python`) are not protected from each other.
+- **Main thread:** both the scheme handler and the bridge run on the main
+  thread, so a busy UI adds latency.
+
+Evidence:
+- `spikes/host-fs/` (iPhone 18 Pro simulator): the costs, the caches, and
+  the crash and integrity tests.
+- In the app, the new `project_files_in_place` check:
+  - writes are on disk while the program waits in `input()`;
+  - an edit made meanwhile is seen;
+  - renames and deletions happen right away;
+  - SQLite leaves no journal;
+  - no `__pycache__` appears.
+- The `linked_folder` check now also syncs back a new folder and a deletion.
+- All 44 checks pass in the iPhone 18 Pro simulator (2026-10-15).
+- Not yet tried on a device.
+
 ## Proposed (not yet decided)
 
 (none)

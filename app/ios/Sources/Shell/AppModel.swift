@@ -168,6 +168,8 @@ final class AppModel {
         editors = (0..<2).map { i in
             PageController(webView: host.makeWebView(role: .editor(i), page: "editor.html"), script: "return await window.__editor.call(name, args)")
         }
+        // Files a program changed (D35) show up in the browser and in open tabs.
+        host.hostFS.onChange = { [weak self] paths in self?.filesChanged(paths) }
         host.handler = { [weak self] op, value, role, reply in
             guard let self else { return reply(nil, "gone") }
             self.handle(op, value, role, reply)
@@ -177,6 +179,7 @@ final class AppModel {
             case .engine:
                 self?.engine.markNotReady()
                 self?.agentHost.engineTerminated()
+                self?.host.unmountAll() // its interpreters are gone
             case .editor(let i): self?.editors[i].markNotReady()
             }
         }
@@ -268,6 +271,7 @@ final class AppModel {
         switch (role, op) {
         case (.engine, "engine.ready"):
             engine.markReady()
+            host.unmountAll() // left by a page that reloaded
             Task {
                 await command("setBreakpoints", ["data": breakpointsJSON()])
                 await syncAnalysisRoot(force: true)
@@ -844,7 +848,11 @@ final class AppModel {
 
     func appWillResignActive() {
         Task { await saveAll() }
-        Task { _ = await command("background") }
+        Task {
+            // The program's queued writes first, then staged copies back to their folders.
+            _ = await command("background")
+            host.syncMounts()
+        }
     }
 
     // MARK: code intelligence
@@ -1031,7 +1039,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts]]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts]][&ask=<prompt>]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1063,6 +1071,12 @@ final class AppModel {
         if let agentHook = hook["agent"] {
             openAgent()
             if agentHook == "accounts" { agentAccountsShown = true }
+            if let prompt = hook["ask"] {
+                // A fresh conversation in the folder, then the prompt as if typed.
+                for _ in 0..<50 where agent.state.project == nil { try? await Task.sleep(for: .milliseconds(200)) }
+                if let project = agent.state.project { _ = await agentCall("newConversation", [project, NSNull()]) }
+                agentSend(prompt)
+            }
         }
         if hook["focus"] == "console" {
             try? await Task.sleep(for: .milliseconds(600))

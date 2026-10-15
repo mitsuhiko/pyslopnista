@@ -26,8 +26,17 @@ final class WebHost: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDele
     /// Where native dialogs for JavaScript's alert/confirm/prompt are shown.
     var presenter: () -> UIViewController? = { nil }
 
+    /// Python programs' files (D35), served to the workers through `/__fs`.
+    let hostFS: HostFS
+
     init(files: FileStore) {
         self.files = files
+        hostFS = HostFS(queue: fileQueue)
+        super.init()
+        schemeHandler.hostFS = hostFS
+        hostFS.coordinator = { [files] source, target, isDirectory in
+            try files.writeBack(source, to: target, isDirectory: isDirectory)
+        }
     }
 
     func makeWebView(role: Role, page: String) -> WKWebView {
@@ -64,6 +73,10 @@ final class WebHost: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDele
             return
         }
         let value = body["value"] as? [String: Any] ?? [:]
+        if op.hasPrefix("hostfs.") {
+            hostFSOperation(op, value, reply: replyHandler)
+            return
+        }
         if op.hasPrefix("fs.") {
             fileOperation(op, value.compactMapValues { $0 as? String }, reply: replyHandler)
             return
@@ -97,8 +110,54 @@ final class WebHost: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDele
         let error: String?
     }
 
+    /// Mounting a program's folder (staging a linked one can take a while),
+    /// syncing it back, unmounting.
+    private func hostFSOperation(_ op: String, _ value: [String: Any], reply: @escaping Reply) {
+        let files = files, hostFS = hostFS
+        fileQueue.async {
+            let result: Result
+            do {
+                guard let coordinator = hostFS.coordinator else { throw FileStore.StoreError(description: "no coordinator") }
+                switch op {
+                case "hostfs.mount":
+                    let path = value["path"] as? String ?? ""
+                    let (url, linked) = try files.locate(path)
+                    let mount = try hostFS.mount(appPath: path, url: url, linked: linked) { try files.snapshot($0, into: $1) }
+                    result = Result(value: mount, error: nil)
+                case "hostfs.sync":
+                    result = Result(value: hostFS.sync(value["token"] as? String ?? "", coordinate: coordinator), error: nil)
+                case "hostfs.unmount":
+                    result = Result(value: hostFS.unmount(value["token"] as? String ?? "", coordinate: coordinator), error: nil)
+                default:
+                    throw FileStore.StoreError(description: "unknown op \(op)")
+                }
+            } catch {
+                result = Result(value: nil, error: "\(error)")
+            }
+            Task { @MainActor in reply(result.value, result.error) }
+        }
+    }
+
+    /// Unmount every program's folder (the engine page went away).
+    func unmountAll() {
+        let hostFS = hostFS
+        fileQueue.async {
+            if let coordinator = hostFS.coordinator { hostFS.unmountAll(coordinate: coordinator) }
+        }
+    }
+
+    /// Write staged changes back now (the app goes to the background).
+    func syncMounts() {
+        let hostFS = hostFS
+        fileQueue.async {
+            if let coordinator = hostFS.coordinator { hostFS.syncAll(coordinate: coordinator) }
+        }
+    }
+
     private func fileOperation(_ op: String, _ args: [String: String], reply: @escaping Reply) {
         let files = files
+        // Programs' interpreters cache file contents: tell them about changes.
+        if ["fs.write", "fs.mkdir", "fs.rename", "fs.delete"].contains(op) { hostFS.externalChange() }
         fileQueue.async {
             let result: Result
             do {

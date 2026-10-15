@@ -25,7 +25,6 @@ turtleSync.ops = (scene, ops) => void call("turtle.ops", { key: scene.key, ops: 
 turtleSync.state = (scene) =>
   void call("turtle.state", { key: scene.key, live: scene.live, active: scene.active, pointer: scene.listening.pointer, keys: scene.listening.keys }).catch(() => {});
 
-session.onFilesChanged = (paths) => void call("files.changed", { paths }).catch(() => {});
 breakpoints.onChange = (data) => void call("breakpoints.changed", { data }).catch(() => {});
 
 // The coding agent (D34) loads on first use; the bundle is large and most

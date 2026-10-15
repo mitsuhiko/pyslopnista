@@ -49,6 +49,7 @@ Spike queue (update the status here). The pi-durable agent always comes last
 Done:
 - [x] `jspi-repro`: JSPI "hang" root-caused to CPython's iOS JS-trampoline fallback (D13)
 - [x] `webkit-probe`: wasm and threading features of iOS 27 Safari (simulator)
+- [x] `host-fs`: Pyodide on the host's files (an Emscripten FS over sync XHR), costs, caches, SQLite crash safety (D35, built into the app)
 
 ## Conventions
 

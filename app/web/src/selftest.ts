@@ -170,6 +170,45 @@ export async function selftest() {
     await runFile("Tests/main.py");
     await until(idle);
     if (!consoleText().includes("hello module")) throw new Error(consoleText());
+    // The folder is used in place: no bytecode next to the user's files.
+    if (await fs.exists("Tests/__pycache__")) throw new Error("__pycache__ written into the project");
+  });
+
+  await step("project_files_in_place", async () => {
+    // D35: the program works on the folder itself. Its writes are on disk
+    // before it blocks, it sees edits made meanwhile, renames and deletions
+    // happen right away, and SQLite leaves no journal behind.
+    const dir = "Tests/live";
+    await fs.mkdir(dir);
+    await fs.writeText(`${dir}/live.py`, [
+      "import os, sqlite3",
+      "open('live.txt', 'w').write('one')",
+      "print('read:', open('live.txt').read())",
+      "db = sqlite3.connect('live.db')",
+      "db.execute('create table if not exists t (x)')",
+      "db.executemany('insert into t values (?)', [(i,) for i in range(1000)])",
+      "db.commit()",
+      "input('go? ')",
+      "print('reread:', open('live.txt').read())",
+      "os.rename('live.txt', 'moved.txt')",
+      "os.makedirs('sub/deeper', exist_ok=True)",
+      "open('sub/deeper/x.txt', 'w').write('x')",
+      "os.remove('moved.txt')",
+      "print('rows:', db.execute('select count(*) from t').fetchone()[0])",
+      "",
+    ].join("\n"));
+    await runFile(`${dir}/live.py`);
+    await until(() => session.getSnapshot().awaitingInput);
+    if ((await fs.readText(`${dir}/live.txt`)) !== "one") throw new Error("live.txt not on disk while the program waits");
+    if (!(await fs.exists(`${dir}/live.db`)) || (await fs.exists(`${dir}/live.db-journal`))) throw new Error("live.db missing, or a journal left behind");
+    await fs.writeText(`${dir}/live.txt`, "two"); // like the editor saving it
+    session.submitInput("");
+    await until(idle);
+    const out = consoleText();
+    if (!out.includes("read: one") || !out.includes("reread: two") || !out.includes("rows: 1000")) throw new Error(out);
+    const names = (await fs.list(dir)).map((e) => e.name).sort();
+    if (names.join(",") !== "live.db,live.py,sub") throw new Error(`files: ${names}`);
+    if ((await fs.readText(`${dir}/sub/deeper/x.txt`)) !== "x") throw new Error("sub/deeper/x.txt");
   });
 
   await step("plot", async () => {
@@ -384,12 +423,15 @@ export async function selftest() {
       if ((await fs.list("")).some((e) => e.path === loc.path)) throw new Error("linked folder listed in Documents");
       await fs.writeText(`${dir}/helper.py`, "NAME = 'linked'\n");
       await fs.writeText(`${dir}/main.py`, "");
-      await runFile(`${dir}/main.py`, "from helper import NAME\nopen('out.txt', 'w').write(NAME)\nprint('hello from', NAME)\n");
+      await runFile(`${dir}/main.py`, "import os\nfrom helper import NAME\nopen('out.txt', 'w').write(NAME)\nos.makedirs('data', exist_ok=True)\nopen('data/x.txt', 'w').write('x')\nos.remove('helper.py')\nprint('hello from', NAME)\n");
       await until(idle);
       if (!consoleText().includes("hello from linked")) throw new Error(consoleText());
       for (let i = 0; i < 30 && !(await fs.exists(`${dir}/out.txt`)); i++) await sleep(100);
       const out = await fs.readText(`${dir}/out.txt`);
       if (out !== "linked") throw new Error(`out.txt: ${out}`);
+      // It ran on a local copy (D35); new folders and deletions went back too.
+      if ((await fs.readText(`${dir}/data/x.txt`)) !== "x") throw new Error("data/x.txt not synced back");
+      if (await fs.exists(`${dir}/helper.py`)) throw new Error("helper.py not deleted in the linked folder");
       if (!(await fs.list(loc.path)).some((e) => e.name === "app" && e.dir)) throw new Error("app folder not listed");
       let refused = false;
       await fs.remove(loc.path).catch(() => (refused = true));

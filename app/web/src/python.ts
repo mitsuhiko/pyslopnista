@@ -1,6 +1,6 @@
 // Page-side controller for Python workers (D6, D11, D13, D16): warm pool,
 // output streaming, stdin, interrupt with escalation, host calls, UI messages,
-// project file sync.
+// and the project folder the program works in (HostFS, D35).
 import { call } from "./host";
 
 const encoder = new TextEncoder();
@@ -10,8 +10,7 @@ export type Stream = "stdout" | "stderr" | "system" | "image";
 
 export interface RunOptions {
   filename?: string;
-  cwd?: string; // directory inside the interpreter's file system
-  files?: { path: string; data: Uint8Array }[]; // synced into cwd before running
+  cwd?: string; // directory inside the interpreter's file system (the mounted folder, see attach)
   repl?: boolean; // run as console input (shows the value of a final expression)
   breakpoints?: Record<string, number[]>; // project-relative path -> lines (D23)
 }
@@ -24,11 +23,7 @@ export interface RunResult {
   error?: string;
   ms: number;
   killed?: boolean;
-  changed?: ChangedFile[];
 }
-
-/** A file the program wrote (data) or deleted (null). */
-export type ChangedFile = { path: string; data: Uint8Array | null };
 
 export interface WorkerInfo {
   bootMs: number;
@@ -61,8 +56,6 @@ export class PyWorker {
   onOutput: (stream: Stream, text: string) => void = () => {};
   onInput: () => Promise<string | null> = async () => null;
   onUIRender: (json: string) => void = () => {};
-  /** Files the program changed while it idles (see startFlushing in the worker). */
-  onFiles: (changed: ChangedFile[]) => void = () => {};
   onCrash: (error: string) => void = () => {};
   /** A debugger message; the returned promise is the next command (D23). */
   onDebug: (message: any) => Promise<unknown> = async () => ({ op: "continue" });
@@ -123,11 +116,8 @@ export class PyWorker {
       case "done":
         this.finish(msg);
         break;
-      case "files":
-        this.onFiles(msg.changed);
-        break;
       case "synced":
-        this.syncs.get(msg.id)?.(msg.changed);
+        this.syncs.get(msg.id)?.();
         this.syncs.delete(msg.id);
         break;
       case "worker-error": {
@@ -140,6 +130,7 @@ export class PyWorker {
         } else {
           this.dead = true;
           this.worker.terminate();
+          this.unmount();
         }
         break;
       }
@@ -178,12 +169,23 @@ export class PyWorker {
     Atomics.notify(ints, 0);
   }
 
+  private mountToken: string | null = null;
+  private unmounted: Promise<string[]> | null = null;
+
+  /** Use a project folder (an app path) as the program's files: the host
+   * mounts it (a linked folder via a local copy), and the next run sees it at
+   * its cwd. */
+  async attach(path: string) {
+    const { token } = await call<{ token: string; staged: boolean }>("hostfs.mount", { path });
+    this.mountToken = token;
+  }
+
   run(code: string, options: RunOptions = {}): Promise<RunResult> {
     if (this.current) throw new Error("already running");
     if (this.interrupt) Atomics.store(this.interrupt, 0, 0);
     return new Promise((resolve) => {
       this.current = resolve;
-      this.worker.postMessage({ type: "run", code, ...options });
+      this.worker.postMessage({ type: "run", code, mount: this.mountToken, ...options });
     });
   }
 
@@ -195,25 +197,37 @@ export class PyWorker {
     return true;
   }
 
-  private syncs = new Map<number, (changed: ChangedFile[]) => void>();
+  private syncs = new Map<number, () => void>();
   private nextSync = 0;
 
-  /** Files the program created or changed since the last sync or run end
-   * (UI apps keep running after their script returned). Empty on timeout. */
-  syncFiles(timeoutMs = 1000): Promise<ChangedFile[]> {
-    if (this.dead) return Promise.resolve([]);
-    const id = this.nextSync++;
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.syncs.delete(id);
-        resolve([]);
-      }, timeoutMs);
-      this.syncs.set(id, (changed) => {
-        clearTimeout(timer);
-        resolve(changed);
+  /** The program's queued writes reach the host, and a linked folder's copy
+   * goes back to it. Resolves with the files changed since the last sync (app
+   * paths); the host also tells the app's views about them. */
+  async syncFiles(timeoutMs = 1000): Promise<string[]> {
+    if (!this.dead) {
+      const id = this.nextSync++;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          this.syncs.delete(id);
+          resolve();
+        }, timeoutMs);
+        this.syncs.set(id, () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        this.worker.postMessage({ type: "sync", id });
       });
-      this.worker.postMessage({ type: "sync", id });
-    });
+    }
+    if (!this.mountToken) return [];
+    return call<string[]>("hostfs.sync", { token: this.mountToken }).catch(() => []);
+  }
+
+  /** Flush, end the worker and unmount its folder: every file the program
+   * changed while it was mounted (app paths). */
+  async release(): Promise<string[]> {
+    await this.syncFiles();
+    this.terminate("done");
+    return this.unmounted ?? [];
   }
 
   sendUIEvent(id: string, args: string) {
@@ -252,7 +266,15 @@ export class PyWorker {
   terminate(reason = "terminated") {
     this.dead = true;
     this.worker.terminate();
+    this.unmount();
     this.finish({ ok: false, error: reason, ms: 0, killed: true });
+  }
+
+  private unmount() {
+    // Writes still queued in the worker are lost, as in a crash.
+    if (this.mountToken && !this.unmounted) {
+      this.unmounted = call<string[]>("hostfs.unmount", { token: this.mountToken }).catch(() => []);
+    }
   }
 }
 

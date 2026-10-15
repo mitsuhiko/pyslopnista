@@ -17,6 +17,10 @@ import WebKit
 ///   set travel in `X-Pyslop-Headers` (JSON); network failures answer 502 with
 ///   `X-Pyslop-Error`. The response streams: every chunk URLSession delivers
 ///   goes to the page right away (server-sent events need that).
+/// - `POST /__fs`: one file operation of a Python program (HostFS, D35), by
+///   synchronous XHR from its worker. The mount token is in `X-Fs-Mount`, the
+///   call in `X-Fs` and its result in `X-Fs-Result` (JSON, percent-encoded);
+///   file bytes are the bodies.
 @MainActor
 final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelegate {
     static let scheme = "app"
@@ -30,6 +34,8 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
     private let packageCache: URL
     private let pypiCache: URL
     private var activeTasks = Set<ObjectIdentifier>()
+    /// Python programs' file operations (`/__fs`).
+    var hostFS: HostFS?
     /// Proxied requests: URLSession task ID -> the page's request.
     private var proxied: [Int: (task: any WKURLSchemeTask, target: URL, responded: Bool)] = [:]
     private var proxyTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
@@ -76,6 +82,10 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
             proxy(task)
             return
         }
+        if path == "/__fs" {
+            serveFS(task)
+            return
+        }
 
         let fileURL = root.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
         guard fileURL.path.hasPrefix(root.path + "/"),
@@ -94,6 +104,22 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
             dataTask.cancel()
         }
     }
+
+    // MARK: files for Python programs
+
+    private func serveFS(_ task: any WKURLSchemeTask) {
+        let request = task.request
+        let decode = { (name: String) in request.value(forHTTPHeaderField: name)?.removingPercentEncoding ?? "" }
+        let meta = (try? JSONSerialization.jsonObject(with: Data(decode("X-Fs").utf8))) as? [String: Any] ?? [:]
+        let body = request.httpBody ?? request.httpBodyStream.map(Self.readAll)
+        let (result, data) = hostFS?.perform(token: decode("X-Fs-Mount"), meta, data: body) ?? (["error": "ENOSYS"], nil)
+        let json = (try? JSONSerialization.data(withJSONObject: result)).flatMap { String(data: $0, encoding: .utf8) } ?? #"{"error":"EIO"}"#
+        let encoded = json.addingPercentEncoding(withAllowedCharacters: Self.headerSafe) ?? json
+        respond(task, status: 200, body: data ?? Data(), mime: "application/octet-stream", extra: ["X-Fs-Result": encoded])
+    }
+
+    /// What may stay unescaped in a header value we decode with decodeURIComponent.
+    private static let headerSafe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789{}[]:,\"-_.")
 
     // MARK: HTTP for Python programs
 

@@ -8,10 +8,10 @@ import { createEditTool, createReadTool, createWriteTool } from "@earendil-works
 import { createTwoFilesPatch } from "diff";
 import { analysis } from "../analysis/api";
 import type { Problem } from "../analysis/protocol";
-import { base64ToBytes, bytesToBase64, fs } from "../host";
-import { type ChangedFile, PyWorker } from "../python";
+import { base64ToBytes, bytesToBase64 } from "../host";
+import { PyWorker } from "../python";
 import { cleanTraceback } from "../session";
-import { normalize, type ProjectEnv } from "./env";
+import type { ProjectEnv } from "./env";
 
 const PROJECT_ROOT = "/home/pyodide/project";
 const decoder = new TextDecoder();
@@ -172,8 +172,8 @@ const grepTool = defineTool({
 const runPythonTool = defineTool({
   name: "run_python",
   description:
-    "Run Python (Pyodide, CPython 3.14 in WebAssembly) in a fresh interpreter, with a copy of the project folder as the working directory. " +
-    "Files the program writes are saved back into the project. Dependencies: a PEP 723 `# /// script` block in the code or file. " +
+    "Run Python (Pyodide, CPython 3.14 in WebAssembly) in a fresh interpreter, with the project folder as the working directory. " +
+    "Files the program writes go straight into the project. Dependencies: a PEP 723 `# /// script` block in the code or file. " +
     "Returns stdout/stderr, the traceback on failure, and matplotlib figures shown with plt.show() as images. " +
     "input() gets end-of-file; ui apps and turtle windows cannot be shown here.",
   parameters: Type.Object({
@@ -196,8 +196,6 @@ const runPythonTool = defineTool({
       dir = dirOf(p.value);
       filename = baseOf(p.value);
     }
-    const files = (await env.tree(dir)).map((f) => ({ path: f.path.slice(dir === "/" ? 1 : dir.length + 1), data: base64ToBytes(f.data) }));
-
     const worker = new PyWorker();
     let output = "";
     const images: string[] = [];
@@ -223,23 +221,6 @@ const runPythonTool = defineTool({
       note ||= "The program draws with turtle, which the agent cannot see.\n";
     };
     worker.onTurtleCall = async () => [];
-    const written: string[] = [];
-    let writes = Promise.resolve();
-    const writeBack = (changed: ChangedFile[]) => {
-      writes = writes.then(async () => {
-        for (const f of changed) {
-          const target = normalize(`${dir}/${f.path}`);
-          if (!target) continue;
-          const appPath = env.appPath(target);
-          if (f.data) await fs.writeBase64(appPath, bytesToBase64(f.data));
-          else if (await fs.exists(appPath)) await fs.remove(appPath);
-          written.push(target);
-        }
-      });
-      return writes;
-    };
-    worker.onFiles = (changed) => void writeBack(changed);
-
     const timeout = Math.max(1, Math.min(args.timeout_seconds ?? 60, 600));
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -250,8 +231,13 @@ const runPythonTool = defineTool({
     context.abortSignal?.addEventListener("abort", onAbort);
     try {
       await worker.ready;
-      const result = await worker.run(code, { filename, cwd: PROJECT_ROOT, files });
-      await writeBack(result.changed ?? []);
+      // The folder itself (D35); a linked folder through a local copy.
+      await worker.attach(env.appPath(dir));
+      const result = await worker.run(code, { filename, cwd: PROJECT_ROOT });
+      const prefix = env.project ? `${env.project}/` : "";
+      const written = (await worker.release())
+        .filter((p) => !p.split("/").includes("__pycache__"))
+        .map((p) => `/${p.startsWith(prefix) ? p.slice(prefix.length) : p}`);
       if (written.length) env.notifyWrites(written.map((p) => env.appPath(p)));
       let report = output.length > MAX_OUTPUT ? `…\n${output.slice(-MAX_OUTPUT)}` : output;
       if (report && !report.endsWith("\n")) report += "\n";

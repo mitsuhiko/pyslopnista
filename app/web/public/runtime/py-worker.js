@@ -3,6 +3,7 @@
 // SharedArrayBuffer channel and Atomics.wait (D13). Errors escaping Pyodide are
 // reported as crashes (D16).
 import "./sab-polyfill.js";
+import { createHostFS } from "./hostfs.js";
 
 // HTTP for Python programs (D25): cross-origin XHR and fetch go through the
 // host's /__http proxy, which makes the request natively (no CORS). requests
@@ -77,8 +78,8 @@ let syncChannel; // Int32Array view: [state, length], payload from byte 8
 let nextCallId = 0;
 const pendingCalls = new Map();
 let uiDispatcher = null;
-let manifest = new Map(); // path -> version (mtime and size) of files synced into the project dir
-let written = new Set(); // paths this program wrote back (their deletion is written back too)
+let hostfs = null; // the project folder (D35); its write-behind queue is flushed by flushFiles()
+let mounted = null; // {token, cwd}
 let flushTimer = null;
 let plumbing; // a private namespace for our own Python, so the program's globals stay clean
 
@@ -111,11 +112,20 @@ function context2d() {
 function runPlumbing(code) {
   py.runPython(code, { globals: plumbing });
 }
-let runCwd = null; // the program's working directory, for later write-backs
+/** Send the program's queued file writes to the host (before it blocks or
+ * sleeps, while it idles, when it ends). */
+function flushFiles() {
+  try {
+    hostfs?.flush();
+  } catch (e) {
+    postMessage({ type: "output", stream: "stderr", text: `Could not save files: ${e.message ?? e}\n` });
+  }
+}
 
 function syncCall(op, value) {
   if (!syncChannel) throw new Error(`blocking call '${op}' needs cross-origin isolation`);
   flushTurtle();
+  flushFiles();
   const ints = new Int32Array(syncChannel, 0, 2);
   Atomics.store(ints, 0, 0);
   postMessage({ type: "call", sync: true, op, value });
@@ -165,7 +175,8 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   py = await loadPyodide({
     indexURL,
     packageBaseUrl,
-    env: { HOME: "/home/pyodide", MPLBACKEND: "agg" },
+    // Bytecode would land in the user's folders (__pycache__), next to their files.
+    env: { HOME: "/home/pyodide", MPLBACKEND: "agg", PYTHONDONTWRITEBYTECODE: "1" },
     stdout: (s) => (flushTurtle(), postMessage({ type: "output", stream: "stdout", text: s + "\n" })),
     stderr: (s) => (flushTurtle(), postMessage({ type: "output", stream: "stderr", text: s + "\n" })),
   });
@@ -182,6 +193,7 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
     // uncaught worker error). _pyslop_debug wraps this into time.sleep.
     sleep: (seconds) => {
       flushTurtle();
+      flushFiles();
       Atomics.wait(interruptInts, 0, 0, Math.max(0, seconds * 1000));
       // Woken by Pause or a breakpoint update: run that handler now, before
       // the sleep loop waits again (CPython only polls the buffer now and then).
@@ -251,82 +263,27 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
   });
 }
 
-// mtimes are in milliseconds; the size catches a second write in the same one.
-const version = (stat) => `${stat.mtime.getTime()}:${stat.size}`;
-
-/** Write the project's files into cwd and remember their mtimes. */
-function syncIn(cwd, files) {
+/** Mount the project folder (a HostFS mount token) at cwd. */
+function mount(token, cwd) {
+  if (mounted?.token === token && mounted.cwd === cwd) return;
+  if (mounted) {
+    flushFiles();
+    py.FS.chdir("/");
+    py.FS.unmount(mounted.cwd);
+  }
   py.FS.mkdirTree(cwd);
-  manifest = new Map();
-  written = new Set();
-  for (const { path, data } of files) {
-    const full = `${cwd}/${path}`;
-    py.FS.mkdirTree(full.slice(0, full.lastIndexOf("/")));
-    py.FS.writeFile(full, data);
-    manifest.set(path, version(py.FS.stat(full)));
-  }
+  hostfs = createHostFS(py, token);
+  py.FS.mount(hostfs, {}, cwd);
+  mounted = { token, cwd };
 }
 
 /**
- * Files under cwd that are new or modified since the last call (data), and
- * files this program wrote back earlier and has deleted since (data: null).
- *
- * The order is SQLite's: rollback journals first, then the other files, then
- * deletions. A database is then never newer on disk than its journal, and a
- * journal deleted at commit does not stay behind as a "hot" one that would
- * roll the database back when it is next opened.
- */
-function changedFiles(cwd) {
-  const out = [];
-  const seen = new Set();
-  const walk = (dir, rel) => {
-    for (const name of py.FS.readdir(dir)) {
-      if (name === "." || name === ".." || name === "__pycache__") continue;
-      const full = `${dir}/${name}`;
-      const path = rel ? `${rel}/${name}` : name;
-      const stat = py.FS.stat(full);
-      if (py.FS.isDir(stat.mode)) {
-        walk(full, path);
-        continue;
-      }
-      seen.add(path);
-      const v = version(stat);
-      if (manifest.get(path) !== v) {
-        out.push({ path, data: py.FS.readFile(full) });
-        manifest.set(path, v);
-        written.add(path);
-      }
-    }
-  };
-  try {
-    py.FS.stat(cwd);
-  } catch {
-    return []; // cwd was removed by the script: write nothing back, delete nothing
-  }
-  walk(cwd, "");
-  const journal = (p) => /-(journal|wal)$/.test(p);
-  out.sort((a, b) => Number(journal(b.path)) - Number(journal(a.path)));
-  for (const path of written) {
-    if (seen.has(path)) continue;
-    out.push({ path, data: null });
-    written.delete(path);
-    manifest.delete(path);
-  }
-  return out;
-}
-
-/**
- * Hand changed files to the page while the program idles (the timer only fires
- * between Python's tasks), so a UI app's data reaches the disk within a
- * second, not only when it closes. A killed app or a crash loses at most that.
+ * While the program idles (the timer only fires between Python's tasks),
+ * queued writes go to the host, so a UI app's data reaches the disk within a
+ * quarter second. A killed worker loses at most that.
  */
 function startFlushing() {
-  if (flushTimer) return;
-  flushTimer = setInterval(() => {
-    if (!runCwd) return;
-    const changed = changedFiles(runCwd);
-    if (changed.length) postMessage({ type: "files", changed });
-  }, 500);
+  flushTimer ??= setInterval(flushFiles, 250);
 }
 
 /**
@@ -344,12 +301,11 @@ async function callRuntime(module, name, ...args) {
   }
 }
 
-async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) {
+async function run({ code, filename, cwd, mount: token, repl, indexURL, breakpoints }) {
   const t0 = performance.now();
   try {
-    if (files && cwd) syncIn(cwd, files);
-    if (cwd && !repl) {
-      runCwd = cwd;
+    if (token && cwd) {
+      mount(token, cwd);
       startFlushing();
     }
     if (cwd) {
@@ -390,10 +346,12 @@ async function run({ code, filename, cwd, files, repl, indexURL, breakpoints }) 
       }
     }
     finishTurtle();
-    postMessage({ type: "done", ok: true, ms: performance.now() - t0, changed: cwd ? changedFiles(cwd) : [] });
+    flushFiles();
+    postMessage({ type: "done", ok: true, ms: performance.now() - t0 });
   } catch (e) {
     finishTurtle();
-    postMessage({ type: "done", ok: false, error: String(e.message ?? e), ms: performance.now() - t0, changed: cwd ? changedFiles(cwd) : [] });
+    flushFiles();
+    postMessage({ type: "done", ok: false, error: String(e.message ?? e), ms: performance.now() - t0 });
   }
 }
 
@@ -448,8 +406,9 @@ onmessage = async (e) => {
       if (uiDispatcher) uiDispatcher(msg.id, msg.args);
       break;
     case "sync":
-      // Files a UI app wrote after its script returned (e.g. saved data).
-      postMessage({ type: "synced", id: msg.id, changed: runCwd ? changedFiles(runCwd) : [] });
+      // Before a UI app closes or the app goes to the background.
+      flushFiles();
+      postMessage({ type: "synced", id: msg.id });
       break;
     case "call-reply": {
       const pending = pendingCalls.get(msg.id);

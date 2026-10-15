@@ -1,0 +1,1152 @@
+{
+  "date": "2026-10-15T08:45:57.352Z",
+  "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+  "probe": {
+    "uint8Array": "__NSDictionaryM",
+    "arrayBuffer": "__NSDictionaryM"
+  },
+  "bootMs": 869,
+  "transport": {
+    "xhr": {
+      "noopMs": 0.182,
+      "statMs": 0.199,
+      "read4096Ms": 0.19,
+      "write4096Ms": 0.22333333333333333,
+      "read65536Ms": 0.19,
+      "write65536Ms": 0.28,
+      "read1048576Ms": 0.6,
+      "write1048576Ms": 0.6,
+      "read4194304Ms": 1.5,
+      "write4194304Ms": 1.6
+    },
+    "bridge": {
+      "noopMs": 0.087,
+      "statMs": 0.141,
+      "read4096Ms": 0.14333333333333334,
+      "write4096Ms": 0.12666666666666668,
+      "read65536Ms": 0.30666666666666664,
+      "write65536Ms": 0.27666666666666667,
+      "read1048576Ms": 3.1,
+      "write1048576Ms": 2.4,
+      "read4194304Ms": 12,
+      "write4194304Ms": 8.7
+    }
+  },
+  "python": {
+    "mem": {
+      "files": {
+        "stat_x500": {
+          "ms": 1
+        },
+        "write_100_files_1k": {
+          "ms": 3
+        },
+        "read_100_files_1k": {
+          "ms": 0
+        },
+        "scandir_100": {
+          "ms": 1
+        },
+        "walk": {
+          "ms": 0
+        },
+        "write_1mb_4k_chunks": {
+          "ms": 0
+        },
+        "read_1mb": {
+          "ms": 0
+        },
+        "read_1mb_4k_chunks": {
+          "ms": 0
+        },
+        "import_sibling": {
+          "ms": 1
+        }
+      },
+      "sqlite_default": {
+        "bulk_insert_10k": {
+          "ms": 6
+        },
+        "autocommit_100": {
+          "ms": 5
+        },
+        "point_queries_1000": {
+          "ms": 24,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 2,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 3
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": null
+      },
+      "sqlite_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 7
+        },
+        "autocommit_100": {
+          "ms": 0
+        },
+        "point_queries_1000": {
+          "ms": 2,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 2,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 2
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": null
+      },
+      "sqlite_wal_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 7
+        },
+        "autocommit_100": {
+          "ms": 0
+        },
+        "point_queries_1000": {
+          "ms": 2,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 2,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 2
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": null
+      },
+      "wal": {
+        "journal_mode": "wal",
+        "rows": 100
+      }
+    },
+    "xhr": {
+      "files": {
+        "stat_x500": {
+          "ms": 76,
+          "calls": 500
+        },
+        "write_100_files_1k": {
+          "ms": 143,
+          "calls": 700
+        },
+        "read_100_files_1k": {
+          "ms": 87,
+          "calls": 500
+        },
+        "scandir_100": {
+          "ms": 2,
+          "calls": 1
+        },
+        "walk": {
+          "ms": 2,
+          "calls": 3
+        },
+        "write_1mb_4k_chunks": {
+          "ms": 4,
+          "calls": 14
+        },
+        "read_1mb": {
+          "ms": 1,
+          "calls": 5
+        },
+        "read_1mb_4k_chunks": {
+          "ms": 2,
+          "calls": 12
+        },
+        "import_sibling": {
+          "ms": 3,
+          "calls": 12
+        }
+      },
+      "sqlite_default": {
+        "bulk_insert_10k": {
+          "ms": 191,
+          "calls": 617
+        },
+        "autocommit_100": {
+          "ms": 611,
+          "calls": 2424
+        },
+        "point_queries_1000": {
+          "ms": 1001,
+          "calls": 4707,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 111,
+          "calls": 581,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 185,
+          "calls": 875
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 281,
+          "open": 40,
+          "fstat": 120,
+          "read": 142,
+          "writefile": 20,
+          "write": 213,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 166,
+          "calls": 603
+        },
+        "autocommit_100": {
+          "ms": 254,
+          "calls": 858
+        },
+        "point_queries_1000": {
+          "ms": 141,
+          "calls": 703,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 101,
+          "calls": 577,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 185,
+          "calls": 835
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 241,
+          "open": 40,
+          "fstat": 120,
+          "read": 122,
+          "writefile": 20,
+          "write": 233,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_wal_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 531,
+          "calls": 2276
+        },
+        "autocommit_100": {
+          "ms": 67,
+          "calls": 270
+        },
+        "point_queries_1000": {
+          "ms": 306,
+          "calls": 1715,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 109,
+          "calls": 589,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 171,
+          "calls": 782
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 221,
+          "open": 40,
+          "fstat": 180,
+          "read": 147,
+          "writefile": 20,
+          "write": 95,
+          "ftruncate": 20,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "wal": {
+        "journal_mode": "wal",
+        "rows": 100
+      }
+    },
+    "cache": {
+      "files": {
+        "stat_x500": {
+          "ms": 1,
+          "calls": 0
+        },
+        "write_100_files_1k": {
+          "ms": 152,
+          "calls": 600
+        },
+        "read_100_files_1k": {
+          "ms": 74,
+          "calls": 400
+        },
+        "scandir_100": {
+          "ms": 1,
+          "calls": 1
+        },
+        "walk": {
+          "ms": 1,
+          "calls": 2
+        },
+        "write_1mb_4k_chunks": {
+          "ms": 7,
+          "calls": 13
+        },
+        "read_1mb": {
+          "ms": 1,
+          "calls": 4
+        },
+        "read_1mb_4k_chunks": {
+          "ms": 3,
+          "calls": 11
+        },
+        "import_sibling": {
+          "ms": 3,
+          "calls": 7
+        }
+      },
+      "sqlite_default": {
+        "bulk_insert_10k": {
+          "ms": 163,
+          "calls": 593
+        },
+        "autocommit_100": {
+          "ms": 466,
+          "calls": 1813
+        },
+        "point_queries_1000": {
+          "ms": 310,
+          "calls": 1694,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 100,
+          "calls": 566,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 126,
+          "calls": 533
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "open": 40,
+          "read": 142,
+          "writefile": 20,
+          "lstat": 58,
+          "write": 213,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 161,
+          "calls": 588
+        },
+        "autocommit_100": {
+          "ms": 250,
+          "calls": 844
+        },
+        "point_queries_1000": {
+          "ms": 133,
+          "calls": 693,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 115,
+          "calls": 565,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 134,
+          "calls": 553
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "open": 40,
+          "read": 122,
+          "writefile": 20,
+          "lstat": 78,
+          "write": 233,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_wal_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 751,
+          "calls": 2257
+        },
+        "autocommit_100": {
+          "ms": 66,
+          "calls": 256
+        },
+        "point_queries_1000": {
+          "ms": 127,
+          "calls": 700,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 143,
+          "calls": 574,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 106,
+          "calls": 482
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 100,
+          "open": 40,
+          "read": 147,
+          "writefile": 20,
+          "write": 95,
+          "ftruncate": 20,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "wal": {
+        "journal_mode": "wal",
+        "rows": 100
+      }
+    },
+    "bridge": {
+      "files": {
+        "stat_x500": {
+          "ms": 70,
+          "calls": 500
+        },
+        "write_100_files_1k": {
+          "ms": 97,
+          "calls": 700
+        },
+        "read_100_files_1k": {
+          "ms": 54,
+          "calls": 500
+        },
+        "scandir_100": {
+          "ms": 2,
+          "calls": 1
+        },
+        "walk": {
+          "ms": 1,
+          "calls": 3
+        },
+        "write_1mb_4k_chunks": {
+          "ms": 11,
+          "calls": 14
+        },
+        "read_1mb": {
+          "ms": 3,
+          "calls": 5
+        },
+        "read_1mb_4k_chunks": {
+          "ms": 4,
+          "calls": 12
+        },
+        "import_sibling": {
+          "ms": 3,
+          "calls": 12
+        }
+      },
+      "sqlite_default": {
+        "bulk_insert_10k": {
+          "ms": 78,
+          "calls": 617
+        },
+        "autocommit_100": {
+          "ms": 281,
+          "calls": 2424
+        },
+        "point_queries_1000": {
+          "ms": 472,
+          "calls": 4707,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 58,
+          "calls": 581,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 90,
+          "calls": 875
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 281,
+          "open": 40,
+          "fstat": 120,
+          "read": 142,
+          "writefile": 20,
+          "write": 213,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 65,
+          "calls": 603
+        },
+        "autocommit_100": {
+          "ms": 76,
+          "calls": 858
+        },
+        "point_queries_1000": {
+          "ms": 71,
+          "calls": 703,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 58,
+          "calls": 577,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 88,
+          "calls": 835
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 241,
+          "open": 40,
+          "fstat": 120,
+          "read": 122,
+          "writefile": 20,
+          "write": 233,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_wal_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 230,
+          "calls": 2276
+        },
+        "autocommit_100": {
+          "ms": 27,
+          "calls": 270
+        },
+        "point_queries_1000": {
+          "ms": 157,
+          "calls": 1715,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 59,
+          "calls": 589,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 78,
+          "calls": 782
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 221,
+          "open": 40,
+          "fstat": 180,
+          "read": 147,
+          "writefile": 20,
+          "write": 95,
+          "ftruncate": 20,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "wal": {
+        "journal_mode": "wal",
+        "rows": 100
+      }
+    },
+    "buf": {
+      "files": {
+        "stat_x500": {
+          "ms": 63,
+          "calls": 500
+        },
+        "write_100_files_1k": {
+          "ms": 108,
+          "calls": 700
+        },
+        "read_100_files_1k": {
+          "ms": 61,
+          "calls": 500
+        },
+        "scandir_100": {
+          "ms": 1,
+          "calls": 1
+        },
+        "walk": {
+          "ms": 2,
+          "calls": 3
+        },
+        "write_1mb_4k_chunks": {
+          "ms": 5,
+          "calls": 7
+        },
+        "read_1mb": {
+          "ms": 1,
+          "calls": 5
+        },
+        "read_1mb_4k_chunks": {
+          "ms": 2,
+          "calls": 12
+        },
+        "import_sibling": {
+          "ms": 3,
+          "calls": 12
+        }
+      },
+      "sqlite_default": {
+        "bulk_insert_10k": {
+          "ms": 14,
+          "calls": 52
+        },
+        "autocommit_100": {
+          "ms": 270,
+          "calls": 1619
+        },
+        "point_queries_1000": {
+          "ms": 786,
+          "calls": 4707,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 100,
+          "calls": 581,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 132,
+          "calls": 703
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 281,
+          "open": 40,
+          "fstat": 120,
+          "read": 142,
+          "writefile": 20,
+          "writev": 41,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 12,
+          "calls": 35
+        },
+        "autocommit_100": {
+          "ms": 54,
+          "calls": 230
+        },
+        "point_queries_1000": {
+          "ms": 126,
+          "calls": 703,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 106,
+          "calls": 577,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 138,
+          "calls": 643
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 241,
+          "open": 40,
+          "fstat": 120,
+          "read": 122,
+          "writefile": 20,
+          "writev": 41,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_wal_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 301,
+          "calls": 1159
+        },
+        "autocommit_100": {
+          "ms": 13,
+          "calls": 50
+        },
+        "point_queries_1000": {
+          "ms": 362,
+          "calls": 1715,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 114,
+          "calls": 589,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 169,
+          "calls": 732
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 221,
+          "open": 40,
+          "fstat": 180,
+          "read": 147,
+          "writefile": 20,
+          "writev": 45,
+          "ftruncate": 20,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "wal": {
+        "journal_mode": "wal",
+        "rows": 100
+      }
+    },
+    "best": {
+      "files": {
+        "stat_x500": {
+          "ms": 1,
+          "calls": 0
+        },
+        "write_100_files_1k": {
+          "ms": 109,
+          "calls": 600
+        },
+        "read_100_files_1k": {
+          "ms": 51,
+          "calls": 400
+        },
+        "scandir_100": {
+          "ms": 2,
+          "calls": 1
+        },
+        "walk": {
+          "ms": 1,
+          "calls": 2
+        },
+        "write_1mb_4k_chunks": {
+          "ms": 3,
+          "calls": 6
+        },
+        "read_1mb": {
+          "ms": 1,
+          "calls": 4
+        },
+        "read_1mb_4k_chunks": {
+          "ms": 2,
+          "calls": 11
+        },
+        "import_sibling": {
+          "ms": 2,
+          "calls": 7
+        }
+      },
+      "sqlite_default": {
+        "bulk_insert_10k": {
+          "ms": 11,
+          "calls": 28
+        },
+        "autocommit_100": {
+          "ms": 149,
+          "calls": 1008
+        },
+        "point_queries_1000": {
+          "ms": 211,
+          "calls": 1694,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 67,
+          "calls": 566,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 48,
+          "calls": 361
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "open": 40,
+          "read": 142,
+          "writefile": 20,
+          "lstat": 58,
+          "writev": 41,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 11,
+          "calls": 20
+        },
+        "autocommit_100": {
+          "ms": 29,
+          "calls": 216
+        },
+        "point_queries_1000": {
+          "ms": 82,
+          "calls": 693,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 61,
+          "calls": 565,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 42,
+          "calls": 361
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "open": 40,
+          "read": 122,
+          "writefile": 20,
+          "lstat": 78,
+          "writev": 41,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_wal_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 132,
+          "calls": 1140
+        },
+        "autocommit_100": {
+          "ms": 6,
+          "calls": 36
+        },
+        "point_queries_1000": {
+          "ms": 76,
+          "calls": 700,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 62,
+          "calls": 574,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 50,
+          "calls": 432
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 100,
+          "open": 40,
+          "read": 147,
+          "writefile": 20,
+          "writev": 45,
+          "ftruncate": 20,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "wal": {
+        "journal_mode": "wal",
+        "rows": 100
+      }
+    },
+    "bestr": {
+      "files": {
+        "stat_x500": {
+          "ms": 1,
+          "calls": 0
+        },
+        "write_100_files_1k": {
+          "ms": 66,
+          "calls": 600
+        },
+        "read_100_files_1k": {
+          "ms": 34,
+          "calls": 300
+        },
+        "scandir_100": {
+          "ms": 1,
+          "calls": 1
+        },
+        "walk": {
+          "ms": 2,
+          "calls": 2
+        },
+        "write_1mb_4k_chunks": {
+          "ms": 1,
+          "calls": 6
+        },
+        "read_1mb": {
+          "ms": 3,
+          "calls": 19
+        },
+        "read_1mb_4k_chunks": {
+          "ms": 1,
+          "calls": 2
+        },
+        "import_sibling": {
+          "ms": 2,
+          "calls": 6
+        }
+      },
+      "sqlite_default": {
+        "bulk_insert_10k": {
+          "ms": 9,
+          "calls": 27
+        },
+        "autocommit_100": {
+          "ms": 139,
+          "calls": 1005
+        },
+        "point_queries_1000": {
+          "ms": 28,
+          "calls": 40,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 2,
+          "calls": 2,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 40,
+          "calls": 258
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "open": 40,
+          "writefile": 20,
+          "lstat": 58,
+          "writev": 40,
+          "read": 40,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 8,
+          "calls": 20
+        },
+        "autocommit_100": {
+          "ms": 37,
+          "calls": 214
+        },
+        "point_queries_1000": {
+          "ms": 8,
+          "calls": 40,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 1,
+          "calls": 2,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 43,
+          "calls": 278
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "open": 40,
+          "writefile": 20,
+          "lstat": 78,
+          "writev": 40,
+          "read": 40,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "sqlite_wal_exclusive": {
+        "bulk_insert_10k": {
+          "ms": 25,
+          "calls": 98
+        },
+        "autocommit_100": {
+          "ms": 6,
+          "calls": 29
+        },
+        "point_queries_1000": {
+          "ms": 11,
+          "calls": 46,
+          "rows": 10100
+        },
+        "full_scan": {
+          "ms": 3,
+          "calls": 10,
+          "matches": 0
+        },
+        "todo_20_saves": {
+          "ms": 51,
+          "calls": 338
+        },
+        "db_bytes": 2306048,
+        "calls_by_op_last": {
+          "lstat": 100,
+          "open": 40,
+          "writefile": 20,
+          "writev": 40,
+          "read": 58,
+          "ftruncate": 20,
+          "close": 40,
+          "unlink": 20
+        }
+      },
+      "wal": {
+        "journal_mode": "wal",
+        "rows": 100
+      }
+    }
+  },
+  "check": {
+    "xhr": {
+      "journalAfter": false,
+      "integrity": "ok",
+      "count": "10100",
+      "journalBefore": false
+    },
+    "cache": {
+      "integrity": "ok",
+      "count": "10100",
+      "journalBefore": false,
+      "journalAfter": false
+    },
+    "bridge": {
+      "count": "10100",
+      "integrity": "ok",
+      "journalAfter": false,
+      "journalBefore": false
+    },
+    "buf": {
+      "journalAfter": false,
+      "integrity": "ok",
+      "count": "10100",
+      "journalBefore": false
+    },
+    "best": {
+      "journalAfter": false,
+      "integrity": "ok",
+      "journalBefore": false,
+      "count": "10100"
+    },
+    "bestr": {
+      "journalAfter": false,
+      "integrity": "ok",
+      "journalBefore": false,
+      "count": "10100"
+    },
+    "listing": [
+      "bench.db",
+      "bench_exclusive.db",
+      "bench_wal_exclusive.db",
+      "big.bin",
+      "mod_xhr.py",
+      "one.txt",
+      "small",
+      "wal.db"
+    ]
+  },
+  "copy": {
+    "bytes": 2306048,
+    "h_xhr": {
+      "read_whole_ms": 2,
+      "write_whole_ms": 2
+    },
+    "h_bridge": {
+      "read_whole_ms": 9,
+      "write_whole_ms": 6
+    }
+  },
+  "crash": {
+    "crash_xhr": {
+      "setupMs": 299,
+      "filesAfterKill": [
+        "crash.db",
+        "crash.db-journal"
+      ],
+      "native": {
+        "integrity": "ok",
+        "count": "100",
+        "journalAfter": false,
+        "journalBefore": true
+      }
+    },
+    "crash_cache": {
+      "setupMs": 301,
+      "filesAfterKill": [
+        "crash.db",
+        "crash.db-journal"
+      ],
+      "native": {
+        "journalBefore": true,
+        "journalAfter": false,
+        "integrity": "ok",
+        "count": "100"
+      }
+    },
+    "crash_buf": {
+      "setupMs": 35,
+      "filesAfterKill": [
+        "crash.db",
+        "crash.db-journal"
+      ],
+      "native": {
+        "journalAfter": false,
+        "journalBefore": true,
+        "integrity": "ok",
+        "count": "100"
+      }
+    },
+    "crash_best": {
+      "setupMs": 31,
+      "filesAfterKill": [
+        "crash.db",
+        "crash.db-journal"
+      ],
+      "native": {
+        "journalBefore": true,
+        "journalAfter": false,
+        "integrity": "ok",
+        "count": "100"
+      }
+    },
+    "crash_bestr": {
+      "setupMs": 29,
+      "filesAfterKill": [
+        "crash.db",
+        "crash.db-journal"
+      ],
+      "native": {
+        "journalAfter": false,
+        "count": "100",
+        "integrity": "ok",
+        "journalBefore": true
+      }
+    }
+  }
+}

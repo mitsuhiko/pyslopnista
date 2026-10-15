@@ -1,9 +1,9 @@
 // The running Python session: one worker at a time, the console transcript
 // (grouped into runs), pending input(), the >>> console and UI apps. React
 // subscribes via useSyncExternalStore. Output is batched per animation frame.
-import { base64ToBytes, basename, bytesToBase64, dirname, fs, haptic, join } from "./host";
+import { basename, dirname, haptic, join } from "./host";
 import { breakpoints } from "./debug/breakpoints";
-import { PyWorker, SIGNAL, WorkerPool, type ChangedFile, type Stream } from "./python";
+import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
 import { TurtleScene, turtleScenes } from "./turtle";
 
 /** "turtle": a turtle screen; the line's text is the key of its scene (D29). */
@@ -114,26 +114,21 @@ export class Session {
   private uiListener: ((json: string | null) => void) | null = null;
   private pendingOutput: { kind: LineKind; text: string; runId: number }[] = [];
   private flushScheduled = false;
-  /** Called after a run wrote files back into the project. */
-  onFilesChanged: (paths: string[]) => void = () => {};
   // The worker blocks in the debugger until debugNext is called with a command.
   private debugNext: ((command: DebugCommand) => void) | null = null;
   private debugResult: ((message: any) => void) | null = null;
   private debugQueue: Promise<unknown> = Promise.resolve();
   private stopCounter = 0;
-  private writeBacks: Promise<void> = Promise.resolve();
 
   constructor() {
     this.pool.spareReady.then((info) => this.set({ bootMs: info.bootMs }), () => {});
     breakpoints.subscribe(() => this.syncBreakpoints());
   }
 
-  /** The app goes to the background: a UI app may be killed there, so save
-   * what it wrote (the host calls this). */
+  /** The app goes to the background, where it may be killed: what the
+   * program queued goes to disk (the host calls this). */
   async syncInBackground() {
-    if (this.state.uiOpen && this.worker && !this.state.debug) {
-      await this.worker.syncFiles().then((changed) => this.writeBack(changed, this.workerDir));
-    }
+    if (this.worker && !this.worker.dead && !this.state.debug) await this.worker.syncFiles();
   }
 
   subscribe = (fn: () => void) => {
@@ -227,18 +222,16 @@ export class Session {
 
   // -- running ------------------------------------------------------------------------
 
-  /** Run a saved file: its directory is synced into the interpreter as the cwd. */
+  /** Run a saved file: its folder is the program's cwd, used in place (D35). */
   async runFile(path: string, code: string) {
     this.closeWorker();
     const dir = dirname(path);
     this.startRun(path);
     this.set({ status: "starting", runningFile: path });
     try {
-      const tree = await fs.tree(dir);
-      const files = tree.map((f) => ({ path: f.path, data: base64ToBytes(f.data) }));
       const worker = await this.takeWorker(dir);
       this.set({ status: "running" });
-      const result = await worker.run(code, { filename: basename(path), cwd: PROJECT_ROOT, files, breakpoints: breakpoints.forRun(dir) });
+      const result = await worker.run(code, { filename: basename(path), cwd: PROJECT_ROOT, breakpoints: breakpoints.forRun(dir) });
       await this.finishRun(result);
     } catch (e) {
       this.append("stderr", `${(e as Error).message ?? e}\n`);
@@ -264,6 +257,12 @@ export class Session {
 
   private async takeWorker(dir: string) {
     const worker = await this.pool.take();
+    try {
+      await worker.attach(dir);
+    } catch (e) {
+      worker.terminate("closed");
+      throw new Error(`Could not open the folder: ${(e as Error).message ?? e}`);
+    }
     this.worker = worker;
     this.workerDir = dir;
     const serial = ++this.workerSerial;
@@ -278,7 +277,6 @@ export class Session {
       this.set({ uiOpen: true });
       this.uiListener?.(json);
     };
-    worker.onFiles = (changed) => void this.writeBack(changed, dir);
     worker.onCrash = (error) => this.append("stderr", `Python crashed: ${error}\n`);
     worker.onDebug = (message) => this.onDebugMessage(worker, message);
     worker.onTurtle = (batches) => {
@@ -454,7 +452,7 @@ export class Session {
   }
 
   private async finishRun(
-    result: { ok: boolean; error?: string; killed?: boolean; changed?: ChangedFile[] },
+    result: { ok: boolean; error?: string; killed?: boolean },
     fromConsole = false,
   ) {
     this.inputResolver = null;
@@ -482,29 +480,8 @@ export class Session {
     this.set({ status: "idle", awaitingInput: false, pausing: false });
     if (this.state.debug && !this.state.uiOpen) this.endDebug();
     if (status === "error" || status === "crashed") haptic();
-    await this.writeBack(result.changed ?? [], this.workerDir);
-  }
-
-  /** Write files the program created, changed or deleted back into the
-   * project, in the order the worker gives (journals first, deletions last).
-   * Write-backs queue up, so an older one never lands after a newer one. */
-  private writeBack(changed: ChangedFile[], dir: string) {
-    if (!changed.length) return this.writeBacks;
-    this.writeBacks = this.writeBacks.then(async () => {
-      const touched: string[] = [];
-      for (const f of changed) {
-        const target = join(dir, f.path);
-        try {
-          if (f.data) await fs.writeBase64(target, bytesToBase64(f.data));
-          else if (await fs.exists(target)) await fs.remove(target);
-          touched.push(target);
-        } catch (e) {
-          this.append("stderr", `Could not save ${f.path}: ${(e as Error).message ?? e}\n`);
-        }
-      }
-      this.onFilesChanged(touched);
-    });
-    return this.writeBacks;
+    // A linked folder's copy goes back now; the host tells the views what changed.
+    await this.worker?.syncFiles();
   }
 
   /** Pyodide prints the KeyboardInterrupt traceback when input() is interrupted; a stop is not an error. */
@@ -575,14 +552,10 @@ export class Session {
       this.closeWorker();
       return;
     }
-    // Close the view right away, but let the program hand over the files it
-    // wrote after its script returned (e.g. saved data) before it is killed.
-    const dir = this.workerDir;
+    // Close the view right away, but let the program's queued writes (e.g.
+    // saved data) reach the disk before it is killed.
     this.closeWorker(true);
-    void worker
-      .syncFiles()
-      .then((changed) => this.writeBack(changed, dir))
-      .finally(() => worker.terminate("closed"));
+    void worker.syncFiles().finally(() => worker.terminate("closed"));
   }
 }
 
