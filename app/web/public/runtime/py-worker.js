@@ -131,7 +131,21 @@ function syncCall(op, value) {
   postMessage({ type: "call", sync: true, op, value });
   Atomics.wait(ints, 0, 0);
   const bytes = new Uint8Array(syncChannel, 8, ints[1]).slice();
-  const reply = JSON.parse(decoder.decode(bytes));
+  let reply = JSON.parse(decoder.decode(bytes));
+  if (reply.$size !== undefined) {
+    // Too big for the channel: fetch it in pieces.
+    const all = new Uint8Array(reply.$size);
+    for (let offset = 0; offset < all.length; ) {
+      Atomics.store(ints, 0, 0);
+      postMessage({ type: "call", sync: true, op: "chunk", value: { offset } });
+      Atomics.wait(ints, 0, 0);
+      const n = ints[1];
+      if (!n) break;
+      all.set(new Uint8Array(syncChannel, 8, n), offset);
+      offset += n;
+    }
+    reply = JSON.parse(decoder.decode(all));
+  }
   if (reply.interrupted) {
     py.checkInterrupt(); // raises KeyboardInterrupt if the page set the interrupt buffer
     return null;
@@ -214,6 +228,15 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
       if (performance.now() - turtleSentAt > 16) flushTurtle();
     },
     // Events (waiting up to `wait` ms for one) and dialogs; null when interrupted.
+    // The device modules (clipboard, dialogs, photos, ..., D40): one blocking
+    // call into the app per function. The mount token lets the host find the
+    // program's files; null when interrupted (Stop).
+    device: (json) => {
+      const request = JSON.parse(json);
+      request.value = { ...(request.value ?? {}), _mount: mounted?.token ?? null };
+      const reply = syncCall("host", request);
+      return reply == null ? undefined : JSON.stringify(reply); // undefined is None (null would be JsNull)
+    },
     turtle_call: (json) => {
       const reply = syncCall("turtle", JSON.parse(json));
       return reply === undefined ? null : JSON.stringify(reply);
@@ -322,6 +345,10 @@ async function run({ code, filename, cwd, mount: token, repl, indexURL, breakpoi
     if (/^\s*(import|from)\s[^\n#]*\burllib\b/m.test(code)) {
       await py.loadPackage("pyodide-http");
       runPlumbing("import pyodide_http\npyodide_http.patch_urllib()");
+    }
+    // The device modules hand over images as PIL images (D40): Pillow comes along.
+    if (/^\s*(import|from)\s[^\n#]*\b(photos|clipboard|location)\b/m.test(code)) {
+      await py.loadPackage("pillow").catch(() => {}); // not every Python has it (3.15)
     }
     await py.loadPackagesFromImports(code, {
       messageCallback: (m) => m.startsWith("Loading ") && postMessage({ type: "output", stream: "system", text: m.replace(/^Loading /, "Loading packages: ") + "\n" }),

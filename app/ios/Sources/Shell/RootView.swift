@@ -40,6 +40,8 @@ struct RootView: View {
                 case .problems: ProblemsView()
                 case .jump(let initial): JumpView(initial: initial)
                 case .homeScreen(let path): HomeScreenView(path: path)
+                case .newFile(let dir): NewFileView(dir: dir)
+                case .move(let path): MoveView(path: path)
                 case .agent:
                     AgentView()
                         .presentationDetents([.medium, .large], selection: $model.agentDetent)
@@ -104,6 +106,7 @@ private struct NarrowLayout: View {
                     switch route {
                     case .folder(let dir): FileBrowserView(dir: dir)
                     case .editor: EditorScreen()
+                    case .trash: TrashView()
                     }
                 }
         }
@@ -123,7 +126,11 @@ private struct WideLayout: View {
             NavigationStack(path: $model.route) {
                 FileBrowserView(dir: "")
                     .navigationDestination(for: Route.self) { route in
-                        if case .folder(let dir) = route { FileBrowserView(dir: dir) }
+                        switch route {
+                        case .folder(let dir): FileBrowserView(dir: dir)
+                        case .trash: TrashView()
+                        case .editor: EmptyView()
+                        }
                     }
             }
             .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 400)

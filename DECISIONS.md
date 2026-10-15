@@ -1177,6 +1177,94 @@ Evidence: the self-test's `editor_themes` check (the list, the default,
 Solarized's dark and light backgrounds after switching the appearance),
 in the iPhone 18 Pro simulator (2026-10-15).
 
+## D40: iOS device modules with Pythonista's names and API
+
+2026-10-15 - Accepted
+
+Programs can use the device through modules named and shaped like
+Pythonista's, so its scripts and tutorials often run unchanged. The API
+follows Pythonista's reference docs (3.4); the implementation is our own:
+- **Python** (`app/web/public/runtime/python/`): `clipboard`, `console`,
+  `dialogs`, `keychain`, `notification`, `photos`, `location`, `motion`,
+  `sound`, `speech`, `contacts`, `reminders`, and `haptics` (not in
+  Pythonista); `webbrowser.open()` opens links in the app. A shared
+  `_device.py` makes one blocking call per function through the sync
+  channel `input()` uses (D10), like `host.call_sync`.
+- **Native** (`app/ios/Sources/Device/`): one `device.*` bridge op each,
+  on UIKit, PhotoKit, Core Location, Core Motion, AVFoundation, Speech,
+  Contacts, EventKit, UserNotifications, MapKit and the Keychain.
+
+How they behave:
+- **Blocking, like Pythonista:** a dialog returns its answer. Alerts'
+  Cancel raises `KeyboardInterrupt`; the `dialogs` sheets return None.
+  Stop ends the wait and closes the dialog; whatever a program left on
+  screen goes when it ends, and sensors, sounds, speech and recordings stop
+  when the next program starts.
+- **Files** are passed by reference: a path in the program's folder, which
+  the host resolves through the mount (HostFS, D35, which now also hears
+  about files the host writes, e.g. recordings), or the bytes of a file
+  elsewhere. Results bigger than the 1 MB channel (photos) come in pieces.
+- **Images** are PIL images. Pillow loads with a program that imports
+  `photos`, `clipboard` or `location`; HEIC and other formats Pillow can't
+  read arrive as JPEG; `raw_data=True` gives bytes. 3.15 has no Pillow.
+- **Permissions:** each module asks when first used; Info.plist explains
+  why. Denied access raises `PermissionError`.
+- **Not from the agent:** `run_python` refuses device calls
+  (`PermissionError`), so the agent can't read contacts or photos, or put
+  up dialogs, behind the user's back.
+
+Differences from Pythonista: `scene`, `ui`'s Pythonista API, `cb`,
+`appex`, `keyboard`, `editor`, `canvas`, `objc_util` and
+`linguistictagger` are not provided; built-in sound effects are a small
+synthesized set (beep, coin, laser, …) instead of Pythonista's asset
+library; `photos.get_moments()` is empty (PhotoKit dropped moments);
+contacts' ids are strings and their notes field is not available (it
+needs an entitlement); `console.set_font` only does bold. Published web
+apps (D5) don't have the modules yet.
+
+Evidence: the self-test's `device_basics`, `device_dialogs` (every dialog
+kind, answered through a test hook, plus Quick Look, the share sheet and
+a cancelled alert), `device_stop_closes_dialog` and `device_pim`
+(contacts, reminders, notifications without permission, location, photos)
+checks, with the simulator's permissions granted by `run.sh`. The camera,
+microphone and speech recognition were not exercised (no hardware in the
+simulator). All 59 checks pass in the iPhone 18 Pro and iPad Pro 13"
+simulators (2026-10-15); `device_modules_typed` (ty resolves and checks
+the modules) was added after and passes in the iPhone 18 Pro simulator.
+
+## D41: File management: Trash, moving, Quick Look and sharing, favorites, templates
+
+2026-10-15 - Accepted
+
+- **Trash:** deleting from the browser or the editor moves a file or
+  folder in Documents into `Documents/.Trash`, with where it came from;
+  it can be put back (next to a file of the same name if one appeared) or
+  deleted for good, and goes after 30 days. Because it can be undone, it
+  asks nothing. In a linked folder it goes to the provider's trash
+  (iCloud Drive's Recently Deleted) or, if it has none, is gone, so that
+  still asks. Programs (`os.remove`), the agent and the self-test delete
+  directly, as before.
+- **Moving:** drag a row onto a folder, or Move… (context menu, editor ⋯)
+  with a folder picker that includes linked folders. Open tabs,
+  breakpoints, favorites and agent conversations follow, as with renames.
+- **Quick Look and sharing:** images, PDFs, audio, video and Office files
+  open in Quick Look instead of the editor; every file has Quick Look and
+  Share… (Open in, AirDrop, Save to Files). Files in linked folders go
+  through a copy.
+- **Favorites:** files and folders pinned at the top of the browser; they
+  follow renames and moves and go with deletions.
+- **Templates:** New File is a sheet with a name and a template: Empty,
+  Script, App (`ui`), Turtle Drawing, Plot, Dialogs, Script with Packages
+  (PEP 723), Notes (Markdown), and the files in `Documents/Templates`.
+
+Not built: selecting several files at once, previews of SQLite databases.
+
+Evidence: the self-test's `file_management` check (move with the tab
+following, favorites following and leaving, trash and restore, restore
+beside a same-named file, delete for good, two templates, Quick Look of a
+PNG). All 59 checks pass in the iPhone 18 Pro and iPad Pro 13" simulators
+(2026-10-15).
+
 ## Proposed (not yet decided)
 
 (none)

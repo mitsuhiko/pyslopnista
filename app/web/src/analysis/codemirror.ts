@@ -7,6 +7,7 @@ import type { EditorState, Extension, Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { parse as parseToml } from "smol-toml";
 import { analysis } from "./api";
+import { PUBLIC_MODULES } from "../runtimeModules";
 import { RUNTIMES } from "../runtimes";
 import type { LineCol, Problem } from "./protocol";
 
@@ -87,7 +88,7 @@ export async function loadPyodideModules() {
 }
 
 // Modules the runtime provides that ty cannot see.
-const RUNTIME_MODULES = new Set(["js", "pyodide", "pyodide_js", "micropip", "host", "_pyslop", "_pyslophost", "_uihost"]);
+const RUNTIME_MODULES = new Set(["js", "pyodide", "pyodide_js", "micropip", "host", "_pyslop", "_pyslophost", "_uihost", ...PUBLIC_MODULES]);
 
 // Import names that differ from the distribution name for common packages.
 const DIST_FOR_IMPORT: Record<string, string> = {

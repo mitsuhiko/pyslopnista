@@ -16,6 +16,8 @@ struct FileBrowserView: View {
     @State private var unlinking: LinkedFolder?
     @State private var importing = false
     @AppStorage("sort") private var sort = "name"
+    @State private var trashCount = 0
+    @State private var favoriteEntries: [Entry] = []
 
     struct Entry: Identifiable, Hashable {
         let name: String
@@ -49,6 +51,11 @@ struct FileBrowserView: View {
             if let error {
                 Text(error).foregroundStyle(.red).font(.footnote)
             }
+            if dir.isEmpty && query.isEmpty && !favoriteEntries.isEmpty {
+                Section("Favorites") {
+                    ForEach(favoriteEntries) { entry in favoriteRow(entry) }
+                }
+            }
             if entries != nil {
                 if visible.isEmpty {
                     ContentUnavailableView {
@@ -80,6 +87,20 @@ struct FileBrowserView: View {
                             } icon: {
                                 Image(systemName: "folder.badge.plus")
                             }
+                        }
+                    }
+                }
+            }
+            if dir.isEmpty && query.isEmpty {
+                Section {
+                    NavigationLink(value: Route.trash) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Trash")
+                                Text(trashCount == 0 ? "Empty" : trashCount == 1 ? "1 item" : "\(trashCount) items").font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: trashCount == 0 ? "trash" : "trash.fill")
                         }
                     }
                 }
@@ -132,7 +153,7 @@ struct FileBrowserView: View {
                             titleVisibility: .visible, presenting: deleting) { entry in
             Button("Delete", role: .destructive) { Task { await model.delete(entry.path) } }
         } message: { _ in
-            Text("This cannot be undone.")
+            Text("It goes to the folder's trash if it has one (iCloud Drive's Recently Deleted), otherwise it is gone.")
         }
         .confirmationDialog(unlinking.map { "Remove “\($0.name)” from Locations?" } ?? "",
                             isPresented: Binding(get: { unlinking != nil }, set: { if !$0 { unlinking = nil } }),
@@ -154,33 +175,77 @@ struct FileBrowserView: View {
         let selected = entry.path == model.file
         return Group {
             if entry.dir {
-                NavigationLink(value: Route.folder(entry.path)) { EntryLabel(entry: entry, location: false) }
+                NavigationLink(value: Route.folder(entry.path)) { EntryLabel(entry: entry, location: false, favorite: model.isFavorite(entry.path)) }
             } else {
                 Button {
-                    Task { await model.openFile(entry.path) }
+                    // Images, PDFs, audio and documents open in Quick Look, text in the editor.
+                    if AppModel.isPreviewable(entry.name) { model.quickLook(entry.path) } else { Task { await model.openFile(entry.path) } }
                 } label: {
-                    EntryLabel(entry: entry, location: false)
+                    EntryLabel(entry: entry, location: false, favorite: model.isFavorite(entry.path))
                 }
                 .tint(.primary)
             }
         }
         .listRowBackground(selected ? Color.accentColor.opacity(0.12) : nil)
+        .draggable(entry.path)
+        .dropDestination(for: String.self, isEnabled: entry.dir) { paths, _ in
+            let movable = paths.filter { $0 != entry.path && dirname($0) != entry.path }
+            Task { for p in movable { await model.move(p, into: entry.path) } }
+        }
         .swipeActions(edge: .trailing) {
-            Button(role: .destructive) { deleting = entry } label: { Label("Delete", systemImage: "trash") }
+            Button(role: .destructive) { delete(entry) } label: { Label("Delete", systemImage: "trash") }
             Button { ask(.rename(entry)) } label: { Label("Rename", systemImage: "pencil") }.tint(.orange)
         }
         .contextMenu {
-            Button { ask(.rename(entry)) } label: { Label("Rename", systemImage: "pencil") }
+            Section {
+                Button { ask(.rename(entry)) } label: { Label("Rename", systemImage: "pencil") }
+                if !entry.dir {
+                    Button {
+                        Task { _ = await model.duplicate(entry.path) }
+                    } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                }
+                Button { model.activeSheet = .move(entry.path) } label: { Label("Move…", systemImage: "folder") }
+                Button { model.toggleFavorite(entry.path) } label: {
+                    model.isFavorite(entry.path) ? Label("Remove from Favorites", systemImage: "star.slash") : Label("Add to Favorites", systemImage: "star")
+                }
+            }
             if !entry.dir {
+                Section {
+                    Button { model.quickLook(entry.path) } label: { Label("Quick Look", systemImage: "eye") }
+                    Button { model.share(entry.path) } label: { Label("Share…", systemImage: "square.and.arrow.up") }
+                    if entry.name.hasSuffix(".py") {
+                        Button { model.activeSheet = .homeScreen(entry.path) } label: { Label("Add to Home Screen…", systemImage: "apps.iphone.badge.plus") }
+                    }
+                }
+            }
+            Section {
+                Button(role: .destructive) { delete(entry) } label: { Label("Delete", systemImage: "trash") }
+            }
+        }
+    }
+
+    /// In Documents a deletion can be undone from the Trash, so it needs no question.
+    private func delete(_ entry: Entry) {
+        if entry.path.hasPrefix("@") { deleting = entry } else { Task { await model.delete(entry.path) } }
+    }
+
+    private func favoriteRow(_ entry: Entry) -> some View {
+        let path = entry.path, name = entry.name
+        return Group {
+            if entry.dir {
+                NavigationLink(value: Route.folder(path)) { FavoriteLabel(entry: entry) }
+            } else {
                 Button {
-                    Task { _ = await model.duplicate(entry.path) }
-                } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                    if AppModel.isPreviewable(name) { model.quickLook(path) } else { Task { await model.openFile(path) } }
+                } label: { FavoriteLabel(entry: entry) }
+                .tint(.primary)
             }
-            if entry.name.hasSuffix(".py") {
-                Button { model.activeSheet = .homeScreen(entry.path) } label: { Label("Add to Home Screen…", systemImage: "apps.iphone.badge.plus") }
-            }
-            Divider()
-            Button(role: .destructive) { deleting = entry } label: { Label("Delete", systemImage: "trash") }
+        }
+        .swipeActions(edge: .trailing) {
+            Button { model.toggleFavorite(path) } label: { Label("Remove", systemImage: "star.slash") }.tint(.orange)
+        }
+        .contextMenu {
+            Button { model.toggleFavorite(path) } label: { Label("Remove from Favorites", systemImage: "star.slash") }
         }
     }
 
@@ -217,6 +282,14 @@ struct FileBrowserView: View {
 
     private func load() async {
         if dir.isEmpty {
+            trashCount = await model.trashItems().count
+            let favorites = model.favorites
+            favoriteEntries = (try? await model.host.onFileQueue { files in
+                favorites.compactMap { path -> Entry? in
+                    guard let s = try? files.stat(path) else { return nil }
+                    return Entry(name: displayName(path), path: path, dir: s["dir"] as? Bool ?? false, size: s["size"] as? Int ?? 0, mtime: s["mtime"] as? Double ?? 0)
+                }
+            }) ?? []
             locations = model.host.files.locations.list().map {
                 LinkedFolder(name: $0["name"] as? String ?? "", path: $0["path"] as? String ?? "", available: $0["available"] as? Bool ?? false)
             }
@@ -238,6 +311,10 @@ struct FileBrowserView: View {
     }
 
     private func ask(_ what: Naming) {
+        if case .newFile = what {
+            model.activeSheet = .newFile(dir)
+            return
+        }
         switch what {
         case .newFile: name = "untitled.py"
         case .newFolder: name = "Project"
@@ -273,9 +350,30 @@ struct FileBrowserView: View {
     }
 }
 
+private struct FavoriteLabel: View {
+    let entry: FileBrowserView.Entry
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                if entry.dir { FolderIcon() } else { FileIcon(name: entry.name) }
+            }
+            .frame(width: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.name).lineLimit(1)
+                Text(dirname(entry.path).isEmpty ? "Files" : displayName(dirname(entry.path))).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
 private struct EntryLabel: View {
     let entry: FileBrowserView.Entry
     let location: Bool
+    var favorite = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -294,6 +392,7 @@ private struct EntryLabel: View {
                 Text(meta).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            if favorite { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
         }
         .contentShape(Rectangle())
     }

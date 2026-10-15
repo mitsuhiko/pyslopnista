@@ -201,6 +201,7 @@ const runPythonTool = defineTool({
     const choice = await chooseFor(env.appPath(dir), code);
     if (!choice.ok) return { output: text(`Python version: ${choice.error}`), isError: true };
     const worker = new PyWorker(choice.python);
+    worker.allowDevice = false; // no dialogs, contacts or photos behind the user's back (D40)
     let output = "";
     const images: string[] = [];
     let note = "";

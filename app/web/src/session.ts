@@ -1,7 +1,7 @@
 // The running Python session: one worker at a time, the console transcript
 // (grouped into runs), pending input(), the >>> console and UI apps. React
 // subscribes via useSyncExternalStore. Output is batched per animation frame.
-import { basename, dirname, haptic, join } from "./host";
+import { basename, call, dirname, haptic, join } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
 import { chooseFor, onDefaultPython, runtimeFor } from "./runtimes";
@@ -244,6 +244,8 @@ export class Session {
       if (!choice.ok) throw new Error(`Python version: ${choice.error}`);
       this.setRunPython(choice.python);
       const worker = await this.takeWorker(dir, choice.python);
+      // What the last program started on the device (sensors, sounds) stops (D40).
+      await call("device.reset").catch(() => {});
       this.set({ status: "running" });
       const result = await worker.run(code, { filename: basename(path), cwd: PROJECT_ROOT, breakpoints: breakpoints.forRun(dir) });
       await this.finishRun(result);
@@ -500,6 +502,8 @@ export class Session {
       this.endRun(status);
     }
     this.set({ status: "idle", awaitingInput: false, pausing: false });
+    // Dialogs and the spinner a program left go with it (a ui app keeps them).
+    if (!this.state.uiOpen) void call("device.ended").catch(() => {});
     if (this.state.debug && !this.state.uiOpen) this.endDebug();
     if (status === "error" || status === "crashed") haptic();
     // A linked folder's copy goes back now; the host tells the views what changed.
@@ -542,6 +546,7 @@ export class Session {
   }
 
   private closeWorker(keepAlive = false) {
+    void call("device.ended").catch(() => {});
     if (this.worker && !this.worker.dead && !keepAlive) this.worker.terminate("closed");
     if (this.worker) this.endScenes();
     this.endDebug();

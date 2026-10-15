@@ -42,6 +42,13 @@ if [ "$TARGET" = simulator ]; then
   APP=build/dd/Build/Products/Debug-iphonesimulator/Pyslopnista.app
   xcrun simctl terminate "${SIM:-booted}" "$BUNDLE_ID" 2>/dev/null || true
   xcrun simctl install "${SIM:-booted}" "$APP"
+  if [ "$SELFTEST" = 1 ]; then
+    # The device modules' checks (D40) can't answer permission prompts.
+    for service in all contacts reminders photos location microphone motion; do
+      xcrun simctl privacy "${SIM:-booted}" grant "$service" "$BUNDLE_ID" 2>/dev/null || true
+    done
+    xcrun simctl location "${SIM:-booted}" set 48.8582,2.2945 2>/dev/null || true
+  fi
   DOCS="$(xcrun simctl get_app_container "${SIM:-booted}" "$BUNDLE_ID" data)/Documents"
   rm -f "$DOCS/.probe-result.json"
   xcrun simctl launch "${SIM:-booted}" "$BUNDLE_ID" ${ARGS[@]+"${ARGS[@]}"} > /dev/null

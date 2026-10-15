@@ -664,6 +664,177 @@ export async function selftest() {
     return { programs: programs.length };
   });
 
+  // -- device modules (D40) -----------------------------------------------------------
+
+  const runOutput = async (path: string, code: string, answers: unknown[] = [], timeout = 60000) => {
+    await fs.writeText(path, code);
+    const { done } = await runFile(path);
+    for (const answer of answers) {
+      if (!(await appCall<boolean>("deviceAnswer", answer))) throw new Error(`no dialog to answer with ${JSON.stringify(answer)}: ${consoleText().slice(-400)}`);
+    }
+    await until(idle, timeout).catch(() => {
+      throw new Error(`timed out: ${consoleText().slice(-600)}`);
+    });
+    await done.catch(() => {});
+    return consoleText();
+  };
+  const expectLines = (out: string, lines: string[]) => {
+    const missing = lines.filter((l) => !out.includes(l));
+    if (missing.length) throw new Error(`missing ${JSON.stringify(missing)} in: ${out.slice(-900)}`);
+  };
+
+  await step("device_basics", async () => {
+    await fs.mkdir("Tests/device").catch(() => {});
+    const out = await runOutput("Tests/device/basics.py", [
+      "import clipboard, keychain, haptics, motion, speech, sound, console, webbrowser",
+      "clipboard.set('hello clip')",
+      "print('clip', clipboard.get())",
+      "keychain.set_password('svc', 'me', 'pw1')",
+      "print('kc', keychain.get_password('svc', 'me'), ('svc', 'me') in keychain.get_services())",
+      "keychain.delete_password('svc', 'me')",
+      "print('kc2', keychain.get_password('svc', 'me'))",
+      "haptics.impact('light'); haptics.notification('success'); haptics.selection()",
+      "motion.start_updates(); print('motion', len(motion.get_attitude()), len(motion.get_magnetic_field())); motion.stop_updates()",
+      "print('langs', len(speech.get_synthesis_languages()) > 0)",
+      "speech.say('hi', 'en-US', 1.0); speech.stop()",
+      "e = sound.play_effect('coin'); print('effect', e is not None); e.volume = 0.2; sound.stop_all_effects()",
+      "for name in sound.EFFECTS: sound.play_effect(name, volume=0)",
+      "console.set_color(1, 0, 0); print('red'); console.set_color()",
+      "console.write_link('site', 'https://example.com'); print()",
+      "print('browser', type(webbrowser.get()).__name__)",
+    ].join("\n"));
+    expectLines(out, ["clip hello clip", "kc pw1 True", "kc2 None", "motion 3 4", "langs True", "effect True", "red", "browser AppBrowser"]);
+    if (!out.includes("\u001b[38;2;255;0;0m") || !out.includes("\u001b]8;;https://example.com")) throw new Error(`escapes: ${JSON.stringify(out.slice(-300))}`);
+  });
+
+  await step("device_dialogs", async () => {
+    await fs.writeText("Tests/device/notes.txt", "some notes\n");
+    const out = await runOutput("Tests/device/dialog_test.py", [
+      "import console, dialogs",
+      "print('alert', console.alert('T', 'm', 'A', 'B'))",
+      "print('input', console.input_alert('Name'))",
+      "print('login', console.login_alert('Log in'))",
+      "print('list', dialogs.list_dialog('L', ['x', 'y', 'z']))",
+      "print('multi', dialogs.list_dialog('M', ['x', 'y', 'z'], multiple=True))",
+      "print('form', dialogs.form_dialog('F', [{'type': 'text', 'key': 'n', 'title': 'N'}, {'type': 'switch', 'key': 's', 'title': 'S'}, {'type': 'date', 'key': 'd', 'title': 'D'}]))",
+      "print('date', dialogs.date_dialog('D'))",
+      "print('duration', dialogs.duration_dialog('T'))",
+      "print('text', dialogs.text_dialog('Edit', 'abc'))",
+      "print('edit', dialogs.edit_list_dialog('E', ['a', 'b', 'c']))",
+      "print('cancel', dialogs.list_dialog('L2', ['a']))",
+      "console.quicklook('notes.txt')",
+      "print('share', dialogs.share_text('hi'))",
+      "try:",
+      "    console.alert('X')",
+      "except KeyboardInterrupt:",
+      "    print('interrupted')",
+      "console.hud_alert('Done', duration=0.25)",
+      "print('end')",
+    ].join("\n"), [2, ["Ada"], ["me", "pw"], [1], [0, 2], { n: "Bob", s: true, d: "2026-01-02T00:00:00" }, "2026-03-04T00:00:00", 90, "abcdef", [2, 0], null, null, null, null]);
+    expectLines(out, [
+      "alert 2", "input Ada", "login ('me', 'pw')", "list y", "multi ['x', 'z']",
+      "form {'n': 'Bob', 's': True, 'd': datetime.datetime(2026, 1, 2, 0, 0)}", "date 2026-03-04 00:00:00", "duration 90.0",
+      "text abcdef", "edit ['c', 'a']", "cancel None", "share None", "interrupted", "end",
+    ]);
+  });
+
+  await step("device_stop_closes_dialog", async () => {
+    await fs.writeText("Tests/device/wait.py", "import console\nconsole.alert('Waiting')\n");
+    const { done } = await runFile("Tests/device/wait.py");
+    await until(() => appCall<boolean>("deviceHasDialog"), 15000);
+    session.stop();
+    await until(idle, 10000);
+    await done.catch(() => {});
+    await until(async () => !(await appCall<boolean>("deviceHasDialog")), 5000);
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    if (run?.status !== "stopped") throw new Error(`${run?.status}: ${consoleText().slice(-300)}`);
+  });
+
+  await step("device_pim", async () => {
+    const out = await runOutput("Tests/device/pim.py", [
+      "print('start', flush=True)",
+      "import contacts, reminders, notification, location, photos, sys",
+      "print('imported', contacts.is_authorized(), flush=True)",
+      "p = contacts.Person(); p.first_name = 'Pyslop'; p.last_name = 'Selftest'; p.email = [(contacts.WORK, 't@example.com')]",
+      "contacts.add_person(p); contacts.save(); print('saved contact', flush=True)",
+      "found = contacts.find('Selftest')",
+      "print('contact', [x.full_name for x in found], found[0].email)",
+      "contacts.remove_person(found[0]); contacts.save()",
+      "print('contact2', len(contacts.find('Selftest')))",
+      "r = reminders.Reminder(); r.title = 'Pyslop selftest'; r.save()",
+      "print('rem', any(x.title == 'Pyslop selftest' for x in reminders.get_reminders(completed=False)))",
+      "print('del', reminders.delete_reminder(r))",
+      // The self-test can't answer the notification permission prompt, so it isn't asked.
+      "try:",
+      "    nid = notification.schedule('later', delay=600, title='Selftest')",
+      "    print('notif', nid in notification.get_scheduled())",
+      "    notification.cancel(nid)",
+      "except PermissionError:",
+      "    print('notif', 'not allowed', notification.get_scheduled() == [])",
+      "location.start_updates()",
+      "loc = location.get_location()",
+      "print('loc', round(loc['latitude'], 2) if loc else None, location.is_authorized())",
+      "location.stop_updates()",
+      "assets = photos.get_assets()",
+      "print('photos', len(assets) > 0)",
+      "if assets: print('image', assets[-1].get_image().size == (assets[-1].pixel_width, assets[-1].pixel_height))",
+    ].join("\n"), [], 90000);
+    expectLines(out, ["contact ['Pyslop Selftest'] [('_$!<Work>!$_', 't@example.com')]", "contact2 0", "rem True", "del True", "notif", "loc 48.86 True", "photos True", "image True"]);
+  });
+
+  // -- file management (D41) -------------------------------------------------------
+
+  await step("file_management", async () => {
+    await fs.mkdir("Tests/files/sub").catch(() => {});
+    await fs.writeText("Tests/files/a.py", "print('a')\n");
+    await app.openFile("Tests/files/a.py");
+    // Move: the open tab follows.
+    const moved = await appCall<string | null>("movePath", "Tests/files/a.py", "Tests/files/sub");
+    if (moved !== "Tests/files/sub/a.py" || !(await fs.exists(moved)) || (await fs.exists("Tests/files/a.py"))) throw new Error(`move: ${moved}`);
+    if ((await app.currentFile()) !== moved) throw new Error(`tab after move: ${await app.currentFile()}`);
+    // Favorites follow it around.
+    let favorites = await appCall<string[]>("toggleFavorite", moved);
+    if (!favorites.includes(moved)) throw new Error(`favorite: ${favorites}`);
+    // Delete goes to the Trash, and comes back.
+    await appCall("deletePath", moved);
+    if (await fs.exists(moved)) throw new Error("not deleted");
+    favorites = await appCall<string[]>("favorites");
+    if (favorites.includes(moved)) throw new Error("favorite kept after delete");
+    let trash = await appCall<string[][]>("trashList");
+    const entry = trash.find(([, original]) => original === moved);
+    if (!entry) throw new Error(`trash: ${JSON.stringify(trash)}`);
+    await appCall("trashRestore", entry[0]);
+    if ((await fs.readText(moved)) !== "print('a')\n") throw new Error("not restored");
+    // Restoring next to a file with the same name keeps both.
+    await appCall("deletePath", moved);
+    await fs.writeText(moved, "new\n");
+    trash = await appCall<string[][]>("trashList");
+    await appCall("trashRestore", trash.find(([, o]) => o === moved)![0]);
+    if (!(await fs.exists("Tests/files/sub/a 2.py"))) throw new Error(`restore beside: ${JSON.stringify((await fs.list("Tests/files/sub")).map((e) => e.name))}`);
+    // Delete for good from the Trash.
+    await appCall("deletePath", "Tests/files/sub/a 2.py");
+    trash = await appCall<string[][]>("trashList");
+    await appCall("trashRemove", trash.find(([, o]) => o === "Tests/files/sub/a 2.py")![0]);
+    if ((await appCall<string[][]>("trashList")).some(([, o]) => o === "Tests/files/sub/a 2.py")) throw new Error("still in the trash");
+    // Templates.
+    const created = await appCall<string>("newFromTemplate", "Tests/files", "hello", "script");
+    if (created !== "Tests/files/hello.py" || !(await fs.readText(created)).includes("input(")) throw new Error(`template: ${created}`);
+    const notes = await appCall<string>("newFromTemplate", "Tests/files", "notes", "markdown");
+    if (notes !== "Tests/files/notes.md") throw new Error(`markdown template: ${notes}`);
+    // Quick Look for files the editor doesn't show.
+    await fs.writeBase64("Tests/files/dot.png", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=");
+    const shown = await appCall<string>("quickLook", "Tests/files/dot.png");
+    if (!shown.includes("QLPreviewController")) throw new Error(`quick look: ${shown}`);
+  });
+
+  await step("device_modules_typed", async () => {
+    // ty knows the device modules: no unresolved imports, and their signatures.
+    const code = "import clipboard\nimport dialogs\nimport photos\n\nclipboard.set(1, 2)\nprint(dialogs.list_dialog('t', ['a']))\n";
+    const problems = await analysis.check("Tests/device/typed.py", code);
+    if (problems.some((p) => p.code === "unresolved-import")) throw new Error(JSON.stringify(problems));
+    if (!problems.some((p) => p.source === "ty" && /argument/i.test(p.message))) throw new Error(`no argument error: ${JSON.stringify(problems)}`);
+  });
+
   await step("editor_themes", async () => {
     await app.openFile("Examples/Hello.py");
     const themes = await editorCall<{ id: string }[]>("themes");

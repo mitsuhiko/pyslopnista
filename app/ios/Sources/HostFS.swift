@@ -125,6 +125,25 @@ final class HostFS: @unchecked Sendable {
         lock.withLock { for mount in mounts.values { mount.generation += 1 } }
     }
 
+    // MARK: files the app reads and writes for a program (the device modules, D40)
+
+    /// Where a path relative to a mount is (nil for an unknown mount or a path leaving it).
+    func url(token: String, relative path: String) -> URL? {
+        guard let mount = lock.withLock({ mounts[token] }), let rel = try? Self.relative(path) else { return nil }
+        return rel.isEmpty ? mount.root : mount.root.appendingPathComponent(rel)
+    }
+
+    /// The app wrote a file into a mount (e.g. a recording): the program's
+    /// caches drop it, and a linked folder gets it back.
+    func wroteNatively(token: String, relative path: String) {
+        guard let rel = try? Self.relative(path) else { return }
+        lock.withLock {
+            guard let mount = mounts[token] else { return }
+            changed(mount, rel)
+            mount.generation += 1
+        }
+    }
+
     // MARK: change notification and sync back
 
     /// Writing back a staged file: (staged copy or nil for a removal, original URL).

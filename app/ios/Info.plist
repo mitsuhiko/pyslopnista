@@ -10,6 +10,25 @@
 	     generate this one from INFOPLIST_KEY_UIFileSharingEnabled. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- What programs may ask for through the device modules (D40). -->
+	<key>NSCameraUsageDescription</key>
+	<string>Your programs can take photos with the camera (photos.capture_image).</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Your programs can read and edit photos in your library (the photos module).</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Your programs can save images to your photo library.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Your programs can use your location (the location module).</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Your programs can record audio (sound.Recorder).</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Your programs can transcribe recorded speech (speech.recognize).</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Your programs can read and change your contacts (the contacts module).</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Your programs can read and change your reminders (the reminders module).</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Your programs can read the motion sensors (the motion module).</string>
 	<!-- pyslopnista://run?path=<path> runs a program (D38): Home Screen
 	     shortcuts made with an Open URL action, links. -->
 	<key>CFBundleURLTypes</key>

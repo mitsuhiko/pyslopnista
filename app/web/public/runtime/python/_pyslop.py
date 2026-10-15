@@ -3,6 +3,7 @@
 - inline matplotlib: ``plt.show()`` sends PNGs to the console
 - ``repl(source)``: run console input in ``__main__`` with REPL semantics
 - ``help(x)`` for the standard library opens the bundled docs (D37)
+- ``webbrowser.open()`` opens links in the app (D40)
 - ``prepare_environment``: PEP 723 / pyproject.toml dependencies
 """
 
@@ -118,6 +119,39 @@ class _Helper:
 
 
 builtins.help = _Helper()
+
+
+# -- webbrowser opens links in the app (D40) ----------------------------------------
+
+
+def _install_webbrowser():
+    # Pyodide's webbrowser calls window.open, which a worker doesn't have.
+    import webbrowser
+
+    def open_url(url, new=0, autoraise=True):
+        from _device import call
+
+        call("openURL", url=str(url))
+        return True
+
+    class AppBrowser(webbrowser.BaseBrowser):
+        """http(s) links open in an in-app browser, other links in the app they belong to."""
+
+        def open(self, url, new=0, autoraise=True):
+            return open_url(url, new, autoraise)
+
+    browser = AppBrowser("pyslopnista")
+    webbrowser.register("pyslopnista", None, browser, preferred=True)
+    webbrowser.register("default", None, browser)
+    webbrowser.open = open_url
+    webbrowser.open_new = lambda url: open_url(url, 1)
+    webbrowser.open_new_tab = lambda url: open_url(url, 2)
+
+
+try:
+    _install_webbrowser()
+except Exception:
+    pass
 
 
 # -- console ------------------------------------------------------------------------

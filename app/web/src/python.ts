@@ -2,6 +2,7 @@
 // output streaming, stdin, interrupt with escalation, host calls, UI messages,
 // and the project folder the program works in (HostFS, D35).
 import { call } from "./host";
+import { RUNTIME_FILES } from "./runtimeModules";
 import { getDefaultPython, runtimeFor } from "./runtimes";
 
 const encoder = new TextEncoder();
@@ -42,13 +43,7 @@ function workerOptions(python: string) {
     packageBaseUrl: new URL(`/pkgs/${python}/`, location.href).href,
     jspi: params.get("jspi") !== "0",
     gcTrampoline: params.get("gc") !== "0",
-    pythonFiles: {
-      "_pyslop.py": new URL("/runtime/python/_pyslop.py", location.href).href,
-      "ui.py": new URL("/runtime/python/ui.py", location.href).href,
-      "_pyslop_debug.py": new URL("/runtime/python/_pyslop_debug.py", location.href).href,
-      "turtle.py": new URL("/runtime/python/turtle.py", location.href).href,
-      "_pyslop_turtle.py": new URL("/runtime/python/_pyslop_turtle.py", location.href).href,
-    },
+    pythonFiles: Object.fromEntries(RUNTIME_FILES.map((f) => [f, new URL(`/runtime/python/${f}`, location.href).href])),
   };
 }
 
@@ -56,6 +51,8 @@ export class PyWorker {
   readonly ready: Promise<WorkerInfo>;
   /** The runtime ("3.14"). */
   readonly python: string;
+  /** Whether the program may use the device modules (D40): not in the agent's runs. */
+  allowDevice = true;
   dead = false;
   onOutput: (stream: Stream, text: string) => void = () => {};
   onInput: () => Promise<string | null> = async () => null;
@@ -143,6 +140,7 @@ export class PyWorker {
   }
 
   private async handleCall(msg: any) {
+    if (msg.op === "chunk") return this.replyChunk(msg.value.offset);
     let reply: { value?: unknown; error?: string };
     const seq = msg.sync ? ++this.syncSeq : 0;
     try {
@@ -151,7 +149,12 @@ export class PyWorker {
       if (msg.op === "stdin") value = await this.onInput();
       else if (msg.op === "debug") value = await this.onDebug(msg.value);
       else if (msg.op === "turtle") value = await this.onTurtleCall(msg.value);
-      else if (msg.op === "host") value = await call(msg.value.op, msg.value.value);
+      else if (msg.op === "host") {
+        if (String(msg.value.op).startsWith("device.") && !this.allowDevice) {
+          throw new Error("PermissionError: the device modules (clipboard, photos, contacts, ...) are not available when the agent runs code; run the program yourself");
+        }
+        value = await call(msg.value.op, msg.value.value);
+      }
       else throw new Error(`unknown call ${msg.op}`);
       reply = { value };
     } catch (e) {
@@ -164,9 +167,27 @@ export class PyWorker {
     }
   }
 
+  /** A reply too big for the channel (an image, D40) goes in pieces the worker asks for. */
+  private bigReply: Uint8Array | null = null;
+
   private replySync(reply: unknown) {
     this.syncPending = false;
-    const bytes = encoder.encode(JSON.stringify(reply));
+    let bytes = encoder.encode(JSON.stringify(reply));
+    if (bytes.length > CHANNEL_BYTES - 8) {
+      this.bigReply = bytes;
+      bytes = encoder.encode(JSON.stringify({ $size: bytes.length }));
+    }
+    this.writeChannel(bytes);
+  }
+
+  private replyChunk(offset: number) {
+    const all = this.bigReply ?? new Uint8Array(0);
+    const part = all.subarray(offset, offset + CHANNEL_BYTES - 8);
+    if (offset + part.length >= all.length) this.bigReply = null;
+    this.writeChannel(part);
+  }
+
+  private writeChannel(bytes: Uint8Array) {
     const ints = new Int32Array(this.channel!, 0, 2);
     new Uint8Array(this.channel!, 8).set(bytes);
     ints[1] = bytes.length;

@@ -451,7 +451,8 @@ enum ANSI {
         "#000000", "#c91b00", "#00a600", "#c7c400", "#2225c4", "#ca30c7", "#00a6b2", "#bfbfbf",
         "#686868", "#ff6e67", "#5ffa68", "#fffc67", "#6871ff", "#ff77ff", "#60fdff", "#ffffff",
     ].map { UIColorParser.uiColor($0)! }
-    private static let regex = try! NSRegularExpression(pattern: "\u{1b}\\[([0-9;]*)([A-Za-z])")
+    /// SGR codes, and OSC 8 links (console.write_link, D40).
+    private static let regex = try! NSRegularExpression(pattern: "\u{1b}\\[([0-9;]*)([A-Za-z])|\u{1b}\\]8;[^;\u{1b}\u{07}]*;([^\u{1b}\u{07}]*)(?:\u{1b}\\\\|\u{07})")
 
     static func strip(_ text: String) -> String {
         regex.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length), withTemplate: "")
@@ -486,6 +487,7 @@ enum ANSI {
         var fg: UIColor?
         var bg: UIColor?
         var bold = false, dim = false, italic = false, underline = false
+        var link: URL?
         let ns = text as NSString
         var last = 0
         func push(_ s: String) {
@@ -497,12 +499,22 @@ enum ANSI {
             if italic { a.inlinePresentationIntent = (a.inlinePresentationIntent ?? []).union(.emphasized) }
             if underline { a.underlineStyle = .single }
             if dim { a.foregroundColor = (fg.map { Color(uiColor: $0) } ?? base).opacity(0.6) }
+            if let link {
+                a.link = link
+                a.underlineStyle = .single
+                if fg == nil { a.foregroundColor = .accentColor }
+            }
             out += a
         }
         for m in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             push(ns.substring(with: NSRange(location: last, length: m.range.location - last)))
             last = m.range.location + m.range.length
-            guard ns.substring(with: m.range(at: 2)) == "m" else { continue }
+            if m.range(at: 3).location != NSNotFound {
+                let target = ns.substring(with: m.range(at: 3))
+                link = target.isEmpty ? nil : URL(string: target)
+                continue
+            }
+            guard m.range(at: 2).location != NSNotFound, ns.substring(with: m.range(at: 2)) == "m" else { continue }
             let codes = ns.substring(with: m.range(at: 1)).split(separator: ";", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
             var i = 0
             while i < codes.count {

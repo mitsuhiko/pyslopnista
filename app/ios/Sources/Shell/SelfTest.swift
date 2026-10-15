@@ -1,3 +1,4 @@
+import QuickLook
 import UIKit
 
 /// Hooks for the self-test (web/src/selftest.ts runs in the engine page and
@@ -54,6 +55,39 @@ enum SelfTest {
             return try await ProgramQuery().suggestedEntities().map(\.id)
         case "homeScreenSheet":
             model.activeSheet = .homeScreen(str(0) ?? "")
+        case "deletePath":
+            await model.delete(str(0) ?? "")
+        case "trashList":
+            return await model.trashItems().map { [$0.name, $0.original] }
+        case "trashRestore":
+            await model.restoreFromTrash(str(0) ?? "")
+        case "trashRemove":
+            await model.removeFromTrash(str(0) ?? "")
+        case "movePath":
+            return await model.move(str(0) ?? "", into: str(1) ?? "") ?? NSNull()
+        case "newFromTemplate":
+            guard let template = AppModel.builtinTemplates.first(where: { $0.id == str(2) }) else { return NSNull() }
+            return await model.newFile(in: str(0) ?? "", name: str(1) ?? "", template: template) ?? NSNull()
+        case "toggleFavorite":
+            model.toggleFavorite(str(0) ?? "")
+            return model.favorites
+        case "favorites":
+            return model.favorites
+        case "quickLook":
+            model.quickLook(str(0) ?? "")
+            for _ in 0..<40 where model.host.presenter()?.presentedViewController == nil && !(model.host.presenter() is QLPreviewController) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            let top = model.host.presenter()
+            let shown = top.map { String(describing: Swift.type(of: $0)) } ?? ""
+            top?.dismiss(animated: false)
+            return shown
+        case "deviceHasDialog":
+            return model.device.testHasDialog
+        case "deviceAnswer":
+            // Answer the dialog a program waits for, as a tap would (D40).
+            for _ in 0..<100 where !model.device.testHasDialog { try await Task.sleep(for: .milliseconds(50)) }
+            return model.device.testAnswer(args.first is NSNull ? nil : args.first)
         case "setTheme":
             model.updateSettings { $0.theme = str(0) ?? "pyslopnista" }
         case "setAppearance":

@@ -279,7 +279,7 @@ private struct EditorChrome: ViewModifier {
             .confirmationDialog("Delete “\(file.map(basename) ?? "")”?", isPresented: $deleting, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) { if let file { Task { await model.delete(file) } } }
             } message: {
-                Text("This cannot be undone.")
+                Text(file?.hasPrefix("@") == true ? "It goes to the folder's trash if it has one, otherwise it is gone." : "It goes to the Trash in the file browser.")
             }
     }
 
@@ -423,6 +423,8 @@ private struct EditorChrome: ViewModifier {
                                 }
                             }
                         } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                        Button { model.activeSheet = .move(file) } label: { Label("Move…", systemImage: "folder") }
+                        Button { model.share(file) } label: { Label("Share…", systemImage: "square.and.arrow.up") }
                         if file.hasSuffix(".py") {
                             Button { model.activeSheet = .homeScreen(file) } label: { Label("Add to Home Screen…", systemImage: "apps.iphone.badge.plus") }
                         }

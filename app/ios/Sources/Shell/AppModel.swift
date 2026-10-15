@@ -72,10 +72,12 @@ enum ConsoleDetent: String {
 }
 
 enum ActiveSheet: Identifiable, Equatable {
-    case find, settings, problems, jump(String), agent, homeScreen(String)
+    case find, settings, problems, jump(String), agent, homeScreen(String), newFile(String), move(String)
     var id: String {
         switch self {
         case .homeScreen: "homeScreen"
+        case .newFile: "newFile"
+        case .move: "move"
         case .find: "find"
         case .settings: "settings"
         case .problems: "problems"
@@ -114,6 +116,7 @@ enum ConsoleField: Hashable {
 enum Route: Hashable {
     case folder(String)
     case editor
+    case trash
 }
 
 func isExternal(_ path: String) -> Bool { path.hasPrefix("ext:") }
@@ -180,7 +183,15 @@ final class AppModel {
     var filePython: PythonChoice?
     /// The Python the current file's folder pins in its own `.python-version`.
     var folderPin: String?
+    /// Files and folders pinned to the top of the browser (D41).
+    var favorites: [String] = []
     @ObservationIgnored let docs = DocsPresenter()
+    /// The device modules' native side (D40).
+    @ObservationIgnored lazy var device: DeviceBridge = {
+        let bridge = DeviceBridge(hostFS: host.hostFS)
+        bridge.model = self
+        return bridge
+    }()
 
     @ObservationIgnored private var lastUsed: [String: Date] = [:]
     @ObservationIgnored private var writes: Task<Void, Never>?
@@ -249,6 +260,7 @@ final class AppModel {
             Task { _ = try? await self?.engine.call("closeUI", [:]) }
         }
         Task { await self.restoreTabs(fragment: fragment) }
+        purgeTrash()
     }
 
     // MARK: persistence
@@ -256,6 +268,7 @@ final class AppModel {
     private func loadDefaults() {
         let d = UserDefaults.standard
         if let data = d.data(forKey: "settings"), let s = try? JSONDecoder().decode(EditorSettings.self, from: data) { settings = s }
+        favorites = d.stringArray(forKey: "favorites") ?? []
         if let python = d.string(forKey: "python.default"), Runtimes.runtime(python) != nil { defaultPython = python }
         if let data = d.data(forKey: "breakpoints"), let b = try? JSONDecoder().decode([String: [Breakpoint]].self, from: data) { breakpoints = b }
         if let data = d.data(forKey: "tabs"), let saved = try? JSONDecoder().decode([Pane].self, from: data), !saved.isEmpty {
@@ -407,6 +420,8 @@ final class AppModel {
                     reply(nil, error.localizedDescription)
                 }
             }
+        case (.engine, _) where op.hasPrefix("device."):
+            device.handle(op, value, reply: reply)
         case (.engine, _) where op.hasPrefix("docs."):
             handleDocs(op, value, reply)
         case (.engine, "agent.flushEditors"):
@@ -793,23 +808,15 @@ final class AppModel {
         if next != breakpoints { commitBreakpoints(next) }
         for i in editors.indices { Task { _ = await editorCall(i, "renamePath", [from, to]) } }
         panes = panes.map { Pane(tabs: $0.tabs.map(moved), active: $0.active.map(moved)) }
+        updateFavorites(renamed: from, to: to)
         fileListVersion += 1
         saveTabs()
         // The agent's conversations of a renamed folder work in the new one (D36).
         Task { _ = await agentCall("renamed", [from, to]) }
     }
 
-    func delete(_ path: String) async {
-        do {
-            try await host.onFileQueue { try $0.delete(path) }
-        } catch {
-            showToast("Could not delete: \(error)")
-            return
-        }
-        deleted(path)
-    }
-
     func deleted(_ path: String) {
+        updateFavorites(deleted: path)
         let gone = { (p: String) in p == path || p.hasPrefix(path + "/") }
         let next = breakpoints.filter { !gone($0.key) }
         if next.count != breakpoints.count { commitBreakpoints(next) }
@@ -1165,7 +1172,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>][&docs=<version>/<ref, # as %23>][&settings]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>][&docs=<version>/<ref, # as %23>][&settings][&newfile=<dir>][&move=<path>][&trash]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1206,6 +1213,9 @@ final class AppModel {
             }
         }
         if hook["settings"] != nil { activeSheet = .settings }
+        if let path = hook["newfile"] { activeSheet = .newFile(path) }
+        if let path = hook["move"] { activeSheet = .move(path) }
+        if hook["trash"] != nil { route = [.trash] }
         if let target = hook["docs"], let url = URL(string: "docs:\(target.replacingOccurrences(of: "#", with: "%23"))") {
             try? await Task.sleep(for: .milliseconds(300))
             _ = openDocsLink(url)

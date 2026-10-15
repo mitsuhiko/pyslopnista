@@ -5,6 +5,7 @@ import initRuff, { type Diagnostic as RuffDiagnostic, PositionEncoding as RuffEn
 import ruffWasmUrl from "@astral-sh/ruff-wasm-web/ruff_wasm_bg.wasm?url";
 import initTy, { type FileHandle, Position, PositionEncoding, Severity, Workspace as TyWorkspace } from "ty_wasm";
 import tyWasmUrl from "ty_wasm/ty_wasm_bg.wasm?url";
+import { DEVICE_MODULES } from "../runtimeModules";
 import type { AnalysisRequest, CompletionItem, DefinitionTarget, Problem } from "./protocol";
 
 const ROOT = "/project";
@@ -37,15 +38,15 @@ async function init() {
   const t1 = performance.now();
   await initTy({ module_or_path: tyWasmUrl });
   ty = new TyWorkspace(ROOT, PositionEncoding.Utf16, { environment: { "python-version": python } });
-  // Our runtime modules (ui) become visible to ty through an extra search path;
-  // the directory only exists once a file is in it.
-  try {
-    const ui = await (await fetch("/runtime/python/ui.py")).text();
-    stubHandles.set(`${STUBS}/ui.py`, ty.openFile(`${STUBS}/ui.py`, ui));
-    setRoot("");
-  } catch {
-    // without it, `import ui` is simply not type checked
-  }
+  // Our runtime modules (ui, the device modules) become visible to ty through
+  // an extra search path; the directory only exists once a file is in it.
+  // turtle is left to typeshed, which knows it better.
+  const files = ["ui.py", "_device.py", ...DEVICE_MODULES.map((m) => `${m}.py`)];
+  const texts = await Promise.all(files.map((f) => fetch(`/runtime/python/${f}`).then((r) => (r.ok ? r.text() : null)).catch(() => null)));
+  files.forEach((f, i) => {
+    if (texts[i] !== null) stubHandles.set(`${STUBS}/${f}`, ty.openFile(`${STUBS}/${f}`, texts[i]!));
+  });
+  if (stubHandles.size) setRoot("");
   return { ruff: RuffWorkspace.version(), ruffMs, tyMs: performance.now() - t1 };
 }
 

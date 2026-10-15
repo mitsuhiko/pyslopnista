@@ -58,13 +58,15 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 ## Projects and files
 
 - [core] Projects are folders: files, assets, `pyproject.toml`
-- [core] File browser: create, rename, move, delete, import and export
+- [core] File browser: create, rename, move (drag and drop, Move…), delete to a Trash, Quick Look and share, favorites (D41)
 - [core] Shown as a folder in the iOS Files app
 - [core] Open external folders the user grants access to (e.g. Working Copy, iCloud Drive)
 - [core] Python code sees project files through ordinary `open()` and `pathlib`
 - [later] iCloud sync between devices
 - [later] Git: clone, commit, push, pull
-- [later] Project templates (script, UI app, game, data analysis)
+- [core] File templates for New File, built in and your own (Documents/Templates) (D41)
+- [later] Project templates (several files, assets)
+- [later] Selecting several files to move or delete
 
 ## Learning
 
@@ -100,12 +102,18 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 One Python API with two implementations: the native bridge inside our app, and
 browser APIs (or graceful degradation) in published web apps.
 
-- [core] Clipboard, share sheet, haptics, dialogs (alert, text input, pickers)
+Inside the app these use Pythonista's module names and API (D40): `clipboard`,
+`console`, `dialogs`, `keychain`, `notification`, `photos`, `location`, `motion`,
+`sound`, `speech`, `contacts`, `reminders`, plus `haptics`; `webbrowser` opens links.
+
+- [core] Clipboard, share sheet, haptics, dialogs (alert, text input, pickers) (D40)
 - [core] Opening URLs; HTTP from Python via `requests`/`httpx`/`urllib`, with no CORS problems inside the app
-- [core] Secure key/value storage (Keychain inside the app)
-- [later] Location, motion sensors, camera/photo picker, microphone/sound playback
-- [later] Speech (text-to-speech, recognition), notifications
-- [later] Contacts, calendar, reminders, HealthKit (only inside the app; review needed)
+- [core] Secure key/value storage (Keychain inside the app) (D40)
+- [core] Location, motion sensors, camera/photo library, microphone recording, sound effects and playback (D40)
+- [core] Speech (text-to-speech, recognition), local notifications (D40)
+- [core] Contacts and reminders (D40)
+- [later] Bluetooth LE (Pythonista's `cb`), calendar events, HealthKit (only inside the app; review needed)
+- [later] Browser implementations of the device modules for published apps
 - [maybe] Apple's on-device Foundation Models
 
 ## iOS integration
