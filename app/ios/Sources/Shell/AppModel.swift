@@ -305,7 +305,11 @@ final class AppModel {
     /// docs viewer follow it through prefers-color-scheme).
     func applyAppearance() {
         for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
-            for window in scene.windows { window.overrideUserInterfaceStyle = settings.appearance.style }
+            for window in scene.windows {
+                window.overrideUserInterfaceStyle = settings.appearance.style
+                // What shows where no view draws, e.g. while the keyboard slides in.
+                window.backgroundColor = UIColor(editorBackground)
+            }
         }
     }
 
@@ -561,7 +565,10 @@ final class AppModel {
             editors[pane].markReady()
             Task {
                 await editorCall(pane, "settings", [settings.editorPayload])
-                if editorThemeList.isEmpty { editorThemeList = await editorThemes() }
+                if editorThemeList.isEmpty {
+                    editorThemeList = await editorThemes()
+                    applyAppearance()
+                }
                 if pane < panes.count, let active = panes[pane].active, restored { await show(active, in: pane) }
             }
         case "changes":

@@ -30,6 +30,7 @@ struct EditorScreen: View {
             }
             .background(model.editorBackground.ignoresSafeArea())
         }
+        .background(model.editorBackground.ignoresSafeArea())
         .modifier(EditorChrome())
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -122,7 +123,9 @@ struct EditorPaneView: View {
             WebViewHost(webView: model.editors[pane].webView)
             if empty { EmptyEditor() }
         }
-        .background(Color(.systemBackground))
+        // The page is transparent: while it resizes (the keyboard comes up) the
+        // part it hasn't drawn yet shows this.
+        .background(model.editorBackground)
         .popover(item: Binding(
             get: { model.popover?.pane == pane ? model.popover : nil },
             set: { model.popover = $0 }
