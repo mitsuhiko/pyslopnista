@@ -62,6 +62,7 @@ struct RootView: View {
                 Button("Remove All \(menu.count) in File", role: .destructive) { model.clearBreakpoints(menu.path) }
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { model.windowWidth = $0 }
         .onChange(of: sizeClass, initial: true) { _, size in
             let wide = size == .regular
             model.wide = wide

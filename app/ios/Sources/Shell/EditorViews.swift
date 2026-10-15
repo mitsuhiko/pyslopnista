@@ -273,12 +273,27 @@ private struct EditorChrome: ViewModifier {
             }
     }
 
+    /// Room for the title on iPhone: between the back button and the buttons
+    /// on the right (about 250 pt together).
+    private var titleWidth: CGFloat {
+        model.wide ? min(420, model.windowWidth * 0.4) : max(90, model.windowWidth - 250)
+    }
+
+    /// The file name, cut in the middle when it doesn't fit. Toolbar buttons
+    /// keep their label's ideal size (it would run under the other buttons),
+    /// so the text gets an exact width: its own, or what is left.
+    private func fileName(_ name: String) -> some View {
+        let natural = ceil((name as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .headline)]).width)
+        return Text(name).font(.headline).lineLimit(1).truncationMode(.middle)
+            .frame(width: min(natural, titleWidth - 16))
+    }
+
     private func title(_ file: String?) -> some View {
         VStack(spacing: 0) {
             if let file {
                 Button { model.activeSheet = .jump("") } label: {
                     HStack(spacing: 3) {
-                        Text(tabLabel(file)).font(.headline)
+                        fileName(tabLabel(file))
                         Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
                     }
                 }
@@ -287,7 +302,7 @@ private struct EditorChrome: ViewModifier {
             } else {
                 Text("Pyslopnista").font(.headline)
             }
-            subtitle(file)
+            subtitle(file).lineLimit(1)
         }
     }
 

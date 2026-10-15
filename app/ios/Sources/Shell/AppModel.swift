@@ -116,6 +116,8 @@ final class AppModel {
     var focusedPane = 0
     var route: [Route] = [] // iPhone: folders and the editor; iPad: folders in the sidebar
     var wide = false
+    /// The window's width: the editor's title must fit between the bar's buttons.
+    var windowWidth: CGFloat = 390
     var problems = [ProblemCounts(), ProblemCounts()]
     var editorFocused = false
     var fileListVersion = 0
