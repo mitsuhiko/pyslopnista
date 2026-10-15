@@ -258,6 +258,12 @@ enum SelfTest {
 
     /// Tap keys on the key bar of whatever has focus, by their labels (also
     /// when it is collapsed for a hardware keyboard); reports whether it shows.
+    /// Runs the main run loop in tracking mode, as UIKit does while a finger is down in a scroll view.
+    private static func trackTouch(for seconds: TimeInterval) {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end { RunLoop.main.run(mode: .tracking, before: end) }
+    }
+
     /// Taps keys of the bar; "hold:<label>" touches and holds one.
     private static func keyBar(_ labels: [String]) async -> Any {
         guard let responder = UIResponder.current else { return "no first responder" }
@@ -273,7 +279,10 @@ enum SelfTest {
             let name = hold ? String(label.dropFirst(5)) : label
             guard let key = find(bar, name) else { return "no key \(name)" }
             key.sendActions(for: .touchDown)
-            if hold { try? await Task.sleep(for: .seconds(KeyboardAccessory.holdDuration + 0.25)) }
+            if hold {
+                // As under a finger: the run loop in tracking mode while the key is down.
+                trackTouch(for: KeyboardAccessory.holdDuration + 0.25)
+            }
             key.sendActions(for: .touchUpInside)
         }
         return ["shown": shown]

@@ -357,7 +357,7 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
         holdTimer?.invalidate()
         held = nil
         guard Self.keys.indices.contains(sender.tag), let alternate = Self.keys[sender.tag].alternate else { return }
-        holdTimer = Timer.scheduledTimer(withTimeInterval: Self.holdDuration, repeats: false) { [weak self, weak sender] _ in
+        let timer = Timer(timeInterval: Self.holdDuration, repeats: false) { [weak self, weak sender] _ in
             MainActor.assumeIsolated {
                 guard let self, let sender else { return }
                 self.held = sender
@@ -365,6 +365,10 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
                 self.send(alternate, from: sender)
             }
         }
+        // Common modes: while a finger is down in the bar's scroll view the run
+        // loop is in tracking mode, where a default-mode timer doesn't fire.
+        RunLoop.main.add(timer, forMode: .common)
+        holdTimer = timer
     }
 
     @objc private func keyCancel(_ sender: UIButton) {
