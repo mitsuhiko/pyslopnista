@@ -187,6 +187,8 @@ final class AppModel {
     var favorites: [String] = []
     /// What each pane's file is as a notebook (D44, AppModel+Notebook.swift).
     var notebookPanes: [Int: NotebookPane] = [:]
+    /// The editor's themes (from an editor page), for the color around the editor.
+    var editorThemeList: [EditorTheme] = []
     @ObservationIgnored var notebookPrompt: NotebookPrompt?
     @ObservationIgnored let docs = DocsPresenter()
     /// The device modules' native side (D40).
@@ -305,6 +307,15 @@ final class AppModel {
         for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
             for window in scene.windows { window.overrideUserInterfaceStyle = settings.appearance.style }
         }
+    }
+
+    /// The editor theme's background, light or dark as the window is: around the
+    /// editor (under the console panel, in the bottom safe area).
+    var editorBackground: Color {
+        guard let theme = editorThemeList.first(where: { $0.id == settings.theme }) ?? editorThemeList.first,
+              let light = UIColorParser.uiColor(theme.light.colors["bg"]),
+              let dark = UIColorParser.uiColor(theme.dark.colors["bg"]) else { return Color(.systemBackground) }
+        return Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? dark : light })
     }
 
     /// The code editor's themes, from an editor page.
@@ -550,6 +561,7 @@ final class AppModel {
             editors[pane].markReady()
             Task {
                 await editorCall(pane, "settings", [settings.editorPayload])
+                if editorThemeList.isEmpty { editorThemeList = await editorThemes() }
                 if pane < panes.count, let active = panes[pane].active, restored { await show(active, in: pane) }
             }
         case "changes":

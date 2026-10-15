@@ -9,16 +9,26 @@ struct EditorScreen: View {
 
     var body: some View {
         GeometryReader { geo in
+            // The console reaches down to the screen's edge; collapsed, its header
+            // sits a little into the bottom safe area.
+            // The window's inset (the home indicator), not the keyboard's: with the
+            // keyboard up the panel sits right on it.
+            let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.bottom ?? 0
+            let bottom = geo.safeAreaInsets.bottom > window + 1 ? 0 : window
+            let lowered = min(ConsolePanel.lowered, bottom)
             VStack(spacing: 0) {
                 if model.panes[0].tabs.count > 1 { TabStrip(pane: 0) }
                 ZStack(alignment: .bottom) {
                     EditorPaneView(pane: 0)
-                        .padding(.bottom, model.editorFocused ? 0 : ConsolePanel.peek)
+                        .padding(.bottom, model.editorFocused ? 0 : ConsolePanel.peek - lowered)
+                        .padding(.bottom, model.editorFocused ? 0 : bottom)
                     if !model.editorFocused {
-                        ConsolePanel(maxHeight: geo.size.height)
+                        ConsolePanel(maxHeight: geo.size.height, bottomInset: bottom - lowered)
                     }
                 }
+                .ignoresSafeArea(.container, edges: .bottom)
             }
+            .background(model.editorBackground.ignoresSafeArea())
         }
         .modifier(EditorChrome())
         .navigationBarTitleDisplayMode(.inline)

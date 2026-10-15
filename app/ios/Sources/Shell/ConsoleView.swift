@@ -9,22 +9,28 @@ import UIKit
 /// heights (peek, half, full) to drag between or tap.
 struct ConsolePanel: View {
     static let peek: CGFloat = 58
+    /// How far the collapsed header goes into the bottom safe area.
+    static let lowered: CGFloat = 16
     let maxHeight: CGFloat
+    /// The safe area below the panel's content (its background fills it).
+    var bottomInset: CGFloat = 0
     @Environment(AppModel.self) private var model
     @State private var drag: CGFloat?
 
     var body: some View {
         let height = drag ?? height(for: model.consoleDetent)
         let collapsed = drag == nil && model.consoleDetent == .peek
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous)
         VStack(spacing: 0) {
             header(collapsed: collapsed)
-            if !collapsed { ConsoleView(showHeader: false) }
+            // Open, the >>> bar's background goes down to the screen's edge.
+            if !collapsed { ConsoleView(showHeader: false, bottomInset: bottomInset) }
         }
-        .frame(height: height, alignment: .top)
+        .frame(height: height + (collapsed ? 0 : bottomInset), alignment: .top)
         .frame(maxWidth: .infinity)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: -2)
+        .clipShape(shape)
+        .padding(.bottom, collapsed ? bottomInset : 0)
+        .background(shape.fill(Color(.secondarySystemBackground)).shadow(color: .black.opacity(0.12), radius: 12, y: -2))
         .animation(drag == nil ? .smooth(duration: 0.3) : nil, value: height)
     }
 
@@ -128,6 +134,8 @@ struct PauseButton: View {
 /// The transcript and the >>> prompt.
 struct ConsoleView: View {
     let showHeader: Bool
+    /// Room below the >>> bar (the bottom safe area), in its background.
+    var bottomInset: CGFloat = 0
     @Environment(AppModel.self) private var model
     @State private var atBottom = true
 
@@ -231,6 +239,7 @@ struct ConsoleView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .padding(.bottom, bottomInset)
         .background(.bar)
     }
 
