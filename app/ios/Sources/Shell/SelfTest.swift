@@ -15,6 +15,7 @@ enum SelfTest {
                 case "test.type": reply(await type(value["text"] as? String ?? ""), nil)
                 case "test.turtle": reply(turtle(model, value), nil)
                 case "test.keybar": reply(keyBar(value["keys"] as? [String] ?? []), nil)
+                case "test.hideKeyboard": reply(hideKeyboard(), nil)
                 case "test.link":
                     // Link a folder outside Documents without the picker.
                     let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -78,6 +79,8 @@ enum SelfTest {
             return str(0) == "input" ? model.programInput : model.consoleInput
         case "submitField":
             if str(0) == "input" { model.submitProgramInput() } else { model.submitConsole() }
+        case "clearField":
+            if str(0) == "input" { model.programInput = "" } else { model.consoleInput = "" }
         case "blurFields":
             model.focusedField = nil
         default:
@@ -137,10 +140,23 @@ enum SelfTest {
         return notes.joined(separator: ", ")
     }
 
-    /// Tap keys on the key bar of whatever has focus, by their labels.
+    /// What the software keyboard's own hide key does (iPad): UIKeyboardImpl's
+    /// hideKeyboard, which keeps the field focused (dismissKeyboard resigns it).
+    private static func hideKeyboard() -> Any {
+        guard let cls = NSClassFromString("UIKeyboardImpl") as? NSObject.Type,
+              let impl = cls.perform(NSSelectorFromString("activeInstance"))?.takeUnretainedValue() as? NSObject else { return "no UIKeyboardImpl" }
+        let sel = NSSelectorFromString("hideKeyboard")
+        guard impl.responds(to: sel) else { return "no hideKeyboard" }
+        impl.perform(sel)
+        return true
+    }
+
+    /// Tap keys on the key bar of whatever has focus, by their labels (also
+    /// when it is collapsed for a hardware keyboard); reports whether it shows.
     private static func keyBar(_ labels: [String]) -> Any {
         guard let responder = UIResponder.current else { return "no first responder" }
         guard let bar = responder.inputAccessoryView else { return "no key bar on \(Swift.type(of: responder))" }
+        let shown = bar.intrinsicContentSize.height > 0 && !bar.subviews.allSatisfy(\.isHidden)
         func find(_ view: UIView, _ label: String) -> UIButton? {
             if let button = view as? UIButton, button.accessibilityLabel == label { return button }
             for sub in view.subviews { if let hit = find(sub, label) { return hit } }
@@ -151,7 +167,7 @@ enum SelfTest {
             key.sendActions(for: .touchDown)
             key.sendActions(for: .touchUpInside)
         }
-        return true
+        return ["shown": shown]
     }
 
     private static func turtle(_ model: AppModel, _ value: [String: Any]) -> Any? {

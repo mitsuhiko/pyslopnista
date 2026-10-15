@@ -21,7 +21,8 @@ apps are native views (D30).
   indent, light/dark themes. Saves automatically. A row of extra keys sits above
   the keyboard (indent/dedent, brackets and quotes with the cursor placed
   inside, operators, undo/redo, comment), also for the console's `>>>` and
-  `input()` fields. With a hardware keyboard it sits above the home indicator.
+  `input()` fields. It shows only with the software keyboard (not with a
+  hardware keyboard, or after hiding the keyboard on iPad).
 - **Code intelligence** (ruff + ty as WebAssembly in their own worker):
   wavy underlines for real mistakes (ruff's default rules + bugbear, ty's type
   checks), a problem bar above the keyboard that shows the problem at the
@@ -172,9 +173,10 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 
 ## Status (2026-10-15)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 41
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 42
 checks in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15; 40 in
-the iPhone 17 on 2026-10-14). The new one taps the key bar in the `>>>` field. The
+the iPhone 17 on 2026-10-14). The new ones tap the key bar in the `>>>` field
+and check that it shows only with the software keyboard. The
 self-test runs in the engine page and drives the native views through hooks
 (`Shell/SelfTest.swift`): ui apps through the renderer's tree, typing through
 UIKit into the native console fields, turtle checks on the native drawing.

@@ -160,6 +160,9 @@ struct ConsoleView: View {
                     }
                     .padding(.bottom, 8)
                 }
+                // When the keyboard (and its key bar) shrinks the console, keep
+                // the end of the output in view instead of under them.
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .onScrollGeometryChange(for: Bool.self) { geo in
                     geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 30
                 } action: { _, bottom in
@@ -624,7 +627,7 @@ final class HistoryTextField: UITextField {
 
     /// The code keys above the keyboard, like the editor's.
     override var inputAccessoryView: UIView? {
-        get { KeyboardAccessory.shared.fieldBar }
+        get { KeyboardAccessory.shared.fieldView }
         set {}
     }
 

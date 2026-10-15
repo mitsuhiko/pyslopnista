@@ -1,3 +1,4 @@
+import GameController
 import UIKit
 import WebKit
 
@@ -63,7 +64,24 @@ final class KeyboardAccessory: NSObject, UIInputViewAudioFeedback {
     var enableInputClicksWhenVisible: Bool { true }
 
     /// What WKContentView's inputAccessoryView returns.
-    var currentView: UIView? { mode == .plain ? nil : codeBar }
+    var currentView: UIView? {
+        guard mode != .plain else { return nil }
+        (codeBar as? AccessoryBar)?.prepare()
+        return codeBar
+    }
+
+    /// What the native code fields' inputAccessoryView returns.
+    var fieldView: UIView {
+        (fieldBar as? AccessoryBar)?.prepare()
+        return fieldBar
+    }
+
+    /// Whether the last keyboard seen was the software keyboard; before any,
+    /// whether there is no hardware keyboard. A bar starts out the way the
+    /// keyboard will most likely be, so it doesn't appear and then collapse
+    /// (or the other way around) while the keyboard comes up.
+    fileprivate static var softwareKeyboard: Bool?
+    fileprivate static var expectSoftwareKeyboard: Bool { softwareKeyboard ?? (GCKeyboard.coalesced == nil) }
 
     func setMode(_ mode: Mode) {
         guard mode != self.mode else { return }
@@ -436,53 +454,84 @@ extension KeyboardAccessory {
     }
 }
 
-/// The bar's height: the keys, plus the screen's bottom safe area when the bar
-/// sits alone at the bottom of the screen (hardware keyboard, undocked
-/// keyboard). The input accessory's own safe area is always zero there, so it
-/// would end up under the home indicator and the rounded corners.
+/// The bar only shows with the software keyboard. With a hardware keyboard,
+/// or when the software keyboard was hidden while the field kept focus
+/// (iPad's hide key, the minimized keyboard), UIKit would leave it alone at
+/// the bottom of the screen; there it collapses to nothing, and comes back
+/// with the keyboard.
 private final class AccessoryBar: UIInputView {
-    private var bottomInset: CGFloat = 0
+    private var height = KeyboardAccessory.barHeight
+    /// The software keyboard (without the bar) is taller than this, even an
+    /// iPhone's in landscape; the minimized keyboard's strip is not.
+    private static let softwareKeyboardHeight: CGFloat = 120
 
     override init(frame: CGRect, inputViewStyle: UIInputView.Style) {
         super.init(frame: frame, inputViewStyle: inputViewStyle)
-        // The keyboard moves the bar without laying it out again.
-        for name in [UIResponder.keyboardDidShowNotification, UIResponder.keyboardDidHideNotification,
+        // "Will": decide before the keyboard animates, so the bar never flashes.
+        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillShowNotification,
                      UIResponder.keyboardDidChangeFrameNotification] {
-            NotificationCenter.default.addObserver(self, selector: #selector(update), name: name, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(keyboardFrame(_:)), name: name, object: nil)
         }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var intrinsicContentSize: CGSize {
-        CGSize(width: UIView.noIntrinsicMetric, height: KeyboardAccessory.barHeight + bottomInset)
+        CGSize(width: UIView.noIntrinsicMetric, height: height)
+    }
+
+    @objc private func keyboardFrame(_ note: Notification) {
+        guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let screen = (note.object as? UIScreen) ?? window?.screen
+        let bottom = screen?.bounds.maxY ?? end.maxY
+        // A keyboard going away slides below the screen: that says nothing
+        // about the next one. With no software keyboard the frame is empty.
+        if !end.isEmpty && end.minY >= bottom { return }
+        let visible = end.isEmpty ? 0 : max(0, bottom - end.minY)
+        // The frame includes the bar as it is now.
+        let software = visible - height > Self.softwareKeyboardHeight
+        KeyboardAccessory.softwareKeyboard = software
+        setHeight(software ? KeyboardAccessory.barHeight : 0)
+    }
+
+    /// Before the bar is handed to UIKit: start out as the keyboard will be.
+    func prepare() {
+        guard window == nil else { return }
+        setHeight(KeyboardAccessory.expectSoftwareKeyboard ? KeyboardAccessory.barHeight : 0)
+    }
+
+    private func setHeight(_ next: CGFloat) {
+        for view in subviews { view.isHidden = next == 0 }
+        if window == nil { frame.size.height = next }  // what the keyboard host measures
+        if next != height {
+            height = next
+            invalidateIntrinsicContentSize()
+        }
+        applyHeight()
+    }
+
+    /// The keyboard host measures the bar when it installs it, into a height
+    /// constraint of its own, and not again while the bar stays installed (it
+    /// may also add that constraint after our last change). Without this a
+    /// collapsed bar would still push the app's content up.
+    private func applyHeight() {
+        for constraint in constraints where constraint.identifier == "_UIKBAutolayoutHeightConstraint" && constraint.constant != height {
+            constraint.constant = height
+        }
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        update()
+        applyHeight()
+    }
+
+    override func updateConstraints() {
+        applyHeight()
+        super.updateConstraints()
     }
 
     override func layoutSubviews() {
+        applyHeight()
         super.layoutSubviews()
-        update()
-    }
-
-    @objc private func update() {
-        guard let window, bounds.height > 0 else { return }
-        let frame = convert(bounds, to: window)
-        // Off screen (before the keyboard animates it in) says nothing.
-        guard frame.minY < window.bounds.maxY else { return }
-        let atBottom = frame.maxY >= window.bounds.maxY - 1
-        let screenInset = window.windowScene?.windows.map(\.safeAreaInsets.bottom).max() ?? 0
-        let inset = atBottom ? max(safeAreaInsets.bottom, screenInset) : 0
-        guard inset != bottomInset else { return }
-        bottomInset = inset
-        invalidateIntrinsicContentSize()
-        // The keyboard host measured the bar once, into a height constraint of
-        // its own; it does not measure again while the bar stays installed.
-        for constraint in constraints where constraint.identifier == "_UIKBAutolayoutHeightConstraint" {
-            constraint.constant = KeyboardAccessory.barHeight + inset
-        }
     }
 }

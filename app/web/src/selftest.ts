@@ -68,6 +68,7 @@ const app = {
   fieldValue: (field: "console" | "input") => appCall<string>("fieldValue", field),
   submitField: (field: "console" | "input") => appCall("submitField", field),
   blurFields: () => appCall("blurFields"),
+  clearField: (field: "console" | "input") => appCall("clearField", field),
 };
 
 const consoleText = () => session.getSnapshot().lines.filter((l) => l.kind !== "image" && l.kind !== "turtle").map((l) => l.text).join("");
@@ -701,21 +702,55 @@ export async function selftest() {
     await until(() => consoleText().includes("42"));
   });
 
+  type KeyBar = { shown: boolean } | string;
+  const keyBar = (keys: string[]) => call<KeyBar>("test.keybar", { keys });
+
   await step("keybar_console", async () => {
     // The code keys above the keyboard work in the native >>> field too.
     await app.showPane("console");
     await app.focusField("console");
     await sleep(600);
-    await typeNative("len");
-    const tapped = await call<unknown>("test.keybar", { keys: ["("] });
-    if (tapped !== true) throw new Error(String(tapped));
-    await typeNative("[1, 2");
-    await call("test.keybar", { keys: ["]"] });
-    await sleep(200);
-    const value = await app.fieldValue("console");
-    if (value !== "len([1, 2])") throw new Error(`field has ${JSON.stringify(value)}`);
-    await app.submitField("console");
-    await until(() => consoleText().includes("len([1, 2])2"));
+    try {
+      await typeNative("len");
+      const tapped = await keyBar(["("]);
+      if (typeof tapped === "string") throw new Error(tapped);
+      await typeNative("[1, 2");
+      await keyBar(["]"]);
+      await sleep(200);
+      const value = await app.fieldValue("console");
+      if (value !== "len([1, 2])") throw new Error(`field has ${JSON.stringify(value)}`);
+      await app.submitField("console");
+      await until(() => consoleText().includes("len([1, 2])2"));
+      return { shown: tapped.shown };
+    } finally {
+      await app.clearField("console");
+    }
+  });
+
+  await step("keybar_only_with_software_keyboard", async () => {
+    // The bar shows only with the software keyboard: not with a hardware
+    // keyboard, and not after the software keyboard's own hide key (iPad),
+    // which keeps the field focused.
+    await app.showPane("console");
+    await app.focusField("console");
+    await sleep(1000);
+    const before = await keyBar([]);
+    if (typeof before === "string") throw new Error(before);
+    if (!before.shown) {
+      await app.blurFields();
+      return { hardwareKeyboard: true };
+    }
+    if (!(await app.wide())) {
+      await app.blurFields();
+      return { shown: true, skipped: "no hide key on iPhone" };
+    }
+    const hidden = await call<unknown>("test.hideKeyboard", {});
+    if (hidden !== true) throw new Error(String(hidden));
+    await sleep(1200);
+    const after = await keyBar([]);
+    await app.blurFields();
+    if (typeof after === "string" || after.shown) throw new Error(`after hiding: ${JSON.stringify(after)}`);
+    return { collapsedAfterHide: true };
   });
 
   await step("typing_plain_traits", async () => {
