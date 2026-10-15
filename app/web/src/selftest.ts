@@ -874,7 +874,7 @@ export async function selftest() {
       tool("read", { path: "../secret.txt" }, "outside"),
       fauxAssistantMessage([fauxText("Done: greet() now uses an f-string.")]),
     ]);
-    await agent.submit("Make greet friendlier", await appCall("agentEditorContext"));
+    await agent.submit("Make greet friendlier", await appCall("agentIDEState"));
     const state = await until(async () => {
       const s = await agent.state();
       return !s.busy && s.items.at(-1)?.text.startsWith("Done") ? s : null;
@@ -892,7 +892,7 @@ export async function selftest() {
     expect(tools.check.output?.includes("F401"), "check");
     expect(tools.format.output?.includes("1 file reformatted") && tools.format.diff, "format");
     expect(tools.edit.diff, "edit diff");
-    expect(firstPrompt.includes("<editor>") && firstPrompt.includes("greet.py open") && firstPrompt.endsWith("Make greet friendlier"), `editor context in the prompt (${firstPrompt.slice(0, 200)})`);
+    expect(firstPrompt.includes("<ide>") && firstPrompt.includes("Active file: greet.py") && firstPrompt.endsWith("Make greet friendlier"), `IDE context in the prompt (${firstPrompt.slice(0, 300)})`);
     const user = state.items.find((i) => i.kind === "user");
     expect(user?.text === "Make greet friendlier" && user.path === "greet.py", "the transcript shows the message and its file");
     const greet = await fs.readText(`${dir}/greet.py`);
@@ -910,6 +910,133 @@ export async function selftest() {
     }, 5000);
     await appCall("closeSheet");
     return { items: state.items.length, tools: native.tools.length, model: native.model };
+  });
+
+  // The IDE tools (D36) in the same conversation: the context is not repeated
+  // when it did not change, ide_* act on the editor, and the user moving to
+  // another file mid-turn reaches the model at the next step.
+  await step("agent-ide", async () => {
+    const { agent } = await import("./agent/service");
+    const { fauxAssistantMessage, fauxText, fauxToolCall } = await import("@earendil-works/pi-ai/providers/faux");
+    const dir = "Tests/agent";
+    const faux = agent.useFaux();
+    await fs.writeText(`${dir}/messy.py`, "import os\nx=1\n");
+    await app.openFile(`${dir}/greet.py`);
+    await appCall("openAgent", dir);
+    await until(async () => (await appCall("agentState")).sheet);
+    const tool = (name: string, args: Parameters<typeof fauxToolCall>[1], id: string) =>
+      fauxAssistantMessage([fauxToolCall(name, args, { id })], { stopReason: "toolUse" });
+    const lastUser = (messages: any[]) => {
+      const m = [...messages].reverse().find((x) => x.role === "user");
+      return typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? "");
+    };
+    let prompt = "";
+    let afterMove = "";
+    let detent = "";
+    faux.setResponses([
+      (context) => {
+        prompt = lastUser(context.messages);
+        return tool("ide_state", {}, "state");
+      },
+      tool("ide_open", { path: "messy.py", line: 1, end_line: 2 }, "open"),
+      async () => {
+        detent = await appCall("agentDetent");
+        return tool("ide_lint", {}, "lint");
+      },
+      tool("ide_format", {}, "format"),
+      async () => {
+        // The user goes back to greet.py while the agent works.
+        await app.openFile(`${dir}/greet.py`);
+        await sleep(1500);
+        return tool("ls", {}, "ls");
+      },
+      (context) => {
+        afterMove = lastUser(context.messages);
+        return tool("ide_close", { path: "messy.py" }, "close");
+      },
+      tool("ide_open", { path: "nope.py" }, "missing"),
+      fauxAssistantMessage([fauxText("Done in the IDE.")]),
+    ]);
+    await agent.submit("Tidy messy.py", await appCall("agentIDEState"));
+    const state = await until(async () => {
+      const s = await agent.state();
+      return !s.busy && s.items.at(-1)?.text.startsWith("Done in the IDE") ? s : null;
+    }, 60000);
+    const tools = Object.fromEntries(state.items.filter((i) => i.kind === "tool").map((i) => [i.id, i]));
+    const expect = (cond: unknown, what: string) => {
+      if (!cond) throw new Error(`${what}: ${JSON.stringify(state.items.slice(-12).map((i) => [i.id, i.kind, i.status, (i.output ?? i.text).slice(0, 160)]))}`);
+    };
+    expect(!prompt.includes("<ide>") && prompt === "Tidy messy.py", `no IDE context when nothing changed (${prompt.slice(0, 200)})`);
+    expect(tools.state.ide && tools.state.output?.includes("Active file: greet.py"), "ide_state");
+    expect(tools.open.output?.startsWith("Opened messy.py at lines 1-2"), "ide_open");
+    expect((await app.wide()) || detent === "medium", `the sheet makes room on iPhone (${detent})`);
+    expect(tools.lint.output?.includes("F401"), "ide_lint");
+    expect(tools.format.output?.startsWith("Formatted messy.py in the editor"), "ide_format");
+    expect(afterMove.includes("<ide>") && afterMove.includes("Active file: greet.py"), `the move reaches the model (${afterMove.slice(0, 300)})`);
+    expect(state.items.some((i) => i.kind === "context" && i.path === "greet.py"), "the move shows in the transcript");
+    expect(tools.close.status === "done" && !(await app.panes()).some((p) => p.tabs.includes(`${dir}/messy.py`)), "ide_close");
+    expect(tools.missing.status === "error" && tools.missing.output?.includes("No such file"), "ide_open of a missing file");
+    const messy = await fs.readText(`${dir}/messy.py`);
+    if (messy !== "import os\n\nx = 1\n") throw new Error(`messy.py: ${JSON.stringify(messy)}`);
+    return { tools: Object.keys(tools).length };
+  });
+
+  // Several conversations per project (D36): a new one, one that keeps running
+  // in the background (its IDE tools do nothing there), unread, archive, rename,
+  // and a renamed folder.
+  await step("agent-conversations", async () => {
+    const { agent } = await import("./agent/service");
+    const { fauxAssistantMessage, fauxText, fauxToolCall } = await import("@earendil-works/pi-ai/providers/faux");
+    const dir = "Tests/agent";
+    const faux = agent.useFaux();
+    const tool = (name: string, args: Parameters<typeof fauxToolCall>[1], id: string) =>
+      fauxAssistantMessage([fauxToolCall(name, args, { id })], { stopReason: "toolUse" });
+    const first = (await agent.state()).conversationId!;
+    await agent.newConversation(dir);
+    await agent.setModel("selftest", "faux-1");
+    const second = (await agent.state()).conversationId!;
+    if (second === first) throw new Error("no new conversation");
+    faux.setResponses([
+      tool("run_python", { code: "import time\ntime.sleep(2)\nprint('slept')" }, "sleep"),
+      tool("ide_open", { path: "greet.py" }, "open"),
+      fauxAssistantMessage([fauxText("Background done.")]),
+    ]);
+    await agent.submit("Wait, then open greet.py", null);
+    await until(async () => (await agent.state()).busy);
+    await agent.switchTo(first);
+    const back = await until(async () => {
+      const s = await agent.state();
+      const c = s.conversations.find((x) => x.id === second);
+      return c && !c.running && c.unread ? s : null;
+    }, 60000);
+    if (back.conversationId !== first) throw new Error("switched away");
+    await agent.switchTo(second);
+    const s2 = await agent.state();
+    const open = s2.items.find((i) => i.id === "open");
+    if (open?.status !== "error" || !open.output?.includes("not looking at this conversation")) throw new Error(`background ide_open: ${JSON.stringify(open)}`);
+    if (s2.conversations.find((x) => x.id === second)?.unread) throw new Error("still unread on screen");
+    const titles = s2.conversations.map((c) => c.title);
+    if (!titles.includes("Make greet friendlier") || !titles.includes("Wait, then open greet.py")) throw new Error(`titles: ${JSON.stringify(titles)}`);
+    // Archiving the one on screen shows the latest other one; it can come back.
+    await agent.archive(second, true);
+    let s = await agent.state();
+    if (s.conversationId !== first || !s.conversations.find((x) => x.id === second)?.archived) throw new Error(`archive: ${JSON.stringify(s.conversations)}`);
+    await agent.archive(second, false);
+    await agent.rename(first, "Greeting work");
+    s = await agent.state();
+    if (s.conversations.find((x) => x.id === first)?.title !== "Greeting work") throw new Error("rename");
+    // A renamed folder: the conversations follow.
+    await agent.renamed(dir, `${dir}-moved`);
+    s = await agent.state();
+    const moved = s.project === `${dir}-moved` && s.root === `${dir}-moved` && s.conversations.every((c) => c.project === `${dir}-moved`);
+    await agent.renamed(`${dir}-moved`, dir);
+    if (!moved) throw new Error(`renamed: ${JSON.stringify({ project: s.project, root: s.root })}`);
+    const native = await until(async () => {
+      const n = await appCall("agentState");
+      return n.conversations >= 2 ? n : null;
+    }, 5000);
+    await appCall("closeSheet");
+    return { conversations: s.conversations.length, native: native.conversations };
   });
 
   await fs.remove("Tests").catch(() => {});

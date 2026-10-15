@@ -379,15 +379,17 @@ private struct EditorChrome: ViewModifier {
     }
 }
 
-/// Opens the coding agent for the current folder; shows when it is working.
+/// Opens the coding agent for the current project; shows when one of its conversations is working.
 struct AgentButton: View {
     var project: String?
     @Environment(AppModel.self) private var model
 
     var body: some View {
         Button { model.openAgent(project: project) } label: {
-            Image(systemName: model.agent.state.busy ? "sparkles.rectangle.stack.fill" : "sparkles")
-                .symbolEffect(.pulse, isActive: model.agent.state.busy)
+            let state = model.agent.state
+            let working = state.busy || (state.conversations?.contains(where: \.running) ?? false)
+            Image(systemName: working ? "sparkles.rectangle.stack.fill" : "sparkles")
+                .symbolEffect(.pulse, isActive: working)
         }
         .accessibilityLabel("Agent")
     }

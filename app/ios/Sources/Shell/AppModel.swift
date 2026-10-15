@@ -103,6 +103,11 @@ final class AppModel {
     var agentModels: [AgentModelOption] = []
     var agentLoginError: String?
     var agentAccountsShown = false
+    var agentListShown = false
+    /// The agent sheet's height on iPhone: it makes room when the agent opens a file.
+    var agentDetent: PresentationDetent = .large
+    /// When the user last typed in each pane (the agent's ide_open does not switch away then).
+    @ObservationIgnored var lastTyped: [Int: Date] = [:]
 
     // workspace
     var panes: [Pane] = [Pane()]
@@ -204,7 +209,7 @@ final class AppModel {
         }
     }
 
-    private func saveTabs() {
+    func saveTabs() {
         let clean = panes.map { Pane(tabs: $0.tabs.filter { !isExternal($0) }, active: $0.active.flatMap { isExternal($0) ? nil : $0 }) }
         UserDefaults.standard.set(try? JSONEncoder().encode(clean), forKey: "tabs")
         UserDefaults.standard.set(focusedPane, forKey: "focusedPane")
@@ -315,6 +320,14 @@ final class AppModel {
         case (.engine, "agent.state"):
             if let json = value["json"] as? String { agent.apply(json) }
             reply(nil, nil)
+        case (.engine, "ide"):
+            Task {
+                do {
+                    reply(try await ideOperation(value) ?? NSNull(), nil)
+                } catch {
+                    reply(nil, error.localizedDescription)
+                }
+            }
         case (.engine, "agent.flushEditors"):
             // The agent is about to read files: what was typed must be on disk.
             Task {
@@ -427,6 +440,7 @@ final class AppModel {
             }
         case "changes":
             guard let path = value["path"] as? String, let changes = value["changes"] as? String else { return }
+            lastTyped[pane] = Date()
             for other in editors.indices where other != pane && panes.indices.contains(other) && panes[other].tabs.contains(path) {
                 Task { _ = await editorCall(other, "applyRemote", [path, changes]) }
             }
@@ -675,6 +689,8 @@ final class AppModel {
         panes = panes.map { Pane(tabs: $0.tabs.map(moved), active: $0.active.map(moved)) }
         fileListVersion += 1
         saveTabs()
+        // The agent's conversations of a renamed folder work in the new one (D36).
+        Task { _ = await agentCall("renamed", [from, to]) }
     }
 
     func delete(_ path: String) async {
@@ -1039,7 +1055,7 @@ final class AppModel {
         toggleBreakpoint(c.path, line: c.line, text: c.text)
     }
 
-    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts]][&ask=<prompt>]
+    // MARK: launch hooks for screenshots: open=<path>[&bp=<lines>][&split=<path>][&run][&pane=files|editor|console][&focus[=console]][&agent[=accounts|conversations]][&ask=<prompt>]
 
     private func launchHooks(_ fragment: String) async {
         guard !fragment.hasPrefix("#selftest") else { return }
@@ -1071,10 +1087,11 @@ final class AppModel {
         if let agentHook = hook["agent"] {
             openAgent()
             if agentHook == "accounts" { agentAccountsShown = true }
+            if agentHook == "conversations" { agentListShown = true }
             if let prompt = hook["ask"] {
                 // A fresh conversation in the folder, then the prompt as if typed.
-                for _ in 0..<50 where agent.state.project == nil { try? await Task.sleep(for: .milliseconds(200)) }
-                if let project = agent.state.project { _ = await agentCall("newConversation", [project, NSNull()]) }
+                for _ in 0..<50 where agent.state.root == nil { try? await Task.sleep(for: .milliseconds(200)) }
+                if let project = agent.state.root { _ = await agentCall("newConversation", [project, NSNull()]) }
                 agentSend(prompt)
             }
         }

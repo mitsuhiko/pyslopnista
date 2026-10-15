@@ -23,6 +23,7 @@ const api: Api = {
   setPaused: (paused: boolean, errorStyle: boolean) => editor.setPaused(paused, errorStyle),
   setDebugLine: (line: number | null, fraction: number) => editor.setDebugLine(line, fraction),
   reveal: (line: number, column?: number, fraction?: number) => editor.reveal(line, column, fraction),
+  revealRange: (from: number, to: number, fraction?: number) => editor.revealRange(from, to, fraction),
   insert: (text: string, offset?: number) => editor.insert(text, offset),
   command: (name) => editor.command(name),
   key: (action: string) => editor.key(action),

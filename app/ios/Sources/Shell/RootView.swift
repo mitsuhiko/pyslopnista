@@ -39,7 +39,10 @@ struct RootView: View {
                 case .settings: SettingsView()
                 case .problems: ProblemsView()
                 case .jump(let initial): JumpView(initial: initial)
-                case .agent: AgentView()
+                case .agent:
+                    AgentView()
+                        .presentationDetents([.medium, .large], selection: $model.agentDetent)
+                        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 }
             }
             .environment(model)
@@ -66,6 +69,8 @@ struct RootView: View {
                 model.route.removeAll { $0 == .editor }
             }
         }
+        .onChange(of: model.panes) { _, _ in model.agentIDEChanged() }
+        .onChange(of: model.focusedPane) { _, _ in model.agentIDEChanged() }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { model.appWillResignActive() }
         }

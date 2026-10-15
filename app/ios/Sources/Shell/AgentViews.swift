@@ -1,12 +1,14 @@
 import SwiftUI
 
-// The coding agent (D34): the conversation of the current project, a
-// composer, the model menu, accounts and the sign-in sheet.
+// The coding agent (D34): a conversation of the current project, the
+// project's conversations (D36), a composer, the model menu, accounts and the
+// sign-in sheet.
 
 struct AgentView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
+    @State private var renaming: AgentConversation?
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -41,20 +43,45 @@ struct AgentView: View {
                 .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .safeAreaInset(edge: .bottom) { composer(state) }
-            .navigationTitle(state.project.map(displayName) ?? "Agent")
+            .navigationTitle(state.current?.displayTitle ?? "Agent")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) { menu(state) }
+                ToolbarItem(placement: .principal) { titleButton(state) }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { model.agentNewConversation() } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel("New conversation")
+                    menu(state)
+                }
             }
             .navigationDestination(isPresented: Binding(get: { model.agentAccountsShown }, set: { model.agentAccountsShown = $0 })) {
                 AccountsView()
             }
+            .navigationDestination(isPresented: Binding(get: { model.agentListShown }, set: { model.agentListShown = $0 })) { ConversationsView() }
+            .renameConversation($renaming)
         }
         .task { await model.loadAgentModels() }
+        .onAppear { model.agentSetVisible(true) }
+        .onDisappear { model.agentSetVisible(false) }
         .sheet(isPresented: Binding(get: { model.agentHost.loginProvider != nil }, set: { if !$0 { model.agentCancelLogin() } })) {
             LoginFlowView().environment(model)
         }
+    }
+
+    /// The conversation's title and project; opens the project's conversations.
+    private func titleButton(_ state: AgentState) -> some View {
+        Button { model.agentListShown = true } label: {
+            VStack(spacing: 0) {
+                HStack(spacing: 4) {
+                    Text(state.current?.displayTitle ?? "Agent").font(.headline).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    if state.othersActive { Circle().fill(.tint).frame(width: 7, height: 7) }
+                }
+                Text(state.root.map(displayName) ?? "").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .tint(.primary)
+        .accessibilityLabel("Conversations")
     }
 
     private func scrollKey(_ state: AgentState) -> String {
@@ -97,8 +124,11 @@ struct AgentView: View {
                     Label(state.model?.name ?? "Model", systemImage: "cpu")
                 }
             }
-            Button { model.agentNewConversation() } label: { Label("New Conversation", systemImage: "square.and.pencil") }
-                .disabled(state.busy)
+            if let current = state.current, current.title != nil {
+                Button { renaming = current } label: { Label("Rename…", systemImage: "pencil") }
+                Button { model.agentArchive(current.id, true) } label: { Label("Archive", systemImage: "archivebox") }
+            }
+            Button { model.agentListShown = true } label: { Label("Conversations", systemImage: "list.bullet") }
             Button { model.agentAccountsShown = true } label: { Label("Accounts…", systemImage: "person.crop.circle") }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -185,7 +215,13 @@ private struct AgentItemView: View {
                 }
             }
         case "tool":
-            toolView
+            if item.ide == true { ideToolView } else { toolView }
+        case "context":
+            Label(item.path.map { p in item.line.map { "Now in \(basename(p)) · line \($0)" } ?? "Now in \(basename(p))" } ?? "No file open",
+                  systemImage: "doc.text")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
         case "error":
             Label(item.text, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.red)
         default:
@@ -235,6 +271,32 @@ private struct AgentItemView: View {
         .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    /// An IDE tool: one line with what it did to the editor (all of it when tapped).
+    private var ideToolView: some View {
+        let done = item.status == "done" || item.status == "error"
+        let failed = item.status == "error"
+        let message = item.text.isEmpty ? (item.output ?? "") : item.text
+        let first = message.split(separator: "\n").first.map(String.init) ?? ""
+        let text = done ? (expanded ? message : first) : "\(Self.title(item.tool ?? "")) \(item.summary ?? "")"
+        return Button { if message.contains("\n") { withAnimation(.snappy) { expanded.toggle() } } } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: Self.icon(item.tool ?? "")).frame(width: 18).foregroundStyle(failed ? .red : .secondary)
+                Text(text)
+                    .font(expanded ? .caption.monospaced() : .caption)
+                    .foregroundStyle(failed ? .red : .secondary)
+                    .lineLimit(expanded ? nil : 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !done { ProgressView().controlSize(.mini) }
+                else if message.contains("\n") {
+                    Image(systemName: "chevron.\(expanded ? "up" : "down")").font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+    }
+
     @ViewBuilder
     private var statusIcon: some View {
         switch item.status {
@@ -255,6 +317,11 @@ private struct AgentItemView: View {
         case "run_python": "play.fill"
         case "check": "checkmark.seal"
         case "format": "wand.and.stars"
+        case "ide_state": "rectangle.split.2x1"
+        case "ide_open": "arrow.up.forward.square"
+        case "ide_close": "xmark.square"
+        case "ide_lint": "checkmark.seal"
+        case "ide_format": "wand.and.stars"
         default: "wrench.and.screwdriver"
         }
     }
@@ -270,12 +337,118 @@ private struct AgentItemView: View {
         case "run_python": "Run"
         case "check": "Check"
         case "format": "Format"
+        case "ide_state": "Looking at the editor"
+        case "ide_open": "Opening"
+        case "ide_close": "Closing"
+        case "ide_lint": "Checking in the editor:"
+        case "ide_format": "Formatting in the editor:"
         default: tool
         }
     }
 
     static func markdown(_ text: String) -> AttributedString {
         (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+}
+
+/// The project's conversations (D36): newest first, archived ones apart.
+private struct ConversationsView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var renaming: AgentConversation?
+
+    var body: some View {
+        let state = model.agent.state
+        let all = state.conversations ?? []
+        let archived = all.filter(\.archived)
+        List {
+            Section {
+                ForEach(all.filter { !$0.archived }) { row($0, state) }
+            }
+            if !archived.isEmpty {
+                Section("Archived") {
+                    ForEach(archived) { row($0, state) }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(state.root.map(displayName) ?? "Conversations")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.agentNewConversation()
+                    dismiss()
+                } label: { Image(systemName: "square.and.pencil") }
+                    .accessibilityLabel("New conversation")
+            }
+        }
+        .renameConversation($renaming)
+    }
+
+    private func row(_ c: AgentConversation, _ state: AgentState) -> some View {
+        Button {
+            model.agentSwitch(c.id)
+            dismiss()
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(c.displayTitle).lineLimit(2)
+                    HStack(spacing: 4) {
+                        Text(Date(timeIntervalSince1970: c.updated / 1000), style: .relative)
+                        if c.project != state.root { Text("· \(displayName(c.project))") }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                if c.running { ProgressView().controlSize(.small) }
+                if c.unread { Circle().fill(.tint).frame(width: 9, height: 9).accessibilityLabel("Unread") }
+                if c.id == state.conversationId { Image(systemName: "checkmark").foregroundStyle(.tint) }
+            }
+            .contentShape(Rectangle())
+        }
+        .tint(.primary)
+        .swipeActions {
+            if c.archived {
+                Button { model.agentArchive(c.id, false) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }
+            } else {
+                Button { model.agentArchive(c.id, true) } label: { Label("Archive", systemImage: "archivebox") }.tint(.indigo)
+            }
+        }
+        .contextMenu {
+            Button { renaming = c } label: { Label("Rename…", systemImage: "pencil") }
+            if c.archived {
+                Button { model.agentArchive(c.id, false) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }
+            } else {
+                Button { model.agentArchive(c.id, true) } label: { Label("Archive", systemImage: "archivebox") }
+            }
+        }
+    }
+}
+
+private struct RenameConversation: ViewModifier {
+    @Binding var conversation: AgentConversation?
+    @Environment(AppModel.self) private var model
+    @State private var title = ""
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Rename Conversation", isPresented: Binding(get: { conversation != nil }, set: { if !$0 { conversation = nil } })) {
+                TextField("Title", text: $title)
+                Button("Cancel", role: .cancel) { conversation = nil }
+                Button("Rename") {
+                    if let c = conversation { model.agentRename(c.id, title) }
+                    conversation = nil
+                }
+            }
+            .onChange(of: conversation) { _, c in title = c?.title ?? "" }
+    }
+}
+
+private extension View {
+    func renameConversation(_ conversation: Binding<AgentConversation?>) -> some View {
+        modifier(RenameConversation(conversation: conversation))
     }
 }
 
@@ -414,11 +587,24 @@ struct LoginFlowView: View {
                         Text(code.code).font(.system(.largeTitle, design: .monospaced).weight(.semibold)).textSelection(.enabled)
                             .frame(maxWidth: .infinity)
                         Button { UIPasteboard.general.string = code.code } label: { Label("Copy Code", systemImage: "doc.on.doc") }
-                        if let url = URL(string: code.uri) {
-                            Link(destination: url) { Label("Open \(url.host() ?? code.uri)", systemImage: "safari") }
+                    } header: {
+                        Text("Your code")
+                    }
+                    Section {
+                        if let url = URL(string: code.uri), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                            Link(destination: url) {
+                                Label(Self.displayURL(code.uri), systemImage: "safari").font(.body.monospaced())
+                            }
+                            .contextMenu {
+                                Button { UIPasteboard.general.url = url } label: { Label("Copy Link", systemImage: "link") }
+                            }
+                        } else {
+                            Text(code.uri).font(.body.monospaced()).textSelection(.enabled)
                         }
+                    } header: {
+                        Text("Enter it at")
                     } footer: {
-                        Text("Enter this code on the page that opened (it is already on the clipboard). This sheet closes by itself when you are done.")
+                        Text("Open this address on any device, or tap it to open it here, and enter the code. This sheet closes by itself when you are done.")
                     }
                 }
                 if let prompt = host.prompt {
@@ -474,6 +660,16 @@ struct LoginFlowView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { model.agentCancelLogin() } } }
         }
         .interactiveDismissDisabled()
+    }
+
+    /// "https://radius.earendil.com/pair/" -> "radius.earendil.com/pair": short enough to type on another device.
+    static func displayURL(_ uri: String) -> String {
+        var text = uri
+        for scheme in ["https://", "http://"] where text.lowercased().hasPrefix(scheme) {
+            text.removeFirst(scheme.count)
+        }
+        while text.hasSuffix("/") { text.removeLast() }
+        return text
     }
 
     private func submit() {

@@ -2,12 +2,14 @@ import Foundation
 import Observation
 
 // The agent's conversation as the engine reports it (agent/service.ts): a
-// compact transcript of messages and tool calls, sent whole on each change.
+// compact transcript of messages and tool calls, and the project's list of
+// conversations (D36), sent whole on each change.
 
 struct AgentItem: Codable, Identifiable, Equatable {
     var id: String
-    let kind: String // user, assistant, tool, error, note
+    let kind: String // user, assistant, tool, error, note, context
     let text: String
+    var ide: Bool?
     var thinking: String?
     var streaming: Bool?
     var tool: String?
@@ -26,9 +28,25 @@ struct AgentModelRef: Codable, Equatable {
     let name: String
 }
 
+/// One of the project's conversations (the engine's index).
+struct AgentConversation: Codable, Identifiable, Equatable {
+    let id: Int
+    let title: String?
+    let project: String
+    let updated: Double
+    let archived: Bool
+    let running: Bool
+    let unread: Bool
+
+    var displayTitle: String { title ?? "New Conversation" }
+}
+
 struct AgentState: Codable, Equatable {
+    /// The folder the conversation on screen works on, and the project whose list is shown.
     var project: String?
+    var root: String?
     var conversationId: Int?
+    var conversations: [AgentConversation]?
     var items: [AgentItem]
     var busy: Bool
     var status: String?
@@ -36,7 +54,11 @@ struct AgentState: Codable, Equatable {
     var model: AgentModelRef?
     var signedIn: Bool
 
-    static let empty = AgentState(project: nil, conversationId: nil, items: [], busy: false, status: nil, error: nil, model: nil, signedIn: false)
+    static let empty = AgentState(project: nil, root: nil, conversationId: nil, conversations: nil, items: [], busy: false, status: nil, error: nil, model: nil, signedIn: false)
+
+    var current: AgentConversation? { conversations?.first { $0.id == conversationId } }
+    /// Another conversation of the project is working or has news.
+    var othersActive: Bool { conversations?.contains { $0.id != conversationId && ($0.running || $0.unread) } ?? false }
 }
 
 /// A provider and how to sign in to it (the engine's `accounts`).

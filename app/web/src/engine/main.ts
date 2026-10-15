@@ -30,7 +30,10 @@ breakpoints.onChange = (data) => void call("breakpoints.changed", { data }).catc
 // The coding agent (D34) loads on first use; the bundle is large and most
 // launches don't need it. It also starts a few seconds after launch to pick
 // up a turn an earlier page left running.
-const AGENT_METHODS = new Set(["open", "newConversation", "submit", "abort", "setModel", "accounts", "availableModels", "login", "cancelLogin", "logout", "state"]);
+const AGENT_METHODS = new Set([
+  "open", "newConversation", "switchTo", "rename", "archive", "importConversations", "renamed", "setVisible", "ideChanged",
+  "submit", "abort", "setModel", "accounts", "availableModels", "login", "cancelLogin", "logout", "state",
+]);
 const loadAgent = () => import("../agent/service").then((m) => m.agent);
 
 type Command = (args: any) => unknown;

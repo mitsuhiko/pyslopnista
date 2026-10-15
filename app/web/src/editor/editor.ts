@@ -421,6 +421,17 @@ export class PaneEditor {
     setTimeout(() => view.dispatch({ effects: flashEffect.of(null) }), 1400);
   }
 
+  /** Show a range of lines (the agent's ide_open): selected, scrolled to, the first one flashed. */
+  revealRange(fromLine: number, toLine: number, visibleFraction = 0.85) {
+    const view = this.view;
+    const doc = view.state.doc;
+    const from = doc.line(Math.max(1, Math.min(fromLine, doc.lines)));
+    const to = doc.line(Math.max(from.number, Math.min(toLine, doc.lines)));
+    view.dispatch({ selection: { anchor: from.from, head: to.to }, effects: flashEffect.of(from.from) });
+    requestAnimationFrame(() => this.revealPos(from.from, false, visibleFraction));
+    setTimeout(() => view.dispatch({ effects: flashEffect.of(null) }), 1400);
+  }
+
   insert(text: string, cursorOffset = text.length) {
     const view = this.view;
     if (view.state.readOnly) return;
@@ -505,7 +516,12 @@ export class PaneEditor {
     // What is selected, for the agent's context (capped: it goes into a prompt).
     const selection = sel.empty
       ? null
-      : { text: state.sliceDoc(sel.from, sel.to).slice(0, 4000), fromLine: line.number, toLine: state.doc.lineAt(sel.to).number };
+      : {
+          text: state.sliceDoc(sel.from, Math.min(sel.to, sel.from + 4000)),
+          fromLine: line.number,
+          toLine: state.doc.lineAt(sel.to).number,
+          truncated: sel.to - sel.from > 4000,
+        };
     return { path: this.path, text: state.doc.toString(), line: line.number, column: pos - line.from + 1, rect, selection };
   }
 

@@ -85,8 +85,12 @@ enum SelfTest {
             model.focusedField = nil
         case "openAgent":
             model.openAgent(project: str(0))
-        case "agentEditorContext":
-            return await model.agentEditorContext()
+        case "agentIDEState":
+            return await model.ideState()
+        case "agentDetent":
+            return model.agentDetent == .medium ? "medium" : "large"
+        case "showConversations":
+            model.agentListShown = true
         case "closeSheet":
             model.activeSheet = nil
         case "agentState":
@@ -94,7 +98,8 @@ enum SelfTest {
             let s = model.agent.state
             return ["sheet": model.activeSheet == .agent, "project": s.project ?? NSNull(), "busy": s.busy, "items": s.items.count,
                     "tools": s.items.filter { $0.kind == "tool" }.map { "\($0.tool ?? ""):\($0.status ?? "")" },
-                    "last": s.items.last?.text ?? "", "model": s.model?.id ?? NSNull(), "error": s.error ?? NSNull()] as [String: Any]
+                    "last": s.items.last?.text ?? "", "model": s.model?.id ?? NSNull(), "error": s.error ?? NSNull(),
+                    "conversations": s.conversations?.count ?? 0] as [String: Any]
         default:
             throw NSError(domain: "selftest", code: 1, userInfo: [NSLocalizedDescriptionKey: "unknown app method \(method)"])
         }

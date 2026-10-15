@@ -32,7 +32,7 @@ PEP 723 dependencies, visual debugger (D23), tabs and split view with
 traceback links and go to definition (D24), outline / go to line / find in
 folder / show info / settings / keyboard shortcuts, HTTP through the host (D25),
 and the coding agent (D34: pi-durable in the engine page, sign-in with pi-ai's
-flows, D33). Next: the agent on a device (Q22), the rest of D34's list (write
+flows, D33; conversations per project and IDE tools, D36). Next: the agent on a device (Q22), the rest of D34's list (write
 conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 

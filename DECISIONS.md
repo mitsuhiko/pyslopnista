@@ -721,7 +721,11 @@ covers API keys and OAuth alike:
   - `node:http` and `node:crypto` are shimmed. `node:http` runs on a native
     loopback listener (`LoopbackServer.swift`, 127.0.0.1 and ::1), so
     `startOAuthCallbackServer` and the ChatGPT flow's server run unmodified.
-  - Auth URLs and device-code links open in `ASWebAuthenticationSession`.
+  - Auth URLs open in `ASWebAuthenticationSession`. Device-code flows open
+    nothing: the sheet shows the code and the full address
+    (`radius.earendil.com/pair`), so the user can sign in on another device
+    or tap the address to open it in Safari (2026-10-15: changed from opening
+    the link right away).
   - pi-ai's prompts (method, key, pasted code) are a native sheet. The
     bridge call stays pending until the user answers.
 - **The proxy drops WebKit's own User-Agent.** Anthropic's token endpoint
@@ -881,6 +885,143 @@ Evidence:
 - The `linked_folder` check now also syncs back a new folder and a deletion.
 - All 44 checks pass in the iPhone 18 Pro simulator (2026-10-15).
 - Not yet tried on a device.
+
+## D36: The agent's conversations per project, and IDE tools
+
+2026-10-15 - Accepted (was P1; extends D34)
+
+**Projects.** A conversation works on a project. Before, the project was
+the open file's folder, so a file in a subfolder switched to another
+conversation. Now the project is:
+- the top-level folder in Documents;
+- a linked folder's root (D28);
+- Documents itself, for loose files.
+
+The same project is used whether the agent is opened from a file or from
+the file browser.
+
+**Conversations.** A project has several. A conversation is never kept per
+file, because the work spans files.
+- **Opening the agent** shows the conversation on screen if it belongs to
+  the project, else the project's most recent one, else a new one.
+- **New** starts another one. A new conversation without messages is
+  reused instead of making more empty ones.
+- **The list** (tap the title) shows the project's conversations, newest
+  first, each with a running spinner and an unread dot. Conversations can
+  be renamed and archived.
+- **Archived** conversations are kept, listed apart, and can be
+  unarchived. Nothing is deleted.
+- **Titles** are the first line of the first message.
+- **In the background:** a conversation keeps running when another one is
+  on screen (pi-durable runs them concurrently). The ✨ button pulses
+  while any of them works.
+- **Renaming or moving a folder in the app** moves its conversations'
+  project and their `cwd` with it.
+
+**Index.** pi-durable has no call that lists conversations, so the engine
+keeps its own index (`app/web/src/agent/conversations.ts`), a second
+SQLite database ("conversations") on the bridge from D32. Each row has:
+- `id`, `project`, `title`;
+- `created`, `updated`, `seen` (unread means updated after seen);
+- `archived`;
+- the IDE context the model last got.
+
+The old user-defaults map (project -> conversation) is imported once.
+Those conversations keep their folder as their project and show up under
+the project that contains it.
+
+**Two kinds of tools:**
+- **Project tools** (D34): `read`, `write`, `edit`, `ls`, `find`, `grep`,
+  `run_python`, `check`, `format`. They work on the files on disk; the user
+  sees nothing happen.
+- **IDE tools** (`app/web/src/agent/ide.ts`), all named `ide_*`, change what
+  is on the user's screen:
+  - `ide_state`: tabs per pane, the active file, cursor line, the
+    selection with its text (cut at 4000 characters, and marked when cut),
+    whether a program runs;
+  - `ide_open(path, line?, end_line?, pane?)`: open or switch to a file,
+    scroll to the line, and select and flash a range;
+  - `ide_close(path)`: close its tabs. What was typed is saved first, as
+    when the user closes a tab;
+  - `ide_lint(path?)`: ruff + ty on the editor's text, typed text
+    included. The problems show in the editor and come back in the result;
+  - `ide_format(path?)`: ruff format in the editor, undoable there.
+
+  `ide_lint` and `ide_format` work on files open in a tab (default: the
+  active one). For other files they point the model to `check`/`format`
+  or `ide_open`.
+
+**Keeping the model from confusing them:**
+- every IDE tool's description starts with the same sentence: it acts on
+  the editor, not on files on disk, and names the project tools for those;
+- results are short messages, never file contents (except the selection
+  in `ide_state`), so an IDE tool can't be used to read code;
+- the system prompt has a section on the two kinds: IDE tools are for
+  showing the user something, or for acting in the editor when asked;
+- the transcript shows an IDE call as one line with its message (the whole
+  result when tapped), not as a call with a diff. The tools are told apart
+  by the `ide_` prefix; there is no extra flag on the tool definitions.
+
+**Behaviour:**
+- **Only for the conversation on screen:** called from a background
+  conversation, an IDE tool changes nothing. It answers that the user is
+  not looking at this conversation.
+- **No confirmations:** nothing here loses data.
+- **Typing:** if the user typed in the focused editor in the last 3
+  seconds, `ide_open` doesn't switch that pane away. It opens the file in
+  the other pane (iPad) or adds a tab behind the current one (iPhone).
+- **iPhone:** the agent sheet has medium and large detents and lets the
+  editor behind it be used at medium. After `ide_open` it drops to medium,
+  so the file shows.
+
+**IDE context:** the open tabs, the active file, the cursor line, the
+selection, a running program and the active file's last failed run. It is
+sent only when it changed since the model last saw it:
+- **With a message:** before the message, as an `<ide>` block. This
+  replaces the `<editor>` block that D34 sent with every message.
+- **Mid-turn:** when the tabs or the active file change while the
+  conversation on screen works. The host tells the engine; 400 ms later
+  the engine reads the state again and compares.
+  - If it changed, a `pyslopnista.ide` entry is submitted as a write with
+    a model message. pi-durable places it at the next boundary, like a
+    steer.
+  - pi-ai has no system role mid-conversation, so the block goes in as a
+    user message. The transcript shows it as a note: "Now in greet.py ·
+    line 1".
+  - A queued entry the next message supersedes is withdrawn.
+  - Changes made by the agent's own IDE tools are ignored: their results
+    already told the model.
+
+`ide_run` (Run in the app, so turtle and ui apps can be seen) stays for a
+later decision.
+
+Not built: recording which files a conversation touched (to list
+conversations about a file), a filter across projects, and better titles
+than the first line.
+
+Evidence: the self-test's `agent-ide` and `agent-conversations` checks
+(`app/web/src/selftest.ts`), with the scripted model of D34. They check:
+- **`agent-ide`:**
+  - no `<ide>` block when nothing changed;
+  - each IDE tool's result and its effect on the editor, including the
+    formatted file on disk after `ide_close`;
+  - the medium detent on iPhone;
+  - the user moving to another file mid-turn reaching the model at the
+    next step, and the note in the transcript;
+  - `ide_open` of a missing file failing.
+- **`agent-conversations`:**
+  - a second conversation;
+  - a background run whose `ide_open` is refused;
+  - unread;
+  - titles;
+  - archiving the conversation on screen and unarchiving it;
+  - rename;
+  - a renamed folder.
+
+All 46 checks pass in the iPhone 18 Pro simulator. In the iPhone 17
+simulator only `turtle_catch_example` fails, and it fails the same way
+without this change. The three agent checks also pass in the iPad Pro 13"
+simulator (2026-10-15). Nothing here has been tried on a device.
 
 ## Proposed (not yet decided)
 

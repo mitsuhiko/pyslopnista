@@ -119,17 +119,30 @@ apps are native views (D30).
   reach the disk right away (D35). `Examples/Todo App.py` is a
   complete Reminders-style app that keeps its data in an SQLite database
   (`todos.db`).
-- **Coding agent** (D34): the ✨ button (in the editor and the file
-  browser, or ⌘⇧A) opens a conversation about the current folder.
+- **Coding agent** (D34, D36): the ✨ button (in the editor and the file
+  browser, or ⌘⇧A) opens a conversation about the current project (the
+  top-level folder, or a linked folder).
   - **What it can do:** read, write and edit files; ls, find and grep;
     run Python (a fresh interpreter with the folder copied in; written
     files are saved back, plots come back as images); check with ruff and
     ty; format with ruff.
+  - **In the IDE** (D36): `ide_*` tools open a file at some lines to show
+    you something, close tabs, and lint or format what is in the editor
+    (undoable). They act only for the conversation on screen and don't
+    switch away from a file you are typing in. On iPhone the sheet drops
+    to half height when the agent opens a file.
+  - **Where you are:** your active file, cursor, selection, tabs and a
+    failed run reach the agent when they change: with your message, or
+    at its next step while it works ("Now in greet.py").
   - **What you see:** tool calls fold out to show their output or diff,
-    with a link to the file. Its edits show up in open editors.
-  - **Durable:** conversations are pi-durable on native SQLite (D32), one
-    per folder. A turn the engine was in the middle of continues after a
-    crash or relaunch.
+    with a link to the file. IDE tools are one line each. Its edits show
+    up in open editors.
+  - **Conversations:** several per project (tap the title for the list,
+    ✎ for a new one), with running and unread marks; rename and archive.
+    Other conversations keep running in the background.
+  - **Durable:** conversations are pi-durable on native SQLite (D32), with
+    the app's index next to it. A turn the engine was in the middle of
+    continues after a crash or relaunch.
   - **Accounts (⋯ → Accounts):**
     - Radius first (sign-in or API key); its models are the default once
       you're signed in, and its model list is fetched from the gateway;
@@ -181,7 +194,8 @@ app/
                           events), host (bridge), selftest (runs in the engine, drives the app)
     src/analysis/         ruff + ty worker, client, CodeMirror lint/completions/fixes
     src/debug/            breakpoints, CodeMirror gutter/paused line/inspect
-    src/agent/            the coding agent (D34): service (Harness, conversations, state for the host), tools,
+    src/agent/            the coding agent (D34, D36): service (Harness, conversations, state for the host),
+                          conversations (the index), tools (project tools), ide (IDE tools and context),
                           env (the project as an ExecutionEnv), sqlite (bridge adapter), credentials, login
                           (pi-ai's flows; shims/ for node:http and node:crypto), prompt, proxy (fetch via /__http)
 ```
@@ -194,7 +208,7 @@ app/
 ./run.sh --device                         # on the paired iPhone (unlocked)
 ./run.sh --device --selftest
 SIM=<udid> ./run.sh                       # a specific simulator (e.g. an iPad)
-FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, split=<path>, run, pane, focus, agent[=accounts]
+FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, split=<path>, run, pane, focus, agent[=accounts|conversations]
 FRAGMENT="selftest&only=debugger" ./run.sh --selftest   # a subset of the checks
 ```
 
@@ -204,10 +218,11 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 
 ## Status (2026-10-15)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 44
-checks in the iPhone 18 Pro simulator, including `agent` (D34) and
-`project_files_in_place` (D35) (2026-10-15). Before D35, 43 passed in the
-iPhone 17 simulator.
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 46
+checks in the iPhone 18 Pro simulator, including `agent` (D34),
+`project_files_in_place` (D35), `agent-ide` and `agent-conversations` (D36)
+(2026-10-15). In the iPhone 17 simulator `turtle_catch_example` fails (also
+without D36); before D35, 43 passed there.
 
 In the iPad Pro 13" simulator 43 pass and `keybar_only_with_software_keyboard`
 fails (the bar stays after the keyboard's own hide key); it failed the same
@@ -253,6 +268,8 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
     listener there is Q22.
   - Only Claude Pro/Max has been signed in to for real (in the spike).
   - It is a sheet, not a panel on iPad.
+  - IDE tools can't run a program in the app (`ide_run`, for turtle and
+    ui apps, is not built).
   - No per-turn undo.
   - A write to a file you are typing in replaces the editor's text.
   - No teaching mode.

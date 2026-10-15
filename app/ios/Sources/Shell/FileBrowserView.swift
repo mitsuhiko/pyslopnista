@@ -110,7 +110,7 @@ struct FileBrowserView: View {
                     Image(systemName: "ellipsis")
                 }
                 .accessibilityLabel("More")
-                AgentButton(project: dir)
+                AgentButton(project: projectRoot(dir))
                 Button { ask(.newFile) } label: { Image(systemName: "square.and.pencil") }
                     .accessibilityLabel("New file")
             }
