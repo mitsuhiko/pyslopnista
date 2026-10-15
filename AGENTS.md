@@ -41,7 +41,7 @@ Spike queue (update the status here). The pi-durable agent always comes last
 3. [x] `ui-toolkit`: declarative Python UI in the app and exported as a static site (D14, D15)
 4. [x] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, wasm-GC trampoline check (D13 confirmed, D16; open: App Intents Q6, Q14, Q15)
 5. [x] `debugger`: breakpoints, stepping, pause and post-mortem on bdb's `monitoring` backend (D23, built into the app; open: Q19)
-6. [ ] `agent` (last): pi-durable in the web view, with a SQLite bridge adapter, `python` tool and proxied providers (D7, Q4)
+6. [x] `agent`: pi-durable in a web view on native SQLite, a project `ExecutionEnv`, streaming proxy with host-held keys, resume after a reload (D32; next: the agent in the app, P1)
 
 Done:
 - [x] `jspi-repro`: JSPI "hang" root-caused to CPython's iOS JS-trampoline fallback (D13)

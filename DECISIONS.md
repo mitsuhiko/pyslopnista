@@ -664,14 +664,73 @@ fields through UIKit and pixel checks on the native turtle view. Not yet
 tried on a device; the iPhone 14 Pro should be next (memory with three
 WebContent processes, keyboard and focus behavior).
 
+## D32: The agent's platform: native SQLite, a project ExecutionEnv, keys added by the proxy
+
+2026-10-15 - Accepted (refines D7)
+
+pi-durable and pi-ai run in a web view unmodified. What D7 left open is
+decided like this:
+- **Storage:** pi-durable's `SqliteStorage` on native SQLite. Every
+  `SqliteDatabase` call is one bridge round trip. The page serializes the
+  calls, so a transaction is `BEGIN IMMEDIATE` … `COMMIT` in call order.
+  Whenever the page goes away, the host rolls back an open transaction.
+  The database lives in Application Support, not in WebKit storage (Q2).
+- **Files:** an `ExecutionEnv` over the project folder. The agent sees the
+  folder as `/`, and paths that leave it are refused. There is no shell:
+  `exec` answers `shell_unavailable`.
+- **Provider HTTP:** a patched `fetch` sends it through `/__http` (D25),
+  which streams. The host adds the API key header for the target host, but
+  only for requests carrying a per-launch token that only the page's main
+  thread holds. The page uses a placeholder key; Python workers can't
+  borrow the credential.
+- **Durability:** submissions use a `requestId`, and the page calls
+  `harness.resume()` after a reload or crash. An interrupted answer retries.
+  An interrupted tool that is not replay-safe becomes an error result the
+  model sees.
+
+Evidence: `spikes/agent/` (iPhone 17 simulator):
+- pi-durable's storage conformance suite passes 24/24 on the bridge.
+- Bridge round trip: 0.14 ms. Tool rounds cost about 20 ms of storage each
+  (about 140 statements); streamed answers cost nothing extra.
+- Server-sent events arrive in chunks as they are sent.
+- The key is injected with the token (200) and not without it (401).
+- After a reload in the middle of a stream and in the middle of a tool call,
+  the turn continues as described above.
+
+Not yet tried: a device, a real model, a real WebContent crash.
+
 ## Proposed (not yet decided)
 
-(none)
+- **P1: The agent in the app.**
+  - **Where it runs:** the engine page, in its own module (`src/agent/`)
+    that reaches files, Python, analysis, storage and HTTP only through
+    interfaces. It could later move to its own web view or the cloud (Q4).
+  - **Tools:**
+    - `read`, `write` and `edit` (pi-durable's), plus `ls`/`find`/`grep`
+      over the project.
+    - `run_python`: a headless run in its own worker. It installs PEP 723
+      dependencies, writes changed files back (D27), streams output and
+      returns plots as images. `input()` gets EOF, and it is not
+      replay-safe.
+    - `check` (ruff + ty diagnostics) and `format` (ruff format).
+    - After every `.py` write or edit, new ruff/ty problems are appended
+      to the tool result.
+  - **Writes and open editors:** an agent write to a file that is open in
+    an editor fails if the buffer changed since the agent read it. Otherwise
+    the write is applied as one undoable change.
+  - **Undo:** `FileStore` keeps the old contents of everything a turn
+    changes, so the turn can be undone natively.
+  - **UI:** a native chat panel fed by the conversation's `watch()`, like
+    `SessionMirror`.
+  - **Keys:** your own API key in the Keychain first; the hosted gateway
+    (Q10) later.
+  - **Teaching mode:** per-conversation `configure()` with other
+    instructions and without the write tools.
 
 ## Open questions
 
 - **Q2:** Can WebKit evict `app://` web storage? It survives relaunch and reinstall, but `persist()` is denied (`spikes/ios-host/`).
-- **Q4:** Should the agent run locally, in the cloud, or both, given background suspension?
+- **Q4:** Should the agent run locally, in the cloud, or both, given background suspension? (Local works and survives a page reload mid-turn, D32. Open: what happens when the app is suspended mid-stream, and whether running while the phone sleeps needs the cloud.)
 - **Q6:** Can Python run when triggered from App Intents / Shortcuts while the app is in the background? (Known: a running script is paused while the app is in the background and resumes afterwards, `spikes/device-perf/`.)
 - **Q7:** Do Pyodide's packages cover typical teaching material? Does PyPI accept Emscripten wheels? (Pyodide's version numbers now follow CPython: 314.x is 3.14, 315 is in alpha; 357 packages; wheels tagged `pyemscripten_2026_0_wasm32`.)
 - **Q8:** JSPI support in Chrome and Firefox (matters for published apps).
