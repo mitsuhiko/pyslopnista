@@ -39,6 +39,7 @@ struct RootView: View {
                 case .settings: SettingsView()
                 case .problems: ProblemsView()
                 case .jump(let initial): JumpView(initial: initial)
+                case .homeScreen(let path): HomeScreenView(path: path)
                 case .agent:
                     AgentView()
                         .presentationDetents([.medium, .large], selection: $model.agentDetent)
@@ -63,6 +64,9 @@ struct RootView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { model.windowWidth = $0 }
+        .onOpenURL { url in
+            if let action = LaunchAction(url: url) { LaunchRouter.send(action) }
+        }
         .onChange(of: sizeClass, initial: true) { _, size in
             let wide = size == .regular
             model.wide = wide

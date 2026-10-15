@@ -33,9 +33,10 @@ enum ConsoleDetent: String {
 }
 
 enum ActiveSheet: Identifiable, Equatable {
-    case find, settings, problems, jump(String), agent
+    case find, settings, problems, jump(String), agent, homeScreen(String)
     var id: String {
         switch self {
+        case .homeScreen: "homeScreen"
         case .find: "find"
         case .settings: "settings"
         case .problems: "problems"
@@ -169,6 +170,10 @@ final class AppModel {
             }
         }
         loadDefaults()
+        // A cold launch from a link, for testing (simctl launch … --launch-url <url>): waits like a real one.
+        if let i = args.firstIndex(of: "--launch-url"), i + 1 < args.count, let url = URL(string: args[i + 1]), let action = LaunchAction(url: url) {
+            LaunchRouter.send(action)
+        }
         var fragment = selftest ? "#selftest" : ""
         if let i = args.firstIndex(of: "--fragment"), i + 1 < args.count { fragment = "#" + args[i + 1] }
         var query = ""
@@ -545,6 +550,31 @@ final class AppModel {
         restored = true
         for (i, p) in panes.enumerated() { if let a = p.active { await show(a, in: i) } }
         await launchHooks(fragment)
+        // Shortcuts and pyslopnista:// links (D38), including the one that launched the app.
+        LaunchRouter.attach { [weak self] action in self?.launch(action) }
+        PyslopnistaShortcuts.updateAppShortcutParameters()
+    }
+
+    /// Open or run a program for a Home Screen shortcut or a link (D38).
+    func launch(_ action: LaunchAction) {
+        Task {
+            await engine.whenReady()
+            let path: String
+            switch action {
+            case .run(let p), .open(let p): path = p
+            }
+            guard (try? await host.onFileQueue({ try $0.exists(path) })) == true else {
+                showToast("“\(basename(path))” doesn't exist anymore")
+                return
+            }
+            guard case .run = action else { return await openFile(path) }
+            // Whatever runs now ends first, as with Stop.
+            if session.uiOpen { await command("closeUI") }
+            if session.running { await command("stop") }
+            for _ in 0..<40 where session.running || session.uiOpen { try? await Task.sleep(for: .milliseconds(50)) }
+            await openFile(path)
+            await run()
+        }
     }
 
     /// Shows `path` in an editor pane (loading its text if the pane has no state for it).

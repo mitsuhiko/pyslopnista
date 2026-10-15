@@ -637,6 +637,33 @@ export async function selftest() {
     if (!consoleText().includes("My own class.") || (await appCall("docsState")).shown) throw new Error(`pydoc: ${consoleText().slice(-300)}`);
   });
 
+  // -- Home Screen shortcuts and links (D38) ---------------------------------------
+
+  await step("launch_shortcuts", async () => {
+    await fs.mkdir("Tests/launch").catch(() => {});
+    await fs.writeText("Tests/launch/hello.py", "print('launched', 6 * 7)\n");
+    session.clear();
+    if (!(await appCall("openURL", "pyslopnista://run?path=Tests/launch/hello.py"))) throw new Error("link not taken");
+    await until(() => consoleText().includes("launched 42"), 20000);
+    await until(idle);
+    if ((await app.currentFile()) !== "Tests/launch/hello.py") throw new Error(`open: ${await app.currentFile()}`);
+    // The Shortcuts action: a ui app opens full screen.
+    await appCall("runIntent", "Examples/Counter App.py");
+    await until(async () => (await nativeTree()).visible, 20000);
+    if ((await app.currentFile()) !== "Examples/Counter App.py") throw new Error(`intent opened ${await app.currentFile()}`);
+    // A second one while it runs: the first ends.
+    session.clear();
+    await appCall("runIntent", "Tests/launch/hello.py");
+    await until(() => consoleText().includes("launched 42"), 20000);
+    await until(async () => !(await nativeTree()).visible, 5000);
+    const programs = await appCall<string[]>("programs");
+    if (!programs.includes("Examples/Todo App.py") || !programs.includes("Tests/launch/hello.py")) throw new Error(`programs: ${programs.slice(0, 10)}`);
+    await appCall("homeScreenSheet", "Examples/Todo App.py");
+    await sleep(300);
+    await appCall("closeSheet");
+    return { programs: programs.length };
+  });
+
   await step("show_info_docs", async () => {
     const text = "import json\nimport pathlib\njson.loads('1')\npathlib.Path('.').glob('*')\n";
     await openWith("Tests/py/info.py", text);

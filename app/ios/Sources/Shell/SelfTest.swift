@@ -42,6 +42,18 @@ enum SelfTest {
             await model.openLocation(str(0) ?? "", line: int(1), column: int(2), keepConsole: true)
         case "currentFile":
             return model.file ?? NSNull()
+        case "openURL":
+            // As iOS delivers a pyslopnista:// link (onOpenURL).
+            guard let action = URL(string: str(0) ?? "").flatMap(LaunchAction.init(url:)) else { return false }
+            LaunchRouter.send(action)
+            return true
+        case "runIntent":
+            // The Shortcuts action, as the system performs it.
+            _ = try await RunProgramIntent(program: ProgramEntity(id: str(0) ?? "")).perform()
+        case "programs":
+            return try await ProgramQuery().suggestedEntities().map(\.id)
+        case "homeScreenSheet":
+            model.activeSheet = .homeScreen(str(0) ?? "")
         case "docsState":
             return model.docsState
         case "closeDocs":

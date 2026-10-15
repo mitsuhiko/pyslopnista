@@ -407,6 +407,9 @@ private struct EditorChrome: ViewModifier {
                                 }
                             }
                         } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                        if file.hasSuffix(".py") {
+                            Button { model.activeSheet = .homeScreen(file) } label: { Label("Add to Home Screen…", systemImage: "apps.iphone.badge.plus") }
+                        }
                     }
                     Section {
                         Button(role: .destructive) { deleting = true } label: { Label("Delete", systemImage: "trash") }

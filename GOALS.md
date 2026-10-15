@@ -110,10 +110,11 @@ browser APIs (or graceful degradation) in published web apps.
 ## iOS integration
 
 - [core] Native SwiftUI app; Python and analysis in a web view without UI (`app://` file serving, native bridge)
-- [later] Shortcuts / App Intents: run a script with inputs and return its outputs
+- [core] Home Screen icons for programs: a "Run Python Program" Shortcuts action and `pyslopnista://run` links open the app and run one (D38)
+- [later] Shortcuts / App Intents: run a script with inputs and return its outputs, without opening the app
 - [later] Share extension: send text, URLs or files to a script
 - [later] Home screen widgets fed by scripts
-- [later] URL scheme or universal links to open or run scripts
+- [later] Universal links to open or run scripts (the `pyslopnista://` scheme is there, D38)
 - [maybe] Running scripts in the background (BGTaskScheduler)
 
 ## Coding agent (pi-durable)

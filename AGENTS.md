@@ -34,7 +34,8 @@ folder / show info / settings / keyboard shortcuts, HTTP through the host (D25),
 and the coding agent (D34: pi-durable in the engine page, sign-in with pi-ai's
 flows, D33; conversations per project and IDE tools, D36), two bundled
 Pythons (3.14 and a 3.15 preview) and the Python docs on the device, for the
-user and the agent (D37). Next: the agent on a device (Q22), the rest of D34's list (write
+user and the agent (D37), and Home Screen shortcuts that run a program
+(D38). Next: the agent on a device (Q22), the rest of D34's list (write
 conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 Bundled Python versions and docs archives are pinned in `app/runtimes.json`

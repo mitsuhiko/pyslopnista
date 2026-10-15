@@ -50,6 +50,11 @@ apps are native views (D30).
   Documentation" for standard library names), from `help(x)` in Python
   (standard library objects; the rest stays pydoc's text) and from
   `docs:` links in the agent's answers.
+- **Home Screen icons** (D38): "Add to Home Screen…" (⋯ menu, or a `.py`
+  file's context menu) explains how to make a shortcut with the app's "Run
+  Python Program" action in the Shortcuts app and add it to the Home
+  Screen; tapping it opens the app and runs the program (a ui app full
+  screen). `pyslopnista://run?path=<path>` links do the same.
 - **Tabs and split view**:
   - Every pane has tabs; opening a file adds a tab after the current one, up
     to 10 per pane (the least recently used one closes).
@@ -240,8 +245,9 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 
 ## Status (2026-10-15)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 52
-checks in the iPhone 18 Pro and iPad Pro 13" simulators, including the
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 53
+checks in the iPhone 18 Pro simulator, including `launch_shortcuts` (D38).
+Before that, all 52 passed in the iPhone 18 Pro and iPad Pro 13" simulators, including the
 Python versions and docs checks (`python_versions`, `docs_index`,
 `docs_viewer`, `help_opens_docs`, `show_info_docs`, `agent-docs`, D37)
 (2026-10-15). Before D37 it passed all 46 checks in the iPhone 18 Pro
@@ -289,6 +295,9 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
 
 ## Known gaps
 
+- Home Screen shortcuts (D38): the user builds the shortcut in the
+  Shortcuts app (four steps); programs in linked folders aren't listed
+  there. Not tried on a device.
 - Python versions and docs (D37):
   - Not tried on a device (Q23): app size, memory with both versions
     warm, 3.15 in WKWebView there.

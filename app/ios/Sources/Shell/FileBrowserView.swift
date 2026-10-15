@@ -174,6 +174,9 @@ struct FileBrowserView: View {
                     Task { _ = await model.duplicate(entry.path) }
                 } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
             }
+            if entry.name.hasSuffix(".py") {
+                Button { model.activeSheet = .homeScreen(entry.path) } label: { Label("Add to Home Screen…", systemImage: "apps.iphone.badge.plus") }
+            }
             Divider()
             Button(role: .destructive) { deleting = entry } label: { Label("Delete", systemImage: "trash") }
         }

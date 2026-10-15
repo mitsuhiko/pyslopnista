@@ -10,5 +10,18 @@
 	     generate this one from INFOPLIST_KEY_UIFileSharingEnabled. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- pyslopnista://run?path=<path> runs a program (D38): Home Screen
+	     shortcuts made with an Open URL action, links. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>eu.ronacher.Pyslopnista</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pyslopnista</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

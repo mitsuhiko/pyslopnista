@@ -1107,6 +1107,46 @@ pass in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15). Not
 tried on a device: the bundle size, memory with workers of two versions,
 and 3.15 in WKWebView there (Q23).
 
+## D38: Home Screen icons for programs go through the Shortcuts app
+
+2026-10-15 - Accepted
+
+iOS doesn't let an app put icons on the Home Screen. The ways around it:
+- **the Shortcuts app**: a shortcut can be added to the Home Screen with a
+  name and an icon, and can run an app's App Intent;
+- **a Safari web clip** that redirects to a custom URL scheme: it needs a
+  page on the web (or a configuration profile) and goes through Safari;
+- **publishing the program** as a PWA (D5, D15): needs hosting, and runs in
+  Safari's engine, not in the app.
+
+We take the first, as Pythonista does. The app has:
+- a **"Run Python Program"** App Intent (`app/ios/Sources/ProgramIntents.swift`)
+  that opens the app and runs a program like the Run button (a ui app opens
+  full screen). Its parameter is an entity for each `.py` file in
+  Documents; files in linked folders can be picked by path but are not
+  listed, since listing may download them. An App Shortcut ("Run <program>
+  in Pyslopnista") makes it show up in Shortcuts, Spotlight and Siri;
+- **`pyslopnista://run?path=<app path>`** (and `open?path=`) links, for an
+  "Open URL" action or anywhere links open;
+- **"Add to Home Screen…"** for `.py` files (the editor's ⋯ menu and the
+  file browser's context menu): a sheet with the steps in Shortcuts, a
+  button that opens a new shortcut, and the program's link to copy.
+
+Both ways in go through `LaunchRouter`: requests wait until the app has
+restored its tabs and the engine page is ready, which matters on a cold
+launch from the Home Screen. A program that is running when another one
+is launched is stopped first.
+
+Not possible from the app: making the shortcut itself (a `.shortcut` file
+has to be signed, which only macOS can do), or opening Shortcuts at the
+action.
+
+Evidence: the self-test's `launch_shortcuts` check (a link, the intent with
+a ui app, a second launch ending the first, the entity list, the sheet).
+A cold launch with a link (`simctl launch … --launch-url`) runs the Todo
+app in the iPhone 18 Pro simulator. All 53 checks pass there (2026-10-15).
+The Shortcuts app's side was not driven by the test.
+
 ## Proposed (not yet decided)
 
 (none)
