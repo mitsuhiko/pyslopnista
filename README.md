@@ -83,5 +83,5 @@ You need Xcode 27, Node, [uv](https://docs.astral.sh/uv/), and Rust with
   - [pyodide-http](https://github.com/koenvo/pyodide-http);
   - matplotlib, numpy, pandas and the rest of the scientific Python stack.
 - **Built with:** [pi](https://github.com/earendil-works/pi), the agent
-  harness by Mario Zechner. The app's own agent uses its pi-durable and pi-ai
+  harness by Earendil. The app's own agent uses its pi-durable and pi-ai
   packages.
