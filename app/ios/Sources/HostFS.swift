@@ -72,9 +72,18 @@ final class HostFS: @unchecked Sendable {
     // MARK: mounting (on `queue`)
 
     /// Mount a folder. `linked` folders are copied to staging with `snapshot`
-    /// (coordinated reads, downloads included).
-    func mount(appPath: String, url: URL, linked: Bool, snapshot: (URL, URL) throws -> Void) throws -> [String: Any] {
+    /// (coordinated reads, downloads included). With `share` (another mount
+    /// of the same folder: a program's child processes, D47) the new mount
+    /// uses that mount's files, the staged copy included; it still has its own
+    /// handles, generation and changes to write back.
+    func mount(appPath: String, url: URL, linked: Bool, share: String? = nil, snapshot: (URL, URL) throws -> Void) throws -> [String: Any] {
         let token = UUID().uuidString
+        if let share, let other = lock.withLock({ mounts[share] }), other.appPath == appPath {
+            let mount = Mount(token: token, root: other.root, appPath: appPath, original: other.original)
+            lock.withLock { mounts[token] = mount }
+            startTimer()
+            return ["token": token, "staged": other.original != nil]
+        }
         var root = url.standardizedFileURL
         if linked {
             let staging = Self.stagingRoot.appendingPathComponent(token, isDirectory: true)
@@ -108,7 +117,9 @@ final class HostFS: @unchecked Sendable {
             mounts.removeValue(forKey: token)
             return mount.touched
         }
-        if mount.original != nil { try? FileManager.default.removeItem(at: mount.root) }
+        // A staged copy goes when the last mount using it does.
+        let shared = lock.withLock { mounts.values.contains { $0.root == mount.root } }
+        if mount.original != nil && !shared { try? FileManager.default.removeItem(at: mount.root) }
         return touched.sorted().map { Self.join(mount.appPath, $0) }
     }
 

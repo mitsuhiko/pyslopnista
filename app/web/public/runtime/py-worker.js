@@ -4,6 +4,7 @@
 // reported as crashes (D16).
 import "./sab-polyfill.js";
 import { createHostFS } from "./hostfs.js";
+import { createProcs } from "./procs-worker.js";
 
 // HTTP for Python programs (D25): cross-origin XHR and fetch go through the
 // host's /__http proxy, which makes the request natively (no CORS). requests
@@ -82,6 +83,8 @@ let hostfs = null; // the project folder (D35); its write-behind queue is flushe
 let mounted = null; // {token, cwd}
 let flushTimer = null;
 let plumbing; // a private namespace for our own Python, so the program's globals stay clean
+let interruptBuffer = null; // the SharedArrayBuffer behind Stop and the debugger's signals
+let procs = null; // this interpreter as a process (D47): _procs and _pyslop_procs are installed
 
 // Turtle graphics (D29): ops from _pyslop_turtle.py, sent to the page at most
 // every 16 ms, and always before the program blocks, sleeps or prints (so the
@@ -172,8 +175,9 @@ function writer(stream) {
   };
 }
 
-async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageBaseUrl, pythonFiles }) {
+async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageBaseUrl, pythonFiles, preload }) {
   syncChannel = channel;
+  interruptBuffer = interrupt;
   // CPython's Emscripten build falls back to a JS call trampoline on iOS, which
   // makes JSPI impossible; hiding the iOS UA selects the wasm-gc trampoline (D13).
   if (gcTrampoline) {
@@ -282,6 +286,9 @@ async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageB
     "import _pyslop, _pyslop_debug, _pyslop_notebook, _pyslop_traceback",
     interruptInts ? "import host\n_pyslop_debug.install(host.sleep)\ndel host" : "_pyslop_debug.install()",
   ].join("\n"));
+  // A spare for child processes imports what a spawned child needs anyway
+  // (like forkserver's preload, D47).
+  if (preload?.length) runPlumbing(preload.map((m) => `import ${m}`).join("\n"));
   postMessage({
     type: "ready", bootMs: performance.now() - t0, version: py.version,
     jspi: typeof WebAssembly.Suspending, gcTrampoline: !!gcTrampoline, isolated: !!syncChannel,
@@ -338,7 +345,19 @@ function cellPython(code) {
   }
 }
 
-async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, breakpoints }) {
+/** Make this interpreter process `pid` of a tree (D47): pipes, locks, waits
+ * and the patched os, multiprocessing and subprocess. Once per worker. */
+function installProcs({ control, pid, ppid, cpuCount, objects }) {
+  if (procs || !control || !interruptBuffer) return;
+  procs = createProcs({
+    py, post: (msg) => postMessage(msg), control, interrupt: interruptBuffer,
+    objects: new Map(objects ?? []), pid, ppid, cpuCount,
+  });
+  py.registerJsModule("_procs", procs.api);
+  runPlumbing("import _pyslop_procs\n_pyslop_procs.install()");
+}
+
+async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, breakpoints, procs: procsInit }) {
   const t0 = performance.now();
   try {
     runPlumbing("_pyslop_traceback.mark()");
@@ -346,6 +365,7 @@ async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, br
       mount(token, cwd);
       startFlushing();
     }
+    if (procsInit) installProcs(procsInit);
     if (cwd) {
       py.FS.mkdirTree(cwd);
       py.FS.chdir(cwd);
@@ -385,12 +405,20 @@ async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, br
     } else if (repl) {
       await callRuntime("_pyslop", "repl", code);
     } else {
+      // The script's path: multiprocessing's children import it from there (D47).
+      if (filename && cwd) runPlumbing(`import __main__\n__main__.__file__ = ${JSON.stringify(`${cwd}/${filename}`)}`);
       await callRuntime("_pyslop_debug", "start", JSON.stringify(breakpoints ?? {}));
       try {
-        const result = await py.runPythonAsync(code, { filename: filename ?? "<main>" });
-        result?.destroy?.();
-        // A turtle program with event handlers keeps running, as in IDLE.
-        runPlumbing("import sys\nif '_pyslop_turtle' in sys.modules: sys.modules['_pyslop_turtle'].finish()");
+        try {
+          const result = await py.runPythonAsync(code, { filename: filename ?? "<main>" });
+          result?.destroy?.();
+          // A turtle program with event handlers keeps running, as in IDLE.
+          runPlumbing("import sys\nif '_pyslop_turtle' in sys.modules: sys.modules['_pyslop_turtle'].finish()");
+        } finally {
+          // What the interpreter would do at exit: join child processes. A ui
+          // app hasn't exited; its processes live as long as it does.
+          if (procs && !uiDispatcher) runPlumbing("_pyslop_procs.program_finished()");
+        }
       } finally {
         await callRuntime("_pyslop_debug", "finished");
       }
@@ -403,6 +431,46 @@ async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, br
     flushFiles();
     postMessage({ type: "done", ok: false, error: String(e.message ?? e), trace: lastTrace(), ms: performance.now() - t0 });
   }
+}
+
+/**
+ * Run as a child process (D47): the parent's project folder, its packages,
+ * then the task (multiprocessing's spawn, or a Python subprocess). Reports
+ * the exit code (negative: the signal that ended it).
+ */
+async function runProcess({ task, payload, packages, mount: token, cwd, indexURL, ...init }) {
+  let code = 1;
+  try {
+    if (token && cwd) {
+      mount(token, cwd);
+      startFlushing();
+    }
+    if (cwd) {
+      py.FS.mkdirTree(cwd);
+      py.FS.chdir(cwd);
+    }
+    if (packages?.length) await py.loadPackage(packages, { messageCallback: () => {}, errorCallback: () => {} });
+    installProcs(init);
+    if (task.pypi?.length) {
+      const index = indexURL ?? new URL("/pypi/simple", location.href).href;
+      await callRuntime("_pyslop_procs", "install_pypi", JSON.stringify(task.pypi), index);
+    }
+    postMessage({ type: "process-started" });
+    const mod = py.pyimport("_pyslop_procs");
+    try {
+      code = mod.run_task(JSON.stringify(task), payload ?? undefined);
+    } catch (e) {
+      // Stop landed before run_task's own handler: ended by SIGINT.
+      if (e?.type !== "KeyboardInterrupt") throw e;
+      code = -2;
+    } finally {
+      mod.destroy();
+    }
+  } catch (e) {
+    postMessage({ type: "output", stream: "stderr", text: `${e.message ?? e}\n` });
+  }
+  flushFiles();
+  postMessage({ type: "process-exit", code });
 }
 
 /** The run's uncaught exception as data (D45): JSON, or undefined. */
@@ -460,6 +528,9 @@ onmessage = async (e) => {
       break;
     case "run":
       await run(msg);
+      break;
+    case "process":
+      await runProcess(msg);
       break;
     case "ui-event":
       if (uiDispatcher) uiDispatcher(msg.id, msg.args);

@@ -1,0 +1,93 @@
+{
+  "tests": {
+    "t_memory": {
+      "exitCode": 0,
+      "ms": 15154,
+      "startedAt": 1792152313980,
+      "endedAt": 1792152329134,
+      "peakMemoryMB": 1413,
+      "processes": 9,
+      "passed": 1,
+      "failed": {},
+      "metrics": {
+        "phase 0 at": 1792152314558,
+        "phase 1 at": 1792152317132,
+        "phase 2 at": 1792152319715,
+        "phase 4 at": 1792152322397,
+        "phase 8 at": 1792152327123
+      },
+      "starts": {
+        "warm": {
+          "n": 6,
+          "min": 53,
+          "median": 68,
+          "p90": 75,
+          "max": 75
+        },
+        "cold": {
+          "n": 2,
+          "min": 203,
+          "median": 1837,
+          "p90": 1837,
+          "max": 1837
+        },
+        "setup": {
+          "n": 8,
+          "min": 51,
+          "median": 63,
+          "p90": 73,
+          "max": 73
+        },
+        "install": {
+          "n": 8,
+          "min": 49,
+          "median": 61,
+          "p90": 71,
+          "max": 71
+        },
+        "packages": {
+          "n": 8,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      },
+      "phasesMB": {
+        "0": 691,
+        "1": 768,
+        "2": 844,
+        "4": 1065,
+        "8": 1413
+      }
+    }
+  },
+  "failures": [],
+  "warmPoolMs": 1858,
+  "bootMs": {
+    "n": 11,
+    "min": 1467,
+    "median": 1799,
+    "p90": 2024,
+    "max": 2062
+  },
+  "preloadMs": {
+    "n": 11,
+    "min": 114,
+    "median": 126,
+    "p90": 137,
+    "max": 139
+  },
+  "environment": {
+    "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+    "hardwareConcurrency": 8,
+    "crossOriginIsolated": true,
+    "pyodide": "314.0.7",
+    "warm": 2,
+    "preload": true
+  },
+  "memory": {
+    "otherWebContentMB": 2850,
+    "peakMB": 1413
+  }
+}

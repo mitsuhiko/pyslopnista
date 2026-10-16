@@ -16,6 +16,7 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 - [core] `input()`, `time.sleep()` and blocking-style device calls work, with no `async` needed
 - [core] Warm interpreter pool for fast starts
 - [later] Several scripts running at once
+- [core] `multiprocessing` (spawn) and `subprocess` for Python programs, each process its own interpreter (D47)
 - [later] Threads, if a pthreads Pyodide build becomes viable
 - [later] Socket shim (TCP/TLS through the native host) so ssh, smtp/imap and database clients work
 - [core] Choose the Python version per project (`requires-python`, `.python-version`): 3.14 and a 3.15 preview are bundled (D37)

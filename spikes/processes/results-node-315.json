@@ -1,0 +1,537 @@
+{
+  "tests": {
+    "t_basic": {
+      "exitCode": 0,
+      "ms": 5524.8,
+      "startedAt": 1792152461475,
+      "endedAt": 1792152467001,
+      "peakMemoryMB": 519,
+      "processes": 13,
+      "passed": 20,
+      "failed": {},
+      "metrics": {},
+      "starts": {
+        "warm": {
+          "n": 3,
+          "min": 46,
+          "median": 52,
+          "p90": 64,
+          "max": 64
+        },
+        "cold": {
+          "n": 7,
+          "min": 58,
+          "median": 1133,
+          "p90": 1706,
+          "max": 1706
+        },
+        "setup": {
+          "n": 10,
+          "min": 46,
+          "median": 63,
+          "p90": 80,
+          "max": 80
+        },
+        "install": {
+          "n": 10,
+          "min": 44,
+          "median": 62,
+          "p90": 78,
+          "max": 78
+        },
+        "packages": {
+          "n": 10,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    },
+    "t_ipc": {
+      "exitCode": 0,
+      "ms": 5059.9,
+      "startedAt": 1792152467002,
+      "endedAt": 1792152472062,
+      "peakMemoryMB": 513,
+      "processes": 11,
+      "passed": 18,
+      "failed": {},
+      "metrics": {
+        "pipe round trip ms": 0.054,
+        "pipe 1 MB ms": 1.2,
+        "pipe 5 MB ms": 5.6,
+        "queue items per ms": 17.2,
+        "40 x 100 KB put before a reader ms": 3.7
+      },
+      "starts": {
+        "warm": {
+          "n": 4,
+          "min": 44,
+          "median": 53,
+          "p90": 53,
+          "max": 53
+        },
+        "cold": {
+          "n": 6,
+          "min": 91,
+          "median": 648,
+          "p90": 1183,
+          "max": 1183
+        },
+        "setup": {
+          "n": 10,
+          "min": 44,
+          "median": 45,
+          "p90": 53,
+          "max": 53
+        },
+        "install": {
+          "n": 10,
+          "min": 42,
+          "median": 43,
+          "p90": 51,
+          "max": 51
+        },
+        "packages": {
+          "n": 10,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    },
+    "t_sync": {
+      "exitCode": 0,
+      "ms": 7392.8,
+      "startedAt": 1792152472062,
+      "endedAt": 1792152479455,
+      "peakMemoryMB": 845,
+      "processes": 24,
+      "passed": 12,
+      "failed": {},
+      "metrics": {
+        "4 x 300 locked increments ms": 1305.9
+      },
+      "starts": {
+        "warm": {
+          "n": 7,
+          "min": 45,
+          "median": 49,
+          "p90": 53,
+          "max": 53
+        },
+        "cold": {
+          "n": 16,
+          "min": 194,
+          "median": 1338,
+          "p90": 1768,
+          "max": 1771
+        },
+        "setup": {
+          "n": 23,
+          "min": 43,
+          "median": 51,
+          "p90": 66,
+          "max": 72
+        },
+        "install": {
+          "n": 23,
+          "min": 42,
+          "median": 50,
+          "p90": 65,
+          "max": 71
+        },
+        "packages": {
+          "n": 23,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    },
+    "t_pool": {
+      "exitCode": 0,
+      "ms": 8326.1,
+      "startedAt": 1792152479455,
+      "endedAt": 1792152487781,
+      "peakMemoryMB": 893,
+      "processes": 27,
+      "passed": 24,
+      "failed": {},
+      "metrics": {},
+      "starts": {
+        "warm": {
+          "n": 3,
+          "min": 46,
+          "median": 60,
+          "p90": 60,
+          "max": 60
+        },
+        "cold": {
+          "n": 16,
+          "min": 100,
+          "median": 1325,
+          "p90": 1764,
+          "max": 1769
+        },
+        "setup": {
+          "n": 19,
+          "min": 43,
+          "median": 53,
+          "p90": 62,
+          "max": 64
+        },
+        "install": {
+          "n": 19,
+          "min": 42,
+          "median": 52,
+          "p90": 60,
+          "max": 61
+        },
+        "packages": {
+          "n": 19,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    },
+    "t_subprocess": {
+      "exitCode": 0,
+      "ms": 7337.4,
+      "startedAt": 1792152487781,
+      "endedAt": 1792152495119,
+      "peakMemoryMB": 654,
+      "processes": 18,
+      "passed": 17,
+      "failed": {},
+      "metrics": {
+        "subprocess.run round trip ms": 48.4
+      },
+      "starts": {
+        "warm": {
+          "n": 5,
+          "min": 45,
+          "median": 46,
+          "p90": 51,
+          "max": 51
+        },
+        "cold": {
+          "n": 10,
+          "min": 47,
+          "median": 705,
+          "p90": 1135,
+          "max": 1135
+        },
+        "setup": {
+          "n": 15,
+          "min": 42,
+          "median": 45,
+          "p90": 47,
+          "max": 50
+        },
+        "install": {
+          "n": 15,
+          "min": 41,
+          "median": 44,
+          "p90": 46,
+          "max": 49
+        },
+        "packages": {
+          "n": 15,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    },
+    "t_guard": {
+      "exitCode": 0,
+      "ms": 299.9,
+      "startedAt": 1792152495119,
+      "endedAt": 1792152495419,
+      "peakMemoryMB": 566,
+      "processes": 2,
+      "passed": 3,
+      "failed": {},
+      "metrics": {},
+      "starts": {
+        "warm": null,
+        "cold": {
+          "n": 1,
+          "min": 44,
+          "median": 44,
+          "p90": 44,
+          "max": 44
+        },
+        "setup": {
+          "n": 1,
+          "min": 43,
+          "median": 43,
+          "p90": 43,
+          "max": 43
+        },
+        "install": {
+          "n": 1,
+          "min": 42,
+          "median": 42,
+          "p90": 42,
+          "max": 42
+        },
+        "packages": {
+          "n": 1,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    },
+    "t_numpy": {
+      "exitCode": 0,
+      "ms": 1898.2,
+      "startedAt": 1792152495419,
+      "endedAt": 1792152497317,
+      "peakMemoryMB": 811,
+      "processes": 4,
+      "passed": 2,
+      "failed": {},
+      "metrics": {
+        "Pool(3) with numpy, 6 tasks ms": 518.2
+      },
+      "starts": {
+        "warm": {
+          "n": 2,
+          "min": 224,
+          "median": 229,
+          "p90": 229,
+          "max": 229
+        },
+        "cold": null,
+        "setup": {
+          "n": 2,
+          "min": 46,
+          "median": 47,
+          "p90": 47,
+          "max": 47
+        },
+        "install": {
+          "n": 2,
+          "min": 45,
+          "median": 46,
+          "p90": 46,
+          "max": 46
+        },
+        "packages": {
+          "n": 2,
+          "min": 176,
+          "median": 182,
+          "p90": 182,
+          "max": 182
+        }
+      }
+    },
+    "t_stop": {
+      "exitCode": -2,
+      "ms": 2752.4,
+      "startedAt": 1792152497317,
+      "endedAt": 1792152500069,
+      "peakMemoryMB": 918,
+      "processes": 7,
+      "passed": 0,
+      "failed": null,
+      "metrics": {},
+      "starts": {
+        "warm": {
+          "n": 1,
+          "min": 52,
+          "median": 52,
+          "p90": 52,
+          "max": 52
+        },
+        "cold": {
+          "n": 5,
+          "min": 683,
+          "median": 1616,
+          "p90": 1618,
+          "max": 1618
+        },
+        "setup": {
+          "n": 6,
+          "min": 51,
+          "median": 56,
+          "p90": 60,
+          "max": 60
+        },
+        "install": {
+          "n": 6,
+          "min": 50,
+          "median": 54,
+          "p90": 59,
+          "max": 59
+        },
+        "packages": {
+          "n": 6,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      },
+      "stop": {
+        "processes": 7,
+        "byStatus": {
+          "exit 1": 5,
+          "signal 2": 2
+        },
+        "allEnded": true,
+        "stopToEndMs": 58.7
+      }
+    },
+    "t_memory": {
+      "exitCode": 0,
+      "ms": 14163,
+      "startedAt": 1792152500070,
+      "endedAt": 1792152514233,
+      "peakMemoryMB": 1015,
+      "processes": 9,
+      "passed": 1,
+      "failed": {},
+      "metrics": {
+        "phase 0 at": 1792152500629,
+        "phase 1 at": 1792152503205,
+        "phase 2 at": 1792152505777,
+        "phase 4 at": 1792152508409,
+        "phase 8 at": 1792152512223
+      },
+      "starts": {
+        "warm": {
+          "n": 6,
+          "min": 49,
+          "median": 57,
+          "p90": 59,
+          "max": 59
+        },
+        "cold": {
+          "n": 2,
+          "min": 48,
+          "median": 1119,
+          "p90": 1119,
+          "max": 1119
+        },
+        "setup": {
+          "n": 8,
+          "min": 44,
+          "median": 54,
+          "p90": 57,
+          "max": 57
+        },
+        "install": {
+          "n": 8,
+          "min": 43,
+          "median": 53,
+          "p90": 56,
+          "max": 56
+        },
+        "packages": {
+          "n": 8,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    },
+    "t_perf": {
+      "exitCode": 0,
+      "ms": 11529.4,
+      "startedAt": 1792152514234,
+      "endedAt": 1792152525763,
+      "peakMemoryMB": 1085,
+      "processes": 30,
+      "passed": 5,
+      "failed": {},
+      "metrics": {
+        "start+join of an empty process, median ms": 56.8,
+        "start+join of an empty process, min ms": 54,
+        "serial ms": 795.9,
+        "cpu_count": 18,
+        "pool(1) ms": 797.7,
+        "pool(1) speedup": 1,
+        "pool(2) ms": 404,
+        "pool(2) speedup": 1.97,
+        "pool(4) ms": 200.8,
+        "pool(4) speedup": 3.96,
+        "pool(6) ms": 193.2,
+        "pool(6) speedup": 4.12,
+        "pool(8) ms": 141.6,
+        "pool(8) speedup": 5.62
+      },
+      "starts": {
+        "warm": {
+          "n": 11,
+          "min": 45,
+          "median": 47,
+          "p90": 66,
+          "max": 70
+        },
+        "cold": {
+          "n": 18,
+          "min": 374,
+          "median": 1627,
+          "p90": 1864,
+          "max": 1865
+        },
+        "setup": {
+          "n": 29,
+          "min": 42,
+          "median": 47,
+          "p90": 69,
+          "max": 70
+        },
+        "install": {
+          "n": 29,
+          "min": 41,
+          "median": 46,
+          "p90": 67,
+          "max": 68
+        },
+        "packages": {
+          "n": 29,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    }
+  },
+  "failures": [],
+  "warmPoolMs": 1380,
+  "bootMs": {
+    "n": 147,
+    "min": 1162,
+    "median": 1224,
+    "p90": 1701,
+    "max": 1796
+  },
+  "preloadMs": {
+    "n": 147,
+    "min": 110,
+    "median": 125,
+    "p90": 162,
+    "max": 205
+  },
+  "environment": {
+    "runtime": "node v25.8.1",
+    "pyodide": "315.0.0-alpha.2",
+    "cpuCount": 18,
+    "warm": 2,
+    "preload": true
+  }
+}

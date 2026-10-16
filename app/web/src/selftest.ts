@@ -301,6 +301,137 @@ export async function selftest() {
     if (run?.status !== "stopped" || consoleText().includes("crashed")) throw new Error(`${run?.status}: ${consoleText()}`);
   });
 
+  // -- processes (D47) ------------------------------------------------------------------
+
+  const processCounts = () => (session as any).worker?.procs?.counts as { started: number; alive: number } | undefined;
+
+  await step("processes", async () => {
+    await fs.mkdir("Tests").catch(() => {});
+    await fs.writeText("Tests/procs.py", "");
+    const { done, t0 } = await runFile(
+      "Tests/procs.py",
+      [
+        "import multiprocessing as mp, os, subprocess, sys",
+        "from concurrent.futures import ProcessPoolExecutor",
+        "",
+        "def square(x):",
+        "    return x * x",
+        "",
+        "def add(counter, n):",
+        "    for _ in range(n):",
+        "        with counter.get_lock():",
+        "            counter.value += 1",
+        "",
+        "def write_file(path):",
+        "    with open(path, 'w') as f:",
+        "        f.write(f'from {os.getpid()}')",
+        "",
+        "if __name__ == '__main__':",
+        "    with mp.Pool(2) as pool:",
+        "        print('pool', sum(pool.map(square, range(10))))",
+        "    counter = mp.Value('i', 0)",
+        "    ps = [mp.Process(target=add, args=(counter, 50)) for _ in range(2)]",
+        "    for p in ps: p.start()",
+        "    for p in ps: p.join()",
+        "    print('counter', counter.value)",
+        "    p = mp.Process(target=write_file, args=('child.txt',))",
+        "    p.start(); p.join()",
+        "    print('file', open('child.txt').read().startswith('from '), p.exitcode)",
+        "    with ProcessPoolExecutor(2) as ex:",
+        "        print('executor', list(ex.map(square, [3, 4])))",
+        "    out = subprocess.run([sys.executable, '-c', 'print(6 * 7)'], capture_output=True, text=True).stdout",
+        "    print('subprocess', out.strip())",
+        "",
+      ].join("\n"),
+    );
+    await done;
+    const out = consoleText();
+    for (const want of ["pool 285", "counter 100", "file True 0", "executor [9, 16]", "subprocess 42"]) {
+      if (!out.includes(want)) throw new Error(`missing ${want}: ${out.slice(-1500)}`);
+    }
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    if (run?.status !== "ok") throw new Error(`${run?.status}: ${out.slice(-1500)}`);
+    const counts = processCounts();
+    if (!counts || counts.alive !== 1) throw new Error(`processes left: ${JSON.stringify(counts)}`);
+    if (!(await fs.readText("Tests/child.txt")).startsWith("from ")) throw new Error("child.txt");
+    return { runMs: Math.round(performance.now() - t0), processes: counts.started };
+  });
+
+  await step("processes_stop", async () => {
+    await fs.writeText("Tests/procs_stop.py", "");
+    await runFile(
+      "Tests/procs_stop.py",
+      [
+        "import multiprocessing as mp, time",
+        "",
+        "def sleeper(ready):",
+        "    ready.release()",
+        "    time.sleep(600)",
+        "",
+        "if __name__ == '__main__':",
+        "    ready = mp.Semaphore(0)",
+        "    ps = [mp.Process(target=sleeper, args=(ready,)) for _ in range(2)]",
+        "    for p in ps: p.start()",
+        "    for p in ps: ready.acquire()",
+        "    print('all sleeping', flush=True)",
+        "    for p in ps: p.join()",
+        "",
+      ].join("\n"),
+    );
+    await until(() => consoleText().includes("all sleeping"), 60000);
+    const t0 = performance.now();
+    session.stop();
+    await until(idle);
+    const idleMs = Math.round(performance.now() - t0);
+    await until(() => processCounts()?.alive === 1, 3000).catch(() => {
+      throw new Error(`processes left: ${JSON.stringify(processCounts())}`);
+    });
+    const run = Object.values(session.getSnapshot().runs).at(-1);
+    const out = consoleText();
+    if (run?.status !== "stopped" || out.includes("crashed") || out.includes("Traceback")) throw new Error(`${run?.status}: ${out.slice(-1500)}`);
+    return { idleMs, stopMs: Math.round(performance.now() - t0) };
+  });
+
+  await step("processes_packages_and_console", async () => {
+    // A PyPI package (PEP 723) comes along to the children; in the console
+    // (no file to re-import) a function from a module in the folder works.
+    await fs.writeText("Tests/procs_helper.py", "def double(x):\n    return 2 * x\n");
+    await fs.writeText("Tests/procs_pypi.py", "");
+    const { done } = await runFile(
+      "Tests/procs_pypi.py",
+      [
+        "# /// script",
+        "# dependencies = ['humanize']",
+        "# ///",
+        "import multiprocessing as mp",
+        "",
+        "def words(n):",
+        "    import humanize",
+        "    return humanize.intword(n)",
+        "",
+        "if __name__ == '__main__':",
+        "    with mp.Pool(2) as pool:",
+        "        print('pypi', pool.map(words, [1_200_000, 3_000_000_000]))",
+        "",
+      ].join("\n"),
+    );
+    await done;
+    if (!consoleText().includes("pypi ['1.2 million', '3.0 billion']")) throw new Error(consoleText().slice(-1500));
+    await session.runConsole("import multiprocessing as mp, procs_helper\nwith mp.Pool(2) as p: print('console', p.map(procs_helper.double, [1, 2, 3]))");
+    await until(() => consoleText().includes("console [2, 4, 6]") || /Error/.test(consoleText().slice(-400)), 60000);
+    if (!consoleText().includes("console [2, 4, 6]")) throw new Error(consoleText().slice(-1500));
+  });
+
+  await step("processes_example", async () => {
+    const { done } = await runFile("Examples/Processes.py");
+    await done;
+    const out = consoleText();
+    for (const want of ["watered bed 3", "primes below 300,000", "x as fast", "The subprocess said: Hello from Python 3.14"]) {
+      if (!out.includes(want)) throw new Error(`missing ${want}: ${out.slice(-1500)}`);
+    }
+    return { speed: out.match(/One process:.*/)?.[0], times: out.match(/That is .*/)?.[0] };
+  });
+
   // -- turtle graphics (D29) ----------------------------------------------------------
 
   const lastScene = () => [...turtleScenes.values()].at(-1);
@@ -542,6 +673,40 @@ export async function selftest() {
     }
     if (await fs.exists(`${dir}/main.py`)) throw new Error("still reachable after removing the location");
     if ((await locations.list()).some((l) => l.path === loc.path)) throw new Error("still listed");
+  });
+
+  await step("processes_linked_folder", async () => {
+    // Child processes share the root's copy of a linked folder (D35, D47):
+    // they read what it wrote, and what they write goes back too.
+    const loc = await call<{ name: string; path: string }>("test.link", { name: "Selftest Procs" });
+    const dir = `${loc.path}/app`;
+    try {
+      await fs.writeText(`${dir}/main.py`, "");
+      await runFile(
+        `${dir}/main.py`,
+        [
+          "import multiprocessing as mp",
+          "",
+          "def child():",
+          "    text = open('from_parent.txt').read()",
+          "    open('from_child.txt', 'w').write(text.upper())",
+          "",
+          "if __name__ == '__main__':",
+          "    open('from_parent.txt', 'w').write('shared')",
+          "    p = mp.Process(target=child)",
+          "    p.start(); p.join()",
+          "    print('child said', open('from_child.txt').read(), p.exitcode)",
+          "",
+        ].join("\n"),
+      );
+      await until(idle, 60000);
+      if (!consoleText().includes("child said SHARED 0")) throw new Error(consoleText().slice(-1500));
+      for (let i = 0; i < 30 && !(await fs.exists(`${dir}/from_child.txt`)); i++) await sleep(100);
+      if ((await fs.readText(`${dir}/from_child.txt`)) !== "SHARED") throw new Error("from_child.txt not synced back");
+      await fs.remove(dir);
+    } finally {
+      await locations.remove(loc.path);
+    }
   });
 
   await step("crash_recovery", async () => {

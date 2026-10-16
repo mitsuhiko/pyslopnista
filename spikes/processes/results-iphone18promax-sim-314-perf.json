@@ -1,0 +1,95 @@
+{
+  "tests": {
+    "t_perf": {
+      "exitCode": 0,
+      "ms": 26460,
+      "startedAt": 1792152335631,
+      "endedAt": 1792152362091,
+      "peakMemoryMB": 1798,
+      "processes": 30,
+      "passed": 5,
+      "failed": {},
+      "metrics": {
+        "start+join of an empty process, median ms": 658,
+        "start+join of an empty process, min ms": 67,
+        "serial ms": 894,
+        "cpu_count": 8,
+        "pool(1) ms": 970,
+        "pool(1) speedup": 0.92,
+        "pool(2) ms": 732,
+        "pool(2) speedup": 1.22,
+        "pool(4) ms": 316,
+        "pool(4) speedup": 2.83,
+        "pool(6) ms": 232,
+        "pool(6) speedup": 3.85,
+        "pool(8) ms": 245,
+        "pool(8) speedup": 3.65
+      },
+      "starts": {
+        "warm": {
+          "n": 8,
+          "min": 53,
+          "median": 80,
+          "p90": 94,
+          "max": 94
+        },
+        "cold": {
+          "n": 21,
+          "min": 79,
+          "median": 3350,
+          "p90": 6793,
+          "max": 7305
+        },
+        "setup": {
+          "n": 29,
+          "min": 53,
+          "median": 79,
+          "p90": 126,
+          "max": 148
+        },
+        "install": {
+          "n": 29,
+          "min": 51,
+          "median": 75,
+          "p90": 123,
+          "max": 145
+        },
+        "packages": {
+          "n": 29,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      }
+    }
+  },
+  "failures": [],
+  "warmPoolMs": 1983,
+  "bootMs": {
+    "n": 32,
+    "min": 1527,
+    "median": 3291,
+    "p90": 6711,
+    "max": 7246
+  },
+  "preloadMs": {
+    "n": 32,
+    "min": 118,
+    "median": 157,
+    "p90": 267,
+    "max": 300
+  },
+  "environment": {
+    "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+    "hardwareConcurrency": 8,
+    "crossOriginIsolated": true,
+    "pyodide": "314.0.7",
+    "warm": 2,
+    "preload": true
+  },
+  "memory": {
+    "otherWebContentMB": 2850,
+    "peakMB": 1798
+  }
+}

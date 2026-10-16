@@ -145,6 +145,16 @@ apps are native views (D30).
     Copy Line and Inspect Here (the debugger at that frame).
   - Notebook error outputs look the same, and their cell frames jump to
     the cell. Tracebacks a program prints itself stay text, with links.
+- **Processes** (D47): `multiprocessing` and `subprocess` (Python programs)
+  work, and each process is a Pyodide worker of its own, so a `Pool` uses
+  several cores.
+  - spawn only; pipes, queues, locks, `Value`/`Array`, `Pool` and
+    `ProcessPoolExecutor` all work.
+  - Children share the program's folder (a linked folder's copy too) and
+    load its packages. Their output goes to the console.
+  - Stop ends the whole tree. At most 10 processes, and `os.cpu_count()`
+    is at most 4.
+  - Example: `Processes.py`; docs: `docs/processes.md`.
 - **Notebooks** (D44): Jupyter notebooks (`.ipynb`) and `.py` files with
   `# %%` cells.
   - A `.ipynb` shows as cells, with a toolbar (Run All, Restart, Clear,
@@ -375,6 +385,15 @@ takes about 400 ms, completions 44 ms, formatting 57 ms; installing a small
 PyPI package and running takes 0.8 s (1.3 s when cached).
 
 ## Known gaps
+
+- Processes (D47):
+  - Not tried on a device: memory (about 95 MB per process in the
+    simulator) and the jetsam limit (Q24).
+  - No shared memory, no managers, no threads (`ThreadPool`).
+  - Functions from the console or a notebook cell can't go to a child.
+  - The debugger doesn't follow child processes.
+  - Stop can take about a second when WebKit delays the root's next file
+    call (Q25).
 
 - Notebooks (D44): no interactive widgets (ipywidgets), no debugger,
   breakpoints or variable inspector in cells, no LaTeX math rendering;

@@ -2,6 +2,7 @@
 // output streaming, stdin, interrupt with escalation, host calls, UI messages,
 // and the project folder the program works in (HostFS, D35).
 import { call } from "./host";
+import { ProcessTree } from "./processes";
 import { RUNTIME_FILES } from "./runtimeModules";
 import { getDefaultPython, runtimeFor } from "./runtimes";
 
@@ -70,6 +71,13 @@ export class PyWorker {
   onTurtle: (batches: string[]) => void = () => {};
   /** A blocking turtle call: events for a screen, or a dialog. */
   onTurtleCall: (request: any) => Promise<unknown> = async () => [];
+  /** The processes of the program this worker runs (D47); set on first run (the
+   * root) or by the tree that started this worker as a child. */
+  procs: ProcessTree | null = null;
+  /** As a child process: its pid (0 for a root). */
+  processPid = 0;
+  /** The app path of the attached folder. */
+  attachedPath: string | null = null;
 
   private worker: Worker;
   private interrupt: Int32Array | null;
@@ -81,7 +89,8 @@ export class PyWorker {
   private resolveReady!: (info: WorkerInfo) => void;
   private rejectReady!: (err: Error) => void;
 
-  constructor(python = getDefaultPython()) {
+  /** `preload`: modules to import while waiting (spares for child processes). */
+  constructor(python = getDefaultPython(), options: { preload?: string[] } = {}) {
     this.python = runtimeFor(python).python;
     this.worker = new Worker("/runtime/py-worker.js", { type: "module" });
     const isolated = self.crossOriginIsolated && typeof SharedArrayBuffer === "function";
@@ -94,7 +103,9 @@ export class PyWorker {
     this.ready.catch(() => {});
     this.worker.onmessage = (e) => this.handle(e.data);
     this.worker.onerror = (e) => this.rejectReady(new Error(e.message));
-    this.worker.postMessage({ type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, ...workerOptions(this.python) });
+    this.worker.postMessage({
+      type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, preload: options.preload, ...workerOptions(this.python),
+    });
   }
 
   get running() {
@@ -127,6 +138,14 @@ export class PyWorker {
       case "done":
         this.finish(msg);
         break;
+      case "share":
+      case "spawn":
+      case "kill":
+      case "abandon":
+      case "process-started":
+      case "process-exit":
+        this.procs?.onMessage(this, msg);
+        break;
       case "synced":
         this.syncs.get(msg.id)?.();
         this.syncs.delete(msg.id);
@@ -142,6 +161,8 @@ export class PyWorker {
           this.dead = true;
           this.worker.terminate();
           this.unmount();
+          if (this.processPid) this.onCrash(`${msg.error}${hint}`);
+          this.procs?.workerGone(this, true);
         }
         break;
       }
@@ -210,17 +231,33 @@ export class PyWorker {
   /** Use a project folder (an app path) as the program's files: the host
    * mounts it (a linked folder via a local copy), and the next run sees it at
    * its cwd. */
-  async attach(path: string) {
-    const { token } = await call<{ token: string; staged: boolean }>("hostfs.mount", { path });
+  async attach(path: string, share?: string) {
+    // `share`: another worker's mount of the folder, whose staged copy of a
+    // linked folder this one uses too (child processes, D47).
+    const { token } = await call<{ token: string; staged: boolean }>("hostfs.mount", { path, ...(share ? { share } : {}) });
     this.mountToken = token;
+    this.attachedPath = path;
+  }
+
+  /** This worker's mount, for child processes to share. */
+  get mountTokenForSharing() {
+    return this.mountToken ?? undefined;
+  }
+
+  /** Start as a child process of `procs` (D47): its task, in the shared folder. */
+  startProcess(init: Record<string, unknown>) {
+    this.worker.postMessage({ type: "process", mount: this.mountToken, ...init });
   }
 
   run(code: string, options: RunOptions = {}): Promise<RunResult> {
     if (this.current) throw new Error("already running");
     if (this.interrupt) Atomics.store(this.interrupt, 0, 0);
+    this.procs ??= new ProcessTree(this);
+    this.procs.runStarted(options.cwd);
+    const procs = this.procs.root === this ? this.procs.init() : undefined;
     return new Promise((resolve) => {
       this.current = resolve;
-      this.worker.postMessage({ type: "run", code, mount: this.mountToken, ...options });
+      this.worker.postMessage({ type: "run", code, mount: this.mountToken, ...options, procs });
     });
   }
 
@@ -279,7 +316,12 @@ export class PyWorker {
 
   /** KeyboardInterrupt, re-asserted until the run ends; kill after killAfterMs (D11). */
   stop(killAfterMs = 1500) {
-    if (!this.current) return;
+    // The program's child processes get SIGINT too (D47), after it.
+    const tree = this.procs?.root === this ? this.procs : null;
+    if (!this.current) {
+      tree?.stop();
+      return;
+    }
     if (!this.interrupt) {
       this.terminate("killed");
       return;
@@ -290,6 +332,7 @@ export class PyWorker {
       if (this.syncPending) this.replySync({ interrupted: true });
     };
     assert();
+    tree?.stop();
     if (this.stopTimer) return;
     const started = performance.now();
     this.stopTimer = setInterval(() => {
@@ -302,6 +345,7 @@ export class PyWorker {
     this.dead = true;
     this.worker.terminate();
     this.unmount();
+    this.procs?.workerGone(this);
     this.finish({ ok: false, error: reason, ms: 0, killed: true });
   }
 

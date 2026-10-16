@@ -12,6 +12,11 @@ them, and how programs run in the app.
   changed.
 - [turtle](turtle.html): Python's turtle graphics, drawn in the console.
 
+## Processes
+
+- [Processes](processes.html): `multiprocessing` and `subprocess`: run work
+  in several Pythons at once, on several CPU cores.
+
 ## Notebooks
 
 - [Notebooks](notebooks.html): Jupyter notebooks (`.ipynb`) and Python
@@ -75,7 +80,8 @@ the block above picks another bundled version, like the 3.15 preview. The
 ⋯ menu shows the version and can pin the folder to one.
 
 **HTTP.** `requests`, `httpx`, `urllib` and `pyodide.http.pyfetch` work for
-any site. There are no raw sockets and no threads.
+any site. There are no raw sockets and no threads, but there are
+[processes](processes.html).
 
 **Links.** `webbrowser.open(url)` opens web pages in an in-app browser and
 other links (like `maps://`) in the app they belong to.

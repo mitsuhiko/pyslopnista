@@ -1532,12 +1532,97 @@ chain, and a span on a long line scrolled into view. The notebook view was
 checked in Chrome. The data was also checked with Python 3.14 and 3.15
 in Pyodide under Node. Not tried on a device or an iPad.
 
+## D47: Programs can start processes: each one a Pyodide worker
+
+2026-10-16 - Accepted (was P1; `spikes/processes/`)
+
+`multiprocessing` and `subprocess` work. Every process is a Python
+interpreter of its own, a Pyodide worker (D6), so a `Pool` runs on several
+cores. This is also the base for local servers and for running several
+programs at once.
+
+**The tree** (`src/processes.ts`):
+- A ProcessTree belongs to the worker a program runs in, the root (pid
+  100). It starts the children that worker's interpreter asks for, from
+  two spares that preload the multiprocessing modules (like forkserver's
+  preload). Spares are only kept once the program has started a process.
+- Every child is a `PyWorker` (`startProcess`, a `process` message in
+  `py-worker.js`). It mounts the root's folder through HostFS with `share`,
+  so a linked folder's staged copy is shared (D35, D28), and loads the
+  parent's packages: Pyodide's by name, PyPI ones with micropip from the
+  app's cache.
+- Output goes to the console, with no prefix, as children share a
+  terminal. `input()` in a child gets end-of-file. The device modules
+  follow the root (none in the agent's runs, D40).
+- Limits: at most 10 processes alive at once. `os.cpu_count()` is
+  `min(hardwareConcurrency, 4)`, because each process costs about 100 MB
+  (Q24).
+- **Stop** sends SIGINT to the root and then every child. A child that
+  hasn't started Python yet just ends (POSIX's default action); the rest
+  get SIGKILL after 1.5 s (D11). Children's tracebacks after Stop are
+  dropped.
+- When the program ends, `program_finished()` does what the interpreter
+  does at exit: joins the children that aren't daemons and ends the daemon
+  processes. A ui app keeps its processes while it runs. Closing the root
+  (the next run) ends whatever is left of the tree.
+
+**Shared state** (`runtime/procs-shared.js`, `procs-worker.js`):
+- **Control block:** one SharedArrayBuffer per tree with pids, wait
+  statuses, semaphore values and an epoch that every pipe change and exit
+  bumps.
+- **Pipes:** SharedArrayBuffer rings behind Emscripten file descriptors (a
+  small file system mounted at runtime). They count the read and write ends
+  per pid, so a dead process's ends go away and EOF/EPIPE work across
+  processes.
+- **Waits:** they happen in JS, because Emscripten's `poll()` ignores its
+  timeout. Stop ends them: SIGINT makes the call return a marker, and
+  Python raises KeyboardInterrupt. A pipe read gets EINTR. A Stop wins over
+  an event that happened at the same time, so a parent stopped together
+  with its children raises KeyboardInterrupt in `join()`, as on POSIX.
+
+**Python** (`_pyslop_procs.py`): the stdlib runs unchanged on a replaced OS
+layer.
+- **Replaced:** `os.getpid`/`getppid`/`pipe`/`waitpid`/`kill`/`cpu_count`,
+  `select.poll`/`select.select`/`selectors.PollSelector`,
+  `_multiprocessing.SemLock` (so all the locks, `Event`, `Condition` and
+  `Barrier` are the stdlib's), `Value`/`Array` on SharedArrayBuffers,
+  `subprocess._fork_exec` (Python programs only; anything else raises
+  `FileNotFoundError`).
+- **Without threads:** `Queue`, `Pool` and `ProcessPoolExecutor` have no
+  feeder or handler threads. A put that doesn't fit is kept and sent while
+  the process waits. A pool does its bookkeeping (and runs callbacks)
+  whenever the parent waits on it.
+- spawn is the only start method; fork raises.
+- The patches are applied when a module is first imported. A child
+  imports the script again as `__mp_main__`, as spawn does; for that, the
+  root now sets `__main__.__file__` for file runs.
+
+Not possible: fork, shared memory, managers, threads (`ThreadPool`).
+Functions typed into the console or a notebook cell can't be pickled for
+a child; ones from a module in the folder can.
+
+Evidence: five self-test checks:
+- `processes`: Pool, Value with a lock, a file a child wrote,
+  ProcessPoolExecutor, subprocess;
+- `processes_stop`: Stop ends root and children, about 50 ms;
+- `processes_packages_and_console`: a PEP 723 package in children, a Pool
+  from `>>>`;
+- `processes_example`: `Processes.py`, 3.1-3.2x on 4 processes;
+- `processes_linked_folder`: children share the staged copy, and their
+  files go back.
+
+All 76 checks pass in the iPhone 18 Pro Max simulator (2026-10-16). The
+spike's own tests (102 checks, both Pythons, Node and WKWebView) cover the
+rest of the API. Not tried on a device (Q24).
+
 ## Proposed (not yet decided)
 
 (none)
 
 ## Open questions
 
+- **Q24:** Processes (D47) on a device. In the simulator an idle Pyodide worker costs about 95 MB of WebContent RSS, and RSS stayed at 1.8-2.1 GB after about 150 short-lived workers (`spikes/processes/`). How many workers fit under the jetsam limit (about 1.9 GB on the iPhone 14 Pro, Q15)? Is the memory of terminated workers returned? What do boot time, `hardwareConcurrency` and speedup look like on 2 performance + 4 efficiency cores? Are the limits (10 processes, `os.cpu_count()` ≤ 4) right?
+- **Q25:** In WKWebView (simulator), a worker's first synchronous XHR (HostFS, D35) after some long `Atomics.wait` (e.g. after `time.sleep(2)`) takes about 1 s; the host answers within a millisecond, so WebKit delivers the response late. Later calls are fast. It isn't specific to processes (`time.sleep(2)` then `os.stat` shows it), but Stop with children can show it (the root reads the script for the traceback). Seen with `processes_xhr_*` experiments during D47; not reproducible every run. Does it happen on a device, and can short waits (slices) avoid it?
 - **Q23:** On a device: the app size with two cores and two sets of docs (about 27 MB of cores and 70 MB of HTML, plus 40 MB of indexes, before App Store compression), memory when workers of both versions are warm, and whether 3.15's Pyodide (Emscripten 6) works in WKWebView there as 3.14's does (D13).
 - **Q21:** Provider terms and App Review for subscription sign-ins (Claude Pro/Max, ChatGPT) used from a third-party app.
 - **Q22:** On a device, does `ASWebAuthenticationSession` reach the app's loopback listener (the simulator shares the Mac's network)? If not, Anthropic, Codex and Radius still have copy-code or device-code sign-ins; Sign in with ChatGPT and OpenRouter would not work.

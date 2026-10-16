@@ -128,7 +128,7 @@ final class WebHost: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDele
                 case "hostfs.mount":
                     let path = value["path"] as? String ?? ""
                     let (url, linked) = try files.locate(path)
-                    let mount = try hostFS.mount(appPath: path, url: url, linked: linked) { try files.snapshot($0, into: $1) }
+                    let mount = try hostFS.mount(appPath: path, url: url, linked: linked, share: value["share"] as? String) { try files.snapshot($0, into: $1) }
                     result = Result(value: mount, error: nil)
                 case "hostfs.sync":
                     result = Result(value: hostFS.sync(value["token"] as? String ?? "", coordinate: coordinator), error: nil)
