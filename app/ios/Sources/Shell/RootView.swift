@@ -196,6 +196,7 @@ private struct ShortcutButtons: View {
         VStack {
             Button("Run") { Task { await model.run() } }.keyboardShortcut("r", modifiers: .command)
             Button("Stop") { model.stop() }.keyboardShortcut(".", modifiers: .command)
+            Button("Show Preview or Source") { model.toggleMarkdownView() }.keyboardShortcut("v", modifiers: [.command, .shift])
             Button("Go to Line") { model.activeSheet = .jump(":") }.keyboardShortcut("l", modifiers: .command)
             Button("Go to Symbol") { model.activeSheet = .jump("") }.keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Find in Folder") { model.activeSheet = .find }.keyboardShortcut("f", modifiers: [.command, .shift])

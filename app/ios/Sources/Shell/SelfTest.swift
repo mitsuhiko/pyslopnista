@@ -96,6 +96,18 @@ enum SelfTest {
             return title ?? NSNull()
         case "notebookPane":
             return model.notebook.map { ["path": $0.path, "kind": $0.kind ?? NSNull(), "cells": $0.cells, "view": $0.view ?? NSNull()] as [String: Any] } ?? NSNull()
+        case "markdownView":
+            return model.markdownView ?? NSNull()
+        case "toggleMarkdown":
+            model.toggleMarkdownView()
+        case "findInPreview":
+            // The web view's find bar over a preview (D46): whether it came up.
+            model.find()
+            let webView = model.editors[model.focused].webView
+            for _ in 0..<40 where webView.findInteraction?.isFindNavigatorVisible != true { try await Task.sleep(for: .milliseconds(50)) }
+            let shown = webView.findInteraction?.isFindNavigatorVisible == true
+            webView.findInteraction?.dismissFindNavigator()
+            return shown
         case "kernel":
             return model.session.kernel.map { ["path": $0.path, "python": $0.python, "count": $0.count] as [String: Any] } ?? NSNull()
         case "setTheme":

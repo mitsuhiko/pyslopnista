@@ -6,16 +6,22 @@ import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } 
 import {
   defaultKeymap, deleteCharBackward, history, historyKeymap, indentLess, indentMore, indentWithTab, redo, toggleComment, undo,
 } from "@codemirror/commands";
-import { python } from "@codemirror/lang-python";
-import { bracketMatching, ensureSyntaxTree, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { markdownKeymap, markdownLanguage, pasteURLAsLink } from "@codemirror/lang-markdown";
+import { python, pythonLanguage } from "@codemirror/lang-python";
+import {
+  bracketMatching, ensureSyntaxTree, HighlightStyle, indentOnInput, indentUnit, Language, LanguageSupport, syntaxHighlighting,
+} from "@codemirror/language";
 import { type Diagnostic, forEachDiagnostic, forceLinting } from "@codemirror/lint";
 import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from "@codemirror/search";
-import { Annotation, ChangeSet, Compartment, EditorState, type Extension, RangeSetBuilder, StateEffect, StateField, Transaction } from "@codemirror/state";
+import {
+  Annotation, ChangeSet, Compartment, EditorState, type Extension, Prec, RangeSetBuilder, StateEffect, StateField, Transaction,
+} from "@codemirror/state";
 import {
   Decoration, type DecorationSet, drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter,
   highlightSpecialChars, keymap, lineNumbers, ViewPlugin, type ViewUpdate,
 } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
+import { type MarkdownParser, parseCode } from "@lezer/markdown";
 import { type AnalysisSource, analysisCompletions, analysisLinter, formatDocument, formatRanges } from "../analysis/codemirror";
 import type { Breakpoint } from "../debug/breakpoints";
 import {
@@ -25,6 +31,7 @@ import { call } from "../host";
 import { parseIpynb } from "../notebook/ipynb";
 import type { KernelEvent } from "../notebook/types";
 import { settings } from "../settings";
+import { isMarkdownPath, MarkdownPreview, slug, worthPreviewing } from "./markdown";
 import {
   analysisSource, clearOutputs, deleteCell, insertCell, kernelEventsEffect, moveCell, type NotebookHooks, notebookExtensions, notebookOf,
   notebookSummary, runAbove, runAll, runBelow, runCell, serializeNotebook, setCellType,
@@ -38,7 +45,9 @@ const rectOf = (r: DOMRect) => ({ x: r.left, y: r.top, width: r.width, height: r
 
 const wrapCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
-const wrapping = (on: boolean) => (on ? [EditorView.lineWrapping, hangingIndent] : []);
+// Markdown is prose: it always wraps (D46), list items under their text.
+const wrapping = (on: boolean, prose = false) =>
+  prose ? [EditorView.lineWrapping, proseHanging] : on ? [EditorView.lineWrapping, codeHanging] : [];
 const readOnlyExt = (on: boolean) => (on ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []);
 
 /** Marks transactions that mirror another pane's edits (not saved or re-sent). */
@@ -69,6 +78,17 @@ const highlight = HighlightStyle.define([
   { tag: [t.self, t.special(t.variableName)], color: "var(--syn-self)" },
   { tag: t.className, color: "var(--syn-class)" },
   { tag: t.meta, color: "var(--syn-meta)" },
+  // Markdown (D46): the markup recedes, the text keeps its emphasis.
+  { tag: t.heading, color: "var(--syn-def)", fontWeight: "bold" },
+  { tag: t.strong, fontWeight: "bold" },
+  { tag: t.emphasis, fontStyle: "italic" },
+  { tag: t.strikethrough, textDecoration: "line-through" },
+  { tag: [t.link, t.url], color: "var(--syn-call)" },
+  { tag: t.monospace, color: "var(--syn-string)" },
+  { tag: [t.processingInstruction, t.labelName, t.contentSeparator], color: "var(--syn-comment)" },
+  { tag: t.quote, color: "var(--syn-comment)" },
+  { tag: [t.tagName, t.angleBracket], color: "var(--syn-keyword)" },
+  { tag: t.attributeName, color: "var(--syn-meta)" },
 ]);
 
 const theme = EditorView.theme({
@@ -90,9 +110,15 @@ const theme = EditorView.theme({
   ".cm-lintRange-info": { backgroundImage: "none", textDecoration: "underline dotted var(--secondary)", textUnderlineOffset: "3px" },
 });
 
-// Wrapped lines continue under the line's own indentation (+ 4 columns),
-// which keeps wrapped Python readable on a phone.
-const hangingIndent = ViewPlugin.fromClass(
+const columns = (s: string) => s.replace(/\t/g, "    ").length;
+/** Python: the line's own indentation + 4 columns. */
+const pythonIndent = (text: string) => columns(/^[ \t]*/.exec(text)![0]) + 4;
+/** Markdown: under the text of a list item or quote. */
+const markdownIndent = (text: string) =>
+  columns(/^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?|(?:>[ \t]?)+)?/.exec(text)![0]);
+
+// Wrapped lines continue indented, which keeps wrapped Python readable on a phone.
+const hangingIndent = (indentOf: (text: string) => number) => ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
     constructor(view: EditorView) {
@@ -106,7 +132,7 @@ const hangingIndent = ViewPlugin.fromClass(
       for (const { from, to } of view.visibleRanges) {
         for (let pos = from; pos <= to; ) {
           const line = view.state.doc.lineAt(pos);
-          const indent = /^[ \t]*/.exec(line.text)![0].replace(/\t/g, "    ").length + 4;
+          const indent = indentOf(line.text);
           builder.add(line.from, line.from, Decoration.line({ attributes: { style: `padding-left:calc(${indent}ch + 6px);text-indent:-${indent}ch` } }));
           pos = line.to + 1;
         }
@@ -116,6 +142,8 @@ const hangingIndent = ViewPlugin.fromClass(
   },
   { decorations: (v) => v.decorations },
 );
+const codeHanging = hangingIndent(pythonIndent);
+const proseHanging = hangingIndent(markdownIndent);
 
 const cursorMove = (view: EditorView, dir: "left" | "right" | "up" | "down") => {
   const sel = view.state.selection.main;
@@ -128,7 +156,26 @@ const cursorMove = (view: EditorView, dir: "left" | "right" | "up" | "down") => 
 
 /** A .ipynb shows as a notebook, or as its JSON (D44). */
 const isNotebookPath = (path: string | null): path is string => !!path && path.endsWith(".ipynb");
-type Mode = "python" | "notebook" | "json";
+type Mode = "python" | "notebook" | "json" | "markdown";
+/** How a pane shows a file: a .ipynb as a notebook or its JSON, a Markdown file as a preview or its source. */
+type View = "notebook" | "preview" | "source";
+
+/**
+ * Markdown with GFM, fenced Python highlighted as Python, and lists that
+ * continue on Enter. Put together here rather than with lang-markdown's
+ * markdown(), which brings HTML, CSS and JavaScript along (200 kB).
+ */
+const markdownSupport = new LanguageSupport(
+  new Language(
+    markdownLanguage.data,
+    (markdownLanguage.parser as MarkdownParser).configure(
+      parseCode({ codeParser: (info) => (/^(py|python3?|py3)$/i.test(info.trim()) ? pythonLanguage.parser : null) }),
+    ),
+    [],
+    "markdown",
+  ),
+  [Prec.high(keymap.of(markdownKeymap)), pasteURLAsLink],
+);
 
 /** What the file holds: a notebook's JSON, else the text. */
 const fileText = (state: EditorState) => (notebookOf(state)?.kind === "ipynb" ? serializeNotebook(state) : state.doc.toString());
@@ -138,7 +185,8 @@ const sameBreakpoints = (a: Breakpoint[], b: Breakpoint[]) =>
 
 export interface Symbol {
   name: string;
-  kind: "class" | "function" | "method";
+  /** A Markdown heading's kind is its level: "h1" to "h6". */
+  kind: "class" | "function" | "method" | `h${number}`;
   line: number;
   depth: number;
 }
@@ -164,6 +212,26 @@ export function outline(state: EditorState): Symbol[] {
   return out;
 }
 
+/** A Markdown file's headings, indented by level. */
+export function markdownOutline(state: EditorState): Symbol[] {
+  const tree = ensureSyntaxTree(state, state.doc.length, 300);
+  if (!tree) return [];
+  const out: Symbol[] = [];
+  tree.iterate({
+    enter(node) {
+      const m = /^(ATX|Setext)Heading(\d)$/.exec(node.name);
+      if (!m) return;
+      const line = state.doc.lineAt(node.from);
+      const name = m[1] === "ATX" ? line.text.replace(/^\s*#+\s*/, "").replace(/\s+#+\s*$/, "") : line.text.trim();
+      out.push({ name: name || "(untitled)", kind: `h${Number(m[2])}`, line: line.number, depth: Number(m[2]) });
+      return false;
+    },
+  });
+  const top = Math.min(...out.map((s) => s.depth));
+  for (const s of out) s.depth -= top;
+  return out;
+}
+
 interface Problem {
   d: Diagnostic;
   from: number;
@@ -182,8 +250,10 @@ export class PaneEditor {
   private updateFrame = 0;
   private problemBar: HTMLElement;
   private lastSummary = "";
-  /** Notebooks shown as their JSON. */
-  private views = new Map<string, "notebook" | "source">();
+  /** Notebooks shown as their JSON, Markdown files as a preview or their source. */
+  private views = new Map<string, View>();
+  private editorEl: HTMLElement;
+  private preview: MarkdownPreview;
   /** Notebooks this pane ran cells of: it saves their outputs. */
   private runOwners = new Set<string>();
   private cachedSaves = new Map<string, number>();
@@ -202,12 +272,17 @@ export class PaneEditor {
     reveal: (line) => this.reveal(line),
   };
 
-  constructor(parent: HTMLElement, problemBar: HTMLElement) {
+  constructor(parent: HTMLElement, problemBar: HTMLElement, preview: HTMLElement) {
     this.problemBar = problemBar;
+    this.editorEl = parent;
+    this.preview = new MarkdownPreview(preview, {
+      openURL: (url) => void editorEvent("openURL", { url }),
+      openPath: (path, fragment) => void editorEvent("openLink", { from: this.path, path, fragment }),
+    }, highlight);
     this.view = new EditorView({ parent, state: this.makeState(null, "", false) });
     new ResizeObserver(() => this.view.requestMeasure()).observe(parent);
     settings.subscribe(() => {
-      this.view.dispatch({ effects: wrapCompartment.reconfigure(wrapping(settings.getSnapshot().wrap)) });
+      this.view.dispatch({ effects: wrapCompartment.reconfigure(wrapping(settings.getSnapshot().wrap, isMarkdownPath(this.path))) });
       this.view.requestMeasure();
     });
   }
@@ -223,7 +298,51 @@ export class PaneEditor {
         void editorEvent("notebookError", { path, message: String((e as Error).message ?? e) });
       }
     }
+    if (isMarkdownPath(path)) {
+      // A file with something to read opens as its preview; a new one, to write in.
+      if (!this.views.has(path)) this.views.set(path, worthPreviewing(text) ? "preview" : "source");
+      return EditorState.create({ doc: text, extensions: this.extensions(readOnly, "markdown") });
+    }
     return EditorState.create({ doc: text, extensions: this.extensions(readOnly, isNotebookPath(path) ? "json" : "python") });
+  }
+
+  /** How the file shows (null: it has only one way). */
+  private viewOf(path: string | null): View | null {
+    if (isNotebookPath(path)) return this.views.get(path) ?? "notebook";
+    if (isMarkdownPath(path)) return this.views.get(path) ?? "preview";
+    return null;
+  }
+
+  private previewing() {
+    return isMarkdownPath(this.path) && this.viewOf(this.path) === "preview";
+  }
+
+  /** The preview or the editor, whichever the file shows as; `line`: the place to keep. */
+  private syncPreview(line?: number) {
+    const on = this.previewing();
+    if (on) {
+      this.view.contentDOM.blur();
+      this.preview.show(this.path!, this.view.state.doc.toString(), line);
+    } else {
+      this.preview.hide();
+    }
+    this.preview.el.hidden = !on;
+    this.editorEl.hidden = on;
+    if (!on) {
+      this.view.requestMeasure();
+      if (line !== undefined) {
+        const pos = this.view.state.doc.line(Math.max(1, Math.min(line, this.view.state.doc.lines))).from;
+        requestAnimationFrame(() => this.view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 8 }) }));
+      }
+    }
+    if (on) this.problemBar.hidden = true;
+  }
+
+  /** The first line on screen in the editor. */
+  private sourceTopLine() {
+    const view = this.view;
+    const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop - view.documentPadding.top + 4);
+    return view.state.doc.lineAt(Math.min(block.from, view.state.doc.length)).number;
   }
 
   /** What ruff and ty check for the document on screen (D44: a notebook's code cells). */
@@ -236,19 +355,21 @@ export class PaneEditor {
       if (data?.kind !== "ipynb") return null; // its JSON
       return { path: `${path}.py`, text: analysisSource(state), cells };
     }
+    if (isMarkdownPath(path)) return null;
     return { path, text: state.doc.toString(), cells: data?.cells.length ? cells : undefined };
   };
 
   private extensions(readOnly: boolean, mode: Mode, notebook?: ReturnType<typeof parseIpynb>): Extension[] {
     const definition = () => void editorEvent("definition");
     const info = () => void editorEvent("info");
-    const code = mode !== "json";
+    const code = mode !== "json" && mode !== "markdown";
     return [
       readOnlyCompartment.of(readOnlyExt(readOnly)),
       flashField,
-      keymap.of([{ key: "F12", run: () => (definition(), true) }]),
+      code ? keymap.of([{ key: "F12", run: () => (definition(), true) }]) : [],
       EditorView.domEventHandlers({
         mousedown(e, view) {
+          if (!code) return false;
           // ⌘-click: jump to the definition; ⌥-click: show info (as in Xcode).
           const action = e.metaKey || e.ctrlKey ? definition : e.altKey ? info : null;
           if (!action || e.button !== 0) return false;
@@ -259,9 +380,11 @@ export class PaneEditor {
           return true;
         },
       }),
-      // A notebook has no line numbers (its lines are not the file's) and no breakpoints.
+      // A notebook has no line numbers (its lines are not the file's) and no breakpoints; Markdown no breakpoints.
       mode === "notebook"
         ? pausedCompartment.of([])
+        : mode === "markdown"
+        ? [pausedCompartment.of([]), lineNumbers(), highlightActiveLineGutter()]
         : [
             debugExtensions((line, rect) => {
               if (this.path) void editorEvent("longPress", { path: this.path, line, rect: rectOf(rect) });
@@ -283,8 +406,9 @@ export class PaneEditor {
       highlightSelectionMatches(),
       search({ top: true }),
       code ? python() : [],
+      mode === "markdown" ? markdownSupport : [],
       mode === "python" ? notebookExtensions("py", this.hooks) : mode === "notebook" ? notebookExtensions("ipynb", this.hooks, notebook) : [],
-      wrapCompartment.of(wrapping(settings.getSnapshot().wrap)),
+      wrapCompartment.of(wrapping(settings.getSnapshot().wrap, mode === "markdown")),
       indentUnit.of("    "),
       EditorState.tabSize.of(4),
       syntaxHighlighting(highlight),
@@ -293,6 +417,8 @@ export class PaneEditor {
       EditorView.contentAttributes.of({ autocapitalize: "off", autocorrect: "off", spellcheck: "false", "aria-label": "Code editor" }),
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !u.transactions.some((tr) => tr.annotation(remote))) this.localChange(u);
+        // A preview follows edits from elsewhere (the other pane, the agent, a program).
+        if (u.docChanged && this.previewing()) this.preview.update(u.state.doc.toString());
         else if (!u.docChanged && this.path && isNotebookPath(this.path) && notebookOf(u.startState) !== notebookOf(u.state)) {
           // Outputs and cleared outputs are part of a .ipynb (the pane that ran the cells saves them).
           const fromKernel = u.transactions.some((tr) => tr.effects.some((e) => e.is(kernelEventsEffect)));
@@ -374,7 +500,7 @@ export class PaneEditor {
   /** The diagnostic under the cursor with its quick fixes (touch has no hover). */
   private renderProblemBar(p: Problem | null, total: number) {
     const bar = this.problemBar;
-    if (!p || this.paused || this.path?.startsWith("ext:")) {
+    if (!p || this.paused || this.path?.startsWith("ext:") || this.previewing()) {
       bar.hidden = true;
       return;
     }
@@ -423,7 +549,7 @@ export class PaneEditor {
   private reportNotebook() {
     const path = this.path;
     const data = notebookOf(this.view.state);
-    const view = isNotebookPath(path) ? (this.views.get(path) ?? "notebook") : null;
+    const view = this.viewOf(path);
     const summary = { path, kind: data?.cells.length ? data.kind : null, cells: data?.cells.length ?? 0, view };
     const key = JSON.stringify(summary);
     if (key === this.lastNotebook) return;
@@ -455,7 +581,10 @@ export class PaneEditor {
 
   notebookCommand(name: string): unknown {
     const view = this.view;
-    if (name === "toggleView") return this.setView(this.views.get(this.path ?? "") === "source" ? "notebook" : "source");
+    if (name === "toggleView") {
+      const other = isMarkdownPath(this.path) ? "preview" : "notebook";
+      return this.setView(this.viewOf(this.path) === "source" ? other : "source");
+    }
     if (!notebookOf(view.state)) return false;
     const active = () => {
       const data = notebookOf(view.state)!;
@@ -479,9 +608,21 @@ export class PaneEditor {
     }
   }
 
-  /** A .ipynb as a notebook or as its JSON. */
-  setView(mode: "notebook" | "source"): { ok: boolean; error?: string } {
+  /** A .ipynb as a notebook or as its JSON; a Markdown file as its preview or its source (D46). */
+  setView(mode: View): { ok: boolean; error?: string } {
     const path = this.path;
+    if (isMarkdownPath(path)) {
+      if (mode === "notebook") return { ok: false, error: "Not a notebook" };
+      if (this.viewOf(path) === mode) return { ok: true };
+      // The other view starts where this one is.
+      const line = mode === "preview" ? this.sourceTopLine() : this.preview.topLine();
+      if (mode === "preview") this.flush();
+      this.views.set(path, mode);
+      this.syncPreview(line);
+      this.reportNotebook();
+      return { ok: true };
+    }
+    if (mode === "preview") return { ok: false, error: "Not a Markdown file" };
     if (!isNotebookPath(path)) return { ok: false, error: "Not a notebook" };
     if ((this.views.get(path) ?? "notebook") === mode) return { ok: true };
     const text = fileText(this.view.state);
@@ -501,7 +642,7 @@ export class PaneEditor {
   }
 
   notebookInfo() {
-    return { path: this.path, view: isNotebookPath(this.path) ? (this.views.get(this.path) ?? "notebook") : null, ...notebookSummary(this.view.state) };
+    return { path: this.path, view: this.viewOf(this.path), ...notebookSummary(this.view.state) };
   }
 
   // -- the host's API ---------------------------------------------------------------------
@@ -515,12 +656,14 @@ export class PaneEditor {
     this.path = path;
     if (path === null) {
       view.setState(this.makeState(null, "", false));
+      this.syncPreview();
       this.updated();
       this.reportNotebook();
       return;
     }
     this.readOnly.set(path, readOnly);
     view.setState(this.states.get(path) ?? this.makeState(path, text, readOnly));
+    this.syncPreview();
     view.dispatch({ effects: [setBreakpointsEffect.of(this.breakpoints), pausedCompartment.reconfigure(this.pausedExt())] });
     this.reportNotebook();
     requestAnimationFrame(() => view.requestMeasure());
@@ -585,8 +728,21 @@ export class PaneEditor {
     const l = doc.line(Math.max(1, Math.min(line, doc.lines)));
     const pos = Math.min(l.to, l.from + Math.max(0, column - 1));
     view.dispatch({ selection: { anchor: pos }, effects: flashEffect.of(l.from) });
-    requestAnimationFrame(() => this.revealPos(pos, false, visibleFraction));
+    if (this.previewing()) void this.preview.rendered.then(() => this.preview.scrollToLine(l.number, true));
+    else requestAnimationFrame(() => this.revealPos(pos, false, visibleFraction));
     setTimeout(() => view.dispatch({ effects: flashEffect.of(null) }), 1400);
+  }
+
+  /** Show a Markdown heading (a link's `#anchor`); false if there is none. */
+  async revealAnchor(anchor: string) {
+    if (!this.previewing()) {
+      const name = anchor.toLowerCase();
+      const heading = markdownOutline(this.view.state).find((s) => slug(s.name) === name || s.name.toLowerCase() === name);
+      if (heading) this.reveal(heading.line);
+      return !!heading;
+    }
+    await this.preview.rendered;
+    return this.preview.scrollToAnchor(anchor);
   }
 
   /** Show a range of lines (the agent's ide_open): selected, scrolled to, the first one flashed. */
@@ -596,7 +752,8 @@ export class PaneEditor {
     const from = doc.line(Math.max(1, Math.min(fromLine, doc.lines)));
     const to = doc.line(Math.max(from.number, Math.min(toLine, doc.lines)));
     view.dispatch({ selection: { anchor: from.from, head: to.to }, effects: flashEffect.of(from.from) });
-    requestAnimationFrame(() => this.revealPos(from.from, false, visibleFraction));
+    if (this.previewing()) void this.preview.rendered.then(() => this.preview.scrollToLine(from.number, true));
+    else requestAnimationFrame(() => this.revealPos(from.from, false, visibleFraction));
     setTimeout(() => view.dispatch({ effects: flashEffect.of(null) }), 1400);
   }
 
@@ -686,6 +843,7 @@ export class PaneEditor {
         this.runOwners.add(next);
       }
     }
+    this.preview.rename(from, to);
     const current = this.path && moved(this.path);
     if (current) this.path = current;
   }
@@ -693,6 +851,7 @@ export class PaneEditor {
   forget(path: string) {
     for (const p of [...this.states.keys()]) if (p === path || p.startsWith(path + "/")) this.states.delete(p);
     for (const p of [...this.views.keys()]) if (p === path || p.startsWith(path + "/")) this.views.delete(p);
+    if (path !== this.path) this.preview.forget(path);
   }
 
   /** Where the cursor is, for go to definition and show info. */
@@ -723,12 +882,14 @@ export class PaneEditor {
   }
 
   async format(): Promise<boolean> {
+    if (isMarkdownPath(this.path)) return false;
     const data = notebookOf(this.view.state);
     if (data?.kind === "ipynb") return formatRanges(this.view, data.cells.filter((c) => c.info.type === "code").map((c) => ({ from: c.from, to: c.to })));
     return formatDocument(this.view);
   }
 
   outline() {
+    if (isMarkdownPath(this.path)) return { symbols: markdownOutline(this.view.state), lines: this.view.state.doc.lines };
     let state = this.view.state;
     if (notebookOf(state)?.kind === "ipynb") state = EditorState.create({ doc: analysisSource(state), extensions: python() });
     return { symbols: outline(state), lines: state.doc.lines };
@@ -760,7 +921,7 @@ export class PaneEditor {
   }
 
   focus() {
-    this.view.focus();
+    if (!this.previewing()) this.view.focus();
   }
 
   blur() {
@@ -793,6 +954,17 @@ export class PaneEditor {
     const doc = this.view.state.doc;
     const l = doc.line(Math.max(1, Math.min(line, doc.lines)));
     this.view.dispatch({ selection: { anchor: Math.min(l.to, l.from + column - 1) } });
+  }
+
+  /** What a Markdown file's preview shows, once it is drawn (self-test). */
+  async markdownInfo() {
+    await this.preview.rendered;
+    return { view: this.viewOf(this.path), editorHidden: this.editorEl.hidden, sourceTop: this.sourceTopLine(), ...this.preview.probe() };
+  }
+
+  /** Tap a link in the preview (self-test). */
+  previewFollow(href: string) {
+    this.preview.follow(href);
   }
 
   /** Run a cell by its index (self-test). */

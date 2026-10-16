@@ -608,6 +608,10 @@ final class AppModel {
             activeSheet = .problems
         case "notebook", "runCells", "stop", "restartKernel", "openURL", "openLocation", "notebookError":
             notebookEditorEvent(pane, type, value)
+        case "openLink":
+            // A link in a Markdown preview to another file (D46).
+            guard let path = value["path"] as? String else { return }
+            Task { await openLink(path, fragment: value["fragment"] as? String ?? "") }
         default:
             break
         }
@@ -941,7 +945,7 @@ final class AppModel {
     // MARK: running
 
     func run() async {
-        guard let file, !isExternal(file) else { return }
+        guard let file, !isExternal(file), !isMarkdown(file) else { return }
         // A notebook runs all its cells, in its kernel (D44).
         if file.hasSuffix(".ipynb") { return notebookCommand("runAll") }
         haptic()
@@ -1086,7 +1090,7 @@ final class AppModel {
     }
 
     func goToDefinition() async -> Any? {
-        guard let c = await cursor() else { return ["skipped": true] }
+        guard let c = await cursor(), !isMarkdown(c.path) else { return ["skipped": true] }
         if isExternal(c.path) {
             showToast("Not available in library files")
             return nil
@@ -1110,7 +1114,7 @@ final class AppModel {
     }
 
     func showInfo() async -> String? {
-        guard let c = await cursor(), !isExternal(c.path) else { return nil }
+        guard let c = await cursor(), !isExternal(c.path), !isMarkdown(c.path) else { return nil }
         let pop = EditorPopover(pane: focused, rect: c.rect ?? CGRect(x: 40, y: 80, width: 1, height: 1), kind: .info(nil))
         popover = pop
         let markdown = (try? await analysis("hover", [c.analysisPath, c.text, c.line, c.column])) as? String ?? ""
@@ -1268,6 +1272,7 @@ final class AppModel {
             await setSplit(true)
             await openFile(other)
         }
+        if let view = hook["view"] { _ = await editorCall(focused, "setView", [view]) } // notebook, preview or source
         if hook["run"] != nil {
             try? await Task.sleep(for: .milliseconds(300))
             await run()

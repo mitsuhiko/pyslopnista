@@ -1573,6 +1573,159 @@ export async function selftest() {
     expect(created === "Tests/nb/fresh.ipynb" && fresh.cells[0].type === "markdown", "template", fresh);
   });
 
+  // -- Markdown files (D46) ------------------------------------------------------------
+
+  const mdInfo = () => editorCall<any>("markdownInfo");
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => `Paragraph ${i + 1} of the filler.`).join("\n\n");
+
+  await step("markdown_preview", async () => {
+    await fs.mkdir("Tests/md/docs").catch(() => {});
+    await fs.mkdir("Tests/md/img").catch(() => {});
+    await fs.writeBase64("Tests/md/img/dot.png", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=");
+    await fs.writeText("Tests/md/code.py", "a = 1\nb = 2\nc = 3\n");
+    await fs.writeText("Tests/md/docs/guide.md", `# Guide\n\n${filler(40)}\n\n## Second part\n\nHere.\n`);
+    const text = [
+      "# Project notes",
+      "",
+      "Some *text*: [the code](code.py#L3), [the guide](docs/guide.md#second-part), [below](#details-here), [json](docs:3.14/library/json.html#json.loads).",
+      "",
+      "![dot](img/dot.png)",
+      "",
+      "```python",
+      "def hello():",
+      "    return 42",
+      "```",
+      "",
+      "| a | b |",
+      "|---|--:|",
+      "| 1 | 2 |",
+      "",
+      "- [x] done",
+      "- [ ] open",
+      "",
+      "<script>window.__mdScript = 1</script>",
+      "<img src=\"x\" onerror=\"window.__mdHandler = 1\">",
+      "",
+      filler(40),
+      "",
+      "## Details here",
+      "",
+      "The end.",
+      "",
+      filler(20),
+      "",
+    ].join("\n");
+    const lines = text.split("\n");
+    const details = lines.indexOf("## Details here") + 1;
+    const path = "Tests/md/README.md";
+    await fs.writeText(path, text);
+    await app.openFile(path);
+    await until(async () => (await app.editorPath()) === path);
+
+    // A file with text opens as its preview, drawn safely.
+    let info = await until(async () => {
+      const i = await mdInfo();
+      return i.path === path && i.blocks.length ? i : null;
+    }, 10000);
+    expect(info.view === "preview" && info.visible && info.editorHidden, "opens as a preview", info);
+    expect((await appCall("markdownView")) === "preview", "the host knows", await appCall("markdownView"));
+    expect(info.headings.join() === "project-notes,details-here", "heading anchors", info.headings);
+    const dot = info.images.find((i: any) => i.path === "Tests/md/img/dot.png");
+    expect(dot?.loaded && dot.src.startsWith("data:image/png"), "image next to the file", info.images);
+    expect(info.highlighted > 2 && info.tables === 1 && info.tasks === 2, "code, table, tasks", info);
+    expect(info.scripts === 0 && info.handlers === 0, "sanitized", info);
+    expect(info.blocks.find((b: any) => b.tag === "h2")?.line === details, "source lines", info.blocks.slice(-4));
+
+    // Go to: headings, and lines reveal in the preview.
+    const outline = await editorCall<any>("outline");
+    expect(outline.symbols.map((s: any) => `${s.kind}:${s.depth}:${s.name}`).join() === "h1:0:Project notes,h2:1:Details here", "outline", outline);
+    await editorCall("reveal", details, 1);
+    info = await until(async () => {
+      const i = await mdInfo();
+      return i.topLine === details ? i : null;
+    }, 3000).catch(async () => {
+      throw new Error(`reveal: ${JSON.stringify(await mdInfo()).slice(0, 300)}`);
+    });
+    await editorCall("reveal", 1, 1);
+    await until(async () => (await mdInfo()).scrollTop === 0, 3000);
+    await editorCall("previewFollow", "#details-here");
+    await until(async () => (await mdInfo()).topLine === details, 3000).catch(async () => {
+      throw new Error(`anchor: ${JSON.stringify(await mdInfo()).slice(0, 300)}`);
+    });
+
+    // The source starts where the preview was; edits show in the preview.
+    await appCall("toggleMarkdown");
+    info = await until(async () => {
+      const i = await mdInfo();
+      return i.view === "source" && !i.editorHidden && Math.abs(i.sourceTop - details) <= 2 ? i : null;
+    }, 3000).catch(async () => {
+      throw new Error(`source view: ${JSON.stringify(await mdInfo()).slice(0, 300)}`);
+    });
+    expect((await appCall("markdownView")) === "source", "the host knows the source", null);
+    await editorCall("setText", `${text}\n## Added\n`);
+    await appCall("toggleMarkdown");
+    info = await until(async () => {
+      const i = await mdInfo();
+      return i.view === "preview" && i.headings.includes("added") ? i : null;
+    }, 3000);
+    await until(async () => (await fs.readText(path)).includes("## Added"), 3000);
+    await editorCall("setText", `${text}\n## Live\n`);
+    await until(async () => (await mdInfo()).headings.includes("live"), 3000);
+
+    // Nothing to run; find works in the preview.
+    session.clear();
+    await app.run();
+    await sleep(300);
+    expect(idle() && !consoleText(), "Run does nothing", consoleText());
+    const found = await appCall<boolean>("findInPreview");
+    expect(found, "find bar", found);
+    return { blocks: info.blocks.length, find: found };
+  });
+
+  await step("markdown_links", async () => {
+    const path = "Tests/md/README.md";
+    // Another file at a line.
+    await app.openFile(path);
+    await until(async () => (await mdInfo()).path === path);
+    await editorCall("previewFollow", "code.py#L3");
+    await until(async () => (await app.currentFile()) === "Tests/md/code.py" && (await editorCall<any>("info")).line === 3, 5000).catch(async () => {
+      throw new Error(`code link: ${await app.currentFile()} ${JSON.stringify(await editorCall<any>("info")).slice(0, 200)}`);
+    });
+    // A Markdown file at a heading.
+    await app.openFile(path);
+    await until(async () => (await mdInfo()).path === path);
+    await editorCall("previewFollow", "docs/guide.md#second-part");
+    const guide = await until(async () => {
+      if ((await app.currentFile()) !== "Tests/md/docs/guide.md") return null;
+      const i = await mdInfo();
+      return i.path === "Tests/md/docs/guide.md" && i.topLine > 40 ? i : null;
+    }, 5000).catch(async () => {
+      throw new Error(`guide link: ${await app.currentFile()} ${JSON.stringify(await mdInfo()).slice(0, 300)}`);
+    });
+    // Back up a folder, and the Python docs.
+    await editorCall("previewFollow", "../README.md");
+    await until(async () => (await app.currentFile()) === path, 5000);
+    await editorCall("previewFollow", "docs:3.14/library/json.html#json.loads");
+    const docs = await until(async () => {
+      const s = await appCall<any>("docsState");
+      return s.shown && s.ref ? s : null;
+    }, 10000);
+    await appCall("closeDocs");
+    // Not there: the file stays.
+    await editorCall("previewFollow", "missing.md");
+    await sleep(300);
+    expect((await app.currentFile()) === path, "missing link", await app.currentFile());
+    // A new note opens to write in.
+    const fresh = await appCall<string>("newFromTemplate", "Tests/md", "fresh", "markdown");
+    await app.openFile(fresh);
+    const info = await until(async () => {
+      const i = await mdInfo();
+      return i.view && (await app.editorPath()) === fresh ? i : null;
+    }, 5000);
+    expect(info.view === "source" && !info.editorHidden, "a new note", info);
+    return { guideTop: guide.topLine, docs: docs.ref };
+  });
+
   await step("typing_console", async () => {
     await fs.writeText("Tests/typing.py", "x = 1\n");
     const { done } = await runFile("Tests/typing.py");

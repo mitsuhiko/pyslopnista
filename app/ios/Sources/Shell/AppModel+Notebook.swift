@@ -11,7 +11,7 @@ struct NotebookPane: Equatable {
     /// "ipynb", "py" (cells in a .py), nil (no cells).
     let kind: String?
     let cells: Int
-    /// A .ipynb's view: "notebook" or "source" (its JSON).
+    /// A .ipynb's view: "notebook" or "source" (its JSON); a Markdown file's: "preview" or "source" (D46).
     let view: String?
 }
 
@@ -36,10 +36,12 @@ extension AppModel {
         case "notebook":
             guard let path = value["path"] as? String else {
                 notebookPanes[pane] = nil
+                markdownViewChanged(pane, nil)
                 return
             }
             let next = NotebookPane(path: path, kind: value["kind"] as? String, cells: value["cells"] as? Int ?? 0, view: value["view"] as? String)
             if notebookPanes[pane] != next { notebookPanes[pane] = next }
+            markdownViewChanged(pane, isMarkdown(path) ? next.view : nil)
         case "runCells":
             guard let path = value["path"] as? String, !isExternal(path) else { return }
             let cells = value["cells"] ?? []
@@ -54,7 +56,10 @@ extension AppModel {
         case "restartKernel":
             restartKernel(value["path"] as? String)
         case "openURL":
-            if let url = value["url"] as? String { Task { _ = await device.openURL(url) } }
+            // docs: links (in Markdown) open the Python docs (D37); the rest outside the app.
+            guard let url = value["url"] as? String else { return }
+            if let link = URL(string: url), openDocsLink(link) { return }
+            Task { _ = await device.openURL(url) }
         case "openLocation":
             // A project file in a cell's traceback (D45), relative to the notebook's folder.
             guard let path = value["path"] as? String, let file = value["file"] as? String,

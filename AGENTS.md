@@ -40,7 +40,8 @@ and file management with a Trash, moving, Quick Look, favorites and
 templates (D41), documented with the Python docs (D42; sources in
 `app/docs/`), and notebooks: `.ipynb` and `# %%` cells run in a kernel
 with rich output (D44), and tracebacks as data, drawn as frames in the
-console and notebooks (D45), and processes: `multiprocessing`
+console and notebooks (D45), and Markdown files as a preview or their
+source, with links between files (D46), and processes: `multiprocessing`
 and `subprocess`, each process a Pyodide worker (D47). Next: the agent on a device (Q22), the rest of D34's list (write
 conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.

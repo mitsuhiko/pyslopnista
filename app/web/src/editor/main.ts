@@ -13,7 +13,7 @@ installThemes();
 const remote = Object.fromEntries(METHODS.map((m) => [m, (...args: unknown[]) => call("analysis", { method: m, args })])) as unknown as AnalysisApi;
 setAnalysis(remote);
 
-const editor = new PaneEditor(document.getElementById("editor")!, document.getElementById("problem-bar")!);
+const editor = new PaneEditor(document.getElementById("editor")!, document.getElementById("problem-bar")!, document.getElementById("preview")!);
 
 type Api = Record<string, (...args: any[]) => unknown>;
 const api: Api = {
@@ -35,7 +35,11 @@ const api: Api = {
   notebookEvents: (path: string, events: any[]) => editor.notebookEvents(path, events),
   notebookCommand: (name: string) => editor.notebookCommand(name),
   notebookInfo: () => editor.notebookInfo(),
-  setView: (mode: "notebook" | "source") => editor.setView(mode),
+  setView: (mode: "notebook" | "preview" | "source") => editor.setView(mode),
+  // Markdown (D46)
+  revealAnchor: (anchor: string) => editor.revealAnchor(anchor),
+  markdownInfo: () => editor.markdownInfo(),
+  previewFollow: (href: string) => editor.previewFollow(href),
   notebookRun: (index: number) => editor.notebookRun(index),
   backspace: () => editor.backspace(),
   frameProbes: () => (window as any).__nbProbes ?? [],

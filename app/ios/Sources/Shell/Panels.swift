@@ -140,7 +140,7 @@ private extension String {
     }
 }
 
-/// "Go to": the file's classes and functions with a filter, and "Go to line N".
+/// "Go to": the file's classes and functions (a Markdown file's headings) with a filter, and "Go to line N".
 struct JumpView: View {
     let initial: String
     @Environment(AppModel.self) private var model
@@ -159,11 +159,13 @@ struct JumpView: View {
                     } label: {
                         HStack(spacing: 8) {
                             if let kind = item.kind {
-                                Text(kind == "class" ? "C" : kind == "method" ? "M" : "ƒ")
+                                // A Markdown heading's kind is its level, "h1" to "h6" (D46).
+                                let heading = kind.hasPrefix("h")
+                                Text(heading ? kind.uppercased() : kind == "class" ? "C" : kind == "method" ? "M" : "ƒ")
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(.white)
-                                    .frame(width: 20, height: 20)
-                                    .background(kind == "class" ? Color.purple : kind == "method" ? Color.teal : Color.blue, in: RoundedRectangle(cornerRadius: 5))
+                                    .frame(width: heading ? 24 : 20, height: 20)
+                                    .background(heading ? Color.orange : kind == "class" ? Color.purple : kind == "method" ? Color.teal : Color.blue, in: RoundedRectangle(cornerRadius: 5))
                                     .padding(.leading, CGFloat(item.depth) * 16)
                             }
                             Text(item.label).font(.body.monospaced())
@@ -174,7 +176,8 @@ struct JumpView: View {
                     .tint(.primary)
                 }
                 if items.isEmpty {
-                    Text(symbols.isEmpty ? "No classes or functions in this file" : "No matching symbols").foregroundStyle(.secondary)
+                    Text(symbols.isEmpty ? (model.file.map(isMarkdown) == true ? "No headings in this file" : "No classes or functions in this file") : "No matching symbols")
+                        .foregroundStyle(.secondary)
                 }
             }
             .listStyle(.plain)

@@ -44,7 +44,8 @@ Tags: **[core]** first release · **[later]** planned · **[maybe]** depends on 
 - [later] Type checking (ty compiled to wasm, or similar)
 - [later] Split view and multiple windows on iPad
 - [later] Vim keybindings
-- [maybe] Editing Markdown, HTML, CSS, JSON and TOML with the same editor
+- [core] Markdown files: a preview with links between files and the source to edit, side by side on iPad (D46)
+- [maybe] Editing HTML, CSS, JSON and TOML with the same editor
 
 ## Console and REPL
 

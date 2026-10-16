@@ -93,6 +93,11 @@ function, for the standard library and the modules above.
 cell by cell in a kernel that keeps its variables; see
 [Notebooks](notebooks.html).
 
+**Markdown.** A `.md` file opens formatted. The pencil button where Run
+is edits it, and the eye button shows it formatted again. Its links open other files
+in the app (`notes.md#a-heading`, `main.py#L12` for a line), and
+`docs:3.14/library/json.html` links open these docs.
+
 **Shortcuts.** A program can get an icon on the Home Screen: "Add to Home
 Screen…" in the ⋯ menu shows how, with the "Run Python Program" action in
 the Shortcuts app. `pyslopnista://run?path=Folder/File.py` links run a

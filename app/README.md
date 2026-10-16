@@ -103,6 +103,7 @@ apps are native views (D30).
   |---|---|
   | Run | ⌘R or F5 |
   | Stop | ⌘. |
+  | Markdown preview / source | ⌘⇧V |
   | Go to line | ⌘L |
   | Go to symbol | ⌘⇧O |
   | Find in folder | ⌘⇧F |
@@ -179,6 +180,18 @@ apps are native views (D30).
     what doesn't apply to cells.
   - New File has a Notebook template; examples: `Notebook.ipynb`,
     `Cells.py`. Docs: `docs/notebooks.md`.
+- **Markdown** (D46): a `.md` opens as a preview, or as its source when
+  there is nothing to read yet (a new note).
+  - The button where Run is (also the ⋯ menu and ⌘⇧V) switches views and
+    keeps the place. On iPad, split view shows the source next to a live
+    preview.
+  - The source is highlighted (fenced Python as Python), wraps, and
+    continues lists on Enter.
+  - The preview shows images next to the file, Python code highlighted,
+    tables and task lists. Find works in it, and Go to lists the headings.
+  - Links open other files (`code.py#L12` at a line, `notes.md#heading` at
+    a heading), folders in the browser, images and PDFs in Quick Look,
+    `docs:` links in the Python docs, and web links outside.
 - **Debugger** (D23):
   - Long-press a line number to set a breakpoint. Long-press it again to
     disable or remove it.
@@ -283,7 +296,7 @@ app/
   web/                    two pages, Vite + TypeScript, no UI framework (D31)
     engine.html           Python and analysis, never shown (src/engine/: commands, state sync)
     editor.html           one CodeMirror pane (src/editor/; notebook.ts: cells, their widgets and
-                          commands; outputs.ts: Markdown, HTML, images, D44)
+                          commands; outputs.ts: Markdown, HTML, images, D44; markdown.ts: .md previews, D46)
     public/runtime/       py-worker.js, hostfs.js (the project folder in Pyodide, D35), sab-polyfill.js,
                           python/_pyslop.py, python/_pyslop_notebook.py (notebook kernels, the IPython
                           shim, magics, D44), python/ui.py (from uikit/), python/_device.py and the
@@ -316,7 +329,7 @@ and call `run.sh`:
 ./run.sh --device                         # on the paired iPhone (unlocked)
 ./run.sh --device --selftest
 SIM=<udid> ./run.sh                       # a specific simulator (e.g. an iPad)
-FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, split=<path>, run, cells (Run All Cells), pane, focus, agent[=accounts|conversations], docs=<version>/<ref>, settings, newfile=<dir>, move=<path>, trash
+FRAGMENT="open=Examples/Plot.py&run" ./run.sh   # launch hooks: open, bp=<lines>, split=<path>, view=preview|source|notebook, run, cells (Run All Cells), pane, focus, agent[=accounts|conversations], docs=<version>/<ref>, settings, newfile=<dir>, move=<path>, trash
 FRAGMENT="selftest&only=debugger" ./run.sh --selftest   # a subset of the checks
 ```
 
@@ -324,11 +337,12 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 "Engine" and one "Editor" per pane.
 ```
 
-## Status (2026-10-15)
+## Status (2026-10-16)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 69
-checks in the iPhone 18 Pro Max simulator, including `traceback_data`
-(D45) (2026-10-15). Before that, it passed all 68 there, including the
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 71
+checks in the iPhone 18 Pro Max simulator, including `markdown_preview`
+and `markdown_links` (D46) (2026-10-16). Before that, it passed all 69
+there, including `traceback_data` (D45) (2026-10-15). Before that, it passed all 68 there, including the
 five notebook checks (D44) (2026-10-15). Before that, it passed all 62
 checks in the iPhone 18 Pro simulator, including `app_docs` and
 `device_example_apps` (D42) (2026-10-15). Before that, 59 passed in the
@@ -402,6 +416,8 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   ends it). The agent edits a `.ipynb` as JSON and can't run cells. Not
   tried on a device or an iPad.
 
+- Markdown (D46): no tap-to-edit in the preview, no checkbox toggling, no
+  math or diagrams. Not tried on a device.
 - Device modules (D40): not tried on a device; the camera, microphone
   and speech recognition untested (the simulator has none). No `cb`,
   `scene`, Pythonista's `ui` API, `appex`, `keyboard` or `editor`; only

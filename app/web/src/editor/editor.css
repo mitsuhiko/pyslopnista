@@ -199,3 +199,54 @@ details[open] > .tb-row::before { transform: rotate(45deg); top: 11px; }
 .cm-line.cm-nb-markdown, .cm-line.cm-nb-raw { padding-left: 6px !important; text-indent: 0 !important; }
 .cm-line.cm-nb-markdown span, .cm-line.cm-nb-raw span { color: inherit !important; font-style: normal !important; font-weight: inherit !important; }
 .nb-header.quiet { min-height: 0; padding: 6px 0 0; }
+
+/* -- Markdown preview (D46) ---------------------------------------------------------------
+   A .md file read as a document, in place of the editor. In the page (not a shadow root)
+   so the web view's find sees it; everything is scoped to .md-preview. */
+.md-preview {
+  position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  background: var(--editor-bg); color: var(--editor-fg);
+  -webkit-user-select: text; user-select: text;
+}
+.md-preview[hidden] { display: none; }
+.md-body {
+  max-width: 46em; margin: 0 auto; padding: 18px 20px calc(30vh + var(--bottom-inset));
+  font: 17px/1.5 -apple-system, system-ui, sans-serif; letter-spacing: -0.2px; overflow-wrap: break-word;
+}
+.md-body > :first-child { margin-top: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 { line-height: 1.25; margin: 1.3em 0 0.5em; font-weight: 700; letter-spacing: -0.3px; }
+.md-body h1 { font-size: 1.75em; }
+.md-body h2 { font-size: 1.4em; }
+.md-body h3 { font-size: 1.18em; }
+.md-body h4, .md-body h5, .md-body h6 { font-size: 1em; }
+.md-body h1, .md-body h2 { padding-bottom: 0.25em; border-bottom: 1px solid var(--fill); }
+.md-body h6 { color: var(--secondary); }
+.md-body p, .md-body ul, .md-body ol, .md-body blockquote, .md-body pre, .md-body .md-table, .md-body dl, .md-body details { margin: 0 0 0.85em; }
+.md-body ul, .md-body ol { padding-left: 1.5em; }
+.md-body li + li, .md-body li > ul, .md-body li > ol { margin-top: 0.25em; }
+.md-body li > ul, .md-body li > ol, .md-body li > p { margin-bottom: 0; }
+.md-body li:has(> input[type=checkbox]) { list-style: none; }
+.md-body li > input[type=checkbox] { margin: 0 0.4em 0 -1.3em; vertical-align: -1px; }
+.md-body a { color: var(--tint); text-decoration: none; }
+.md-body a:active { opacity: 0.6; }
+.md-body strong { font-weight: 650; }
+.md-body code { font: 0.86em var(--mono); background: var(--fill); padding: 0.12em 0.35em; border-radius: 5px; }
+.md-body pre {
+  font: 0.82em/1.5 var(--mono); background: var(--nb-card); padding: 10px 12px; border-radius: 10px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.md-body pre code { background: none; padding: 0; font: inherit; border-radius: 0; }
+.md-body blockquote { margin-left: 0; padding: 0 0 0 12px; border-left: 3px solid var(--tertiary); color: var(--secondary); }
+.md-body hr { border: 0; border-top: 1px solid var(--tertiary); margin: 1.5em 0; }
+.md-body img, .md-body video { max-width: 100%; height: auto; border-radius: 4px; }
+.md-body img.md-missing { display: inline-block; min-width: 2em; min-height: 1.2em; background: var(--fill); }
+.md-body .md-table { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.md-body table { border-collapse: collapse; font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.md-body th, .md-body td { padding: 6px 10px; border: 1px solid var(--fill); text-align: left; vertical-align: top; }
+.md-body th[align=center], .md-body td[align=center] { text-align: center; }
+.md-body th[align=right], .md-body td[align=right] { text-align: right; }
+.md-body th { font-weight: 600; background: var(--nb-card); }
+.md-body details > summary { cursor: pointer; }
+.md-body kbd { font: 0.85em var(--mono); padding: 0.1em 0.4em; border: 1px solid var(--tertiary); border-radius: 4px; }
+.md-body .md-empty { color: var(--secondary); }
+.md-body .md-flash { animation: flash-line 1.4s ease-out; border-radius: 6px; }

@@ -1532,6 +1532,80 @@ chain, and a span on a long line scrolled into view. The notebook view was
 checked in Chrome. The data was also checked with Python 3.14 and 3.15
 in Pyodide under Node. Not tried on a device or an iPad.
 
+## D46: Markdown files open as a preview, with their source a tap away
+
+2026-10-16 - Accepted (GOALS' Markdown editing moves from [maybe] to [core])
+
+The app already rendered Markdown in notebook cells, the agent's answers
+and Show Info, but a `.md` file opened as Python: highlighted as code,
+with Run and breakpoints. READMEs and notes are common in projects, and
+the agent writes them.
+
+**Two views, as a `.ipynb` has (D44).** A pane shows a Markdown file as
+its preview or as its source, remembered per file and pane. A file
+with something to read opens as its preview. A file with nothing but
+headings (a new note, the Notes template) opens as its source, to write
+in. The button where Run is switches between them (Run has nothing to
+run in a `.md`), and so do the ⋯ menu and ⇧⌘V. On an iPad the split view
+gives a live side-by-side preview: one pane shows the source, the other
+the preview. The split view already copies edits into the other pane,
+and the preview redraws on every change, including the agent's.
+
+**The source** is CodeMirror with lang-markdown's GFM parser:
+- Headings, emphasis, links and inline code are highlighted with the
+  theme's colors (D39), and the markup is dimmed.
+- Fenced Python is highlighted as Python, and lists continue on Enter.
+- It always wraps (it is prose), list items and quotes under their text.
+- There is no lint, completion, formatting, Run or breakpoints.
+
+`markdown()` from lang-markdown brings HTML, CSS and JavaScript
+parsers along (200 kB), so the language is put together from its parts
+(60 kB).
+
+**The preview** (`editor/markdown.ts`) is drawn in the editor page,
+which already has marked and DOMPurify (D44). It is drawn in the page
+itself, not in a shadow root, so that the web view's find (UIFindInteraction)
+sees its text. Its styles are scoped to `.md-preview`. `<style>` and
+forms are dropped, along with scripts and handlers as everywhere.
+- Each top-level block is tagged with its first source line. Switching
+  views keeps the place, and Go to (and the agent's `ide_open`) scrolls
+  the preview to the block and flashes it.
+- Go to lists the headings (by level).
+- Fenced Python is highlighted with the editor's own highlighter.
+- Images next to the file are read through the host and shown as data
+  URLs before the page swaps, so it doesn't jump. Web images load as
+  they do in a browser.
+- Links:
+  - `#anchor` scrolls to a heading (GitHub's anchors).
+  - `docs:` opens the Python docs (D37), and so it does in notebook
+    Markdown now too.
+  - Web, `mailto:` and `pyslopnista:` links leave the app.
+  - Relative paths resolve against the file's folder, and a leading `/`
+    against the root of its location. A file opens in the editor, at
+    `#L12` as a line or at `#heading` in another Markdown file. A folder
+    opens in the browser, images and PDFs in Quick Look, and a missing
+    file gives a toast.
+
+Not done: tapping the preview to edit at that place, toggling task list
+checkboxes, math, Mermaid, and the agent opening a file in a chosen view.
+
+Evidence: the self-test's `markdown_preview` covers:
+- the preview on open;
+- heading anchors, an image next to the file, Python highlighting, a
+  table and task lists;
+- sanitizing (a `<script>`, an `onerror`) and source lines;
+- the headings outline, Go to and anchors in the preview;
+- the source starting where the preview was, edits drawn in the
+  preview, and the file saved;
+- Run doing nothing, and the find bar coming up.
+
+`markdown_links` covers a link to a `.py` at a line, to another `.md`
+at a heading, `../`, a `docs:` link, a missing file, and a new note
+opening as its source. All 71 checks pass in the iPhone 18 Pro Max
+simulator (2026-10-16). Screenshots were checked on iPhone (preview and
+source, dark) and iPad (split view, source next to preview, light).
+Not tried on a device.
+
 ## D47: Programs can start processes: each one a Pyodide worker
 
 2026-10-16 - Accepted (was P1; `spikes/processes/`)
@@ -1623,6 +1697,7 @@ rest of the API. Not tried on a device (Q24).
 
 - **Q24:** Processes (D47) on a device. In the simulator an idle Pyodide worker costs about 95 MB of WebContent RSS, and RSS stayed at 1.8-2.1 GB after about 150 short-lived workers (`spikes/processes/`). How many workers fit under the jetsam limit (about 1.9 GB on the iPhone 14 Pro, Q15)? Is the memory of terminated workers returned? What do boot time, `hardwareConcurrency` and speedup look like on 2 performance + 4 efficiency cores? Are the limits (10 processes, `os.cpu_count()` ≤ 4) right?
 - **Q25:** WebKit sometimes delivers the response of a worker's synchronous XHR to the app's scheme handler late: about 1 s in the app, about 3 s in a bare page (`spikes/xhr-wait/`, simulator). The handler has answered within a millisecond. It follows `Atomics.wait` (a sleeping program), never a busy loop. In the app it hits HostFS (D35) about once or twice per run: a file operation, or Stop of a program with child processes (D47), takes a second. Not caused by processes, HostFS, the method or the response. The app's main thread is free, and a message to the worker doesn't end it. The page bridge (`host.call_sync`) never stalled. Open: does it happen on a device? Report it to WebKit, and decide whether HostFS should avoid synchronous XHR (the bridge, or a helper worker making async requests behind a SharedArrayBuffer).
+
 - **Q23:** On a device: the app size with two cores and two sets of docs (about 27 MB of cores and 70 MB of HTML, plus 40 MB of indexes, before App Store compression), memory when workers of both versions are warm, and whether 3.15's Pyodide (Emscripten 6) works in WKWebView there as 3.14's does (D13).
 - **Q21:** Provider terms and App Review for subscription sign-ins (Claude Pro/Max, ChatGPT) used from a third-party app.
 - **Q22:** On a device, does `ASWebAuthenticationSession` reach the app's loopback listener (the simulator shares the Mac's network)? If not, Anthropic, Codex and Radius still have copy-code or device-code sign-ins; Sign in with ChatGPT and OpenRouter would not work.

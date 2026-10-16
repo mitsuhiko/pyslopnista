@@ -422,27 +422,37 @@ private struct EditorChrome: ViewModifier {
 
     private func menu(_ file: String?, external: Bool) -> some View {
         let bps = file.map { model.breakpoints[$0]?.count ?? 0 } ?? 0
+        let markdown = file.map(isMarkdown) ?? false
         return Menu {
             Section {
                 Button { model.activeSheet = .jump("") } label: { Label("Go to…", systemImage: "list.bullet") }
                 Button { Task { _ = await model.goToDefinition() } } label: { Label("Jump to Definition", systemImage: "arrow.forward.to.line") }
-                    .disabled(external)
+                    .disabled(external || markdown)
                 Button { Task { _ = await model.showInfo() } } label: { Label("Show Info", systemImage: "info.circle") }
-                    .disabled(external)
+                    .disabled(external || markdown)
                 Button { model.showDocs() } label: { Label("Python Docs", systemImage: "book") }
             }
             Section {
-                Button { Task { _ = await model.editorCall(model.focused, "command", ["search"]) } } label: { Label("Find", systemImage: "magnifyingglass") }
+                Button { model.find() } label: { Label("Find", systemImage: "magnifyingglass") }
                 Button { model.activeSheet = .find } label: {
                     Label("Find in \(file.map { displayName(dirname($0)) } ?? "Files")…", systemImage: "doc.text.magnifyingglass")
                 }
                 Button { Task { await model.format() } } label: { Label("Format Code", systemImage: "wand.and.stars") }
-                    .disabled(external || model.notebook?.view == "source")
+                    .disabled(external || markdown || model.notebook?.view == "source")
                 Button { model.activeSheet = .problems } label: { Label("Show Problems", systemImage: "exclamationmark.triangle") }
                     .disabled(model.problems[min(model.focused, 1)].total == 0)
             }
             if let notebook = model.notebook, let file {
                 notebookSection(notebook, file)
+            }
+            if let view = model.markdownView {
+                Section {
+                    Button { model.toggleMarkdownView() } label: {
+                        view == "preview"
+                            ? Label("Edit Markdown", systemImage: "pencil")
+                            : Label("Show Preview", systemImage: "eye")
+                    }
+                }
             }
             if bps > 0, let file {
                 Section {
@@ -451,7 +461,7 @@ private struct EditorChrome: ViewModifier {
                     }
                 }
             }
-            if let file, !external {
+            if let file, !external, !markdown {
                 Section {
                     pythonMenu(file)
                 }
@@ -564,6 +574,11 @@ struct RunButton: View {
         } else if (s.running && s.runningFile == file) || (s.running && file == nil) {
             styled(Button { model.stop() } label: { symbol("stop.fill", .red) }, .red)
                 .accessibilityLabel("Stop")
+        } else if let view = model.markdownView {
+            // A Markdown file has nothing to run: here it switches between its preview and its source (D46).
+            let previewing = view == "preview"
+            styled(Button { model.toggleMarkdownView() } label: { symbol(previewing ? "pencil" : "eye", .accentColor) }, .accentColor)
+                .accessibilityLabel(previewing ? "Edit Markdown" : "Show Preview")
         } else {
             let disabled = file == nil || s.running || file.map(isExternal) == true
             styled(Button { Task { await model.run() } } label: { symbol("play.fill", disabled ? .secondary : .accentColor) }, .accentColor)
