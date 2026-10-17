@@ -62,7 +62,8 @@ if [ "$TARGET" = simulator ]; then
   exit 1
 fi
 
-DEVICE="${DEVICE:-$(xcrun devicectl list devices 2>/dev/null | grep physical | grep -E 'available|connected' | grep -oE '[0-9A-F]{8}-[0-9A-F]{16}' | head -1)}"
+# Xcode 27's devicectl lists simulators too (Reality: simulated); older ones said "physical".
+DEVICE="${DEVICE:-$(xcrun devicectl list devices 2>/dev/null | grep -v simulated | grep -E 'available|connected' | grep -oE '[0-9A-F]{8}-[0-9A-F]{16}' | head -1 || true)}"
 [ -n "$DEVICE" ] || { echo "no paired device" >&2; exit 1; }
 xcodebuild -project ios/Pyslopnista.xcodeproj -scheme Pyslopnista -configuration Release \
   -destination "id=$DEVICE" -derivedDataPath build/dd -allowProvisioningUpdates build > build/xcodebuild.log 2>&1 \
