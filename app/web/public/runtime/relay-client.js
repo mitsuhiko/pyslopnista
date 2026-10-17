@@ -28,10 +28,11 @@ export function createRelayClient(channel) {
     while (Atomics.load(ints, 0) === REQUEST) Atomics.wait(ints, 0, REQUEST);
   }
 
-  /** fetch(), blocking: {status, headers (lowercase names), body: Uint8Array}.
-   * A network error throws. */
-  return function fetchSync(url, { method = "GET", headers = {}, body = null } = {}) {
-    const json = encoder.encode(JSON.stringify({ url, method, headers }));
+  /** fetch(), blocking: {status, statusText, headers (lowercase names), body:
+   * Uint8Array}. A network error throws (with `timeout` set when the
+   * request took longer than `timeout` ms; 0 waits forever). */
+  return function fetchSync(url, { method = "GET", headers = {}, body = null, timeout = 0 } = {}) {
+    const json = encoder.encode(JSON.stringify({ url, method, headers, timeout }));
     const request = new Uint8Array(4 + json.length + (body?.length ?? 0));
     new DataView(request.buffer).setUint32(0, json.length, true);
     request.set(json, 4);
@@ -63,7 +64,7 @@ export function createRelayClient(channel) {
     }
     const n = new DataView(response.buffer, response.byteOffset).getUint32(0, true);
     const meta = JSON.parse(decoder.decode(response.subarray(4, 4 + n)));
-    if (meta.error) throw new Error(`Network error: ${meta.error}`);
-    return { status: meta.status, headers: meta.headers, body: response.subarray(4 + n) };
+    if (meta.error) throw Object.assign(new Error(`Network error: ${meta.error}`), { timeout: !!meta.timeout });
+    return { status: meta.status, statusText: meta.statusText ?? "", headers: meta.headers, body: response.subarray(4 + n) };
   };
 }

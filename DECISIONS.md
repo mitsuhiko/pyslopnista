@@ -1731,13 +1731,95 @@ Still synchronous XHRs: HTTP from Python programs (D25: urllib through
 pyodide-http, requests, `open_url`) to `/__http`. They could go
 through the relay too.
 
+Update 2026-10-17: they do. A program's synchronous XHR to `/__http` never
+opens; `py-worker.js` sends it through the relay and answers the XHR's
+getters (status, headers, `response` for each `responseType`, the final
+URL), its events and its timeout from the relay's response. The `http`
+self-test check covers it after a `time.sleep()`.
+
+## D49: Recursion through C code: warmed-up interpreters, and the crash as a RecursionError
+
+2026-10-17 - Accepted (answers Q14)
+
+CPython's stack check can't catch a worker's native stack overflow
+(D16). It measures the linear (Emscripten) stack, and the linear stack a C
+call uses has nothing to do with the native stack it uses: at the overflow,
+cases had used 0.9-234 KB of it, while `import pandas` uses 96 KB without
+any trouble. A smaller stack protection
+(`PyUnstable_ThreadState_SetStackProtection`) would break normal programs
+and still miss most crashes. In async runs it doesn't even apply: Pyodide
+gives each JSPI task its own thread state with the default limits.
+
+What the app does instead:
+- **Warm-up:** every new worker runs `_pyslop_warmup.py` (about 20 ms in
+  the simulator) before it waits as a spare. It runs the usual paths
+  through C code (`lru_cache`, `map()`, `__repr__`, `json`, `==`, `yield
+  from`) a few hundred times, so JSC compiles them with its optimizing
+  tier, whose native frames are much smaller. Recursion through them gets
+  1.5-6 times deeper before the crash: `@lru_cache` recursion 79 -> 265,
+  `map()` 114 -> 372, `json.loads` 187 -> 1178. Paths it doesn't run don't
+  improve. `?warm=0` turns it off.
+- **The crash as a traceback:** when Pyodide fails, the worker walks the
+  Python stacks of all thread states with the C API (Pyodide's own dump
+  shows the main thread state, not the program's task) and sends the
+  deepest one with the crash. The page shows it as `RecursionError:
+  maximum recursion depth exceeded (Python ran out of stack space and was
+  restarted)`, with the program's frames and the repeated one folded
+  (`trace.ts`, `crashTrace`). The program can't catch it; the run counts as
+  crashed and the next one gets a new interpreter.
+- **Plain Python recursion** never touches the native stack (100,000
+  levels work), so `sys.setrecursionlimit()` stays as it is.
+
+The real fix is upstream: CPython counting C recursion on Emscripten as
+well as the stack pointer, a native-stack check in Pyodide, or bigger
+worker stacks in WebKit.
+
+Evidence: `spikes/native-stack/` (simulator; its worker has the device's
+512 KB stack). The `crash_recovery` self-test check runs a deep `repr` and
+`@lru_cache` recursion 5000 deep: both show a RecursionError at the right
+line (the recursion got 288 deep), and the next run works. All 79 checks
+pass in the iPhone 18 Pro simulator (2026-10-17). Not tried on a device.
+
+## D50: Python's heaps share a memory budget, and the console survives iOS ending the engine
+
+2026-10-17 - Accepted (answers Q15)
+
+iOS ends the web content process at about 1.9 GB on the iPhone 14 Pro
+(`spikes/device-perf/`) without a `MemoryError`, and all Python workers
+live in the engine page's process.
+- **The budget:** the host sets one for all Python heaps together:
+  0.22 times the device's memory, 512 MB to 3 GB (1.3 GB on a 6 GB
+  iPhone), leaving room for the rest of the page. Each worker wraps
+  `WebAssembly.Memory.prototype.grow`, and the workers count their pages
+  in a SharedArrayBuffer (`python.ts`). A heap that would grow past the
+  budget doesn't: Emscripten's `malloc` returns NULL and Python raises
+  `MemoryError`. An ended worker's pages no longer count. After a
+  `MemoryError`, the console says how much memory Python has.
+- **Recovery:** if iOS ends the process anyway, the host reloads the page
+  (as before) and gives the new one the console it still has
+  (`restoreSession`). A program that was running is marked crashed and
+  says why; its dialogs, sensors and a notebook's kernel end. Turtle
+  drawings stay.
+
+Not covered: memory outside the heaps (the workers' JavaScript, the
+analysis worker, the agent), and terminated workers whose memory WebKit
+returns late (`spikes/processes/`).
+
+Evidence: the self-test's `memory_budget` check (a 300 MB budget: a
+program fills it in 16 MB pieces, gets `MemoryError` at 256 MB, frees it
+and goes on) and `engine_recovery` (the self-test ends the engine's process
+through WKWebView's `_killWebContentProcess` while a program runs; the new
+page shows the old console and the crashed run, and runs programs). All 79
+checks pass in the iPhone 18 Pro simulator (2026-10-17). The budget
+hasn't been tried on a device, where it matters.
+
 ## Proposed (not yet decided)
 
 (none)
 
 ## Open questions
 
-- **Q25:** WebKit sometimes delivers the response of a worker's synchronous XHR to the app's scheme handler late: about 1 s in the app, about 3 s in a bare page (`spikes/xhr-wait/`, simulator). The handler has answered within a millisecond. It follows `Atomics.wait` (a sleeping program), never a busy loop. HostFS no longer uses synchronous XHRs (D48). Open: does it happen on a device? Report it to WebKit. Move Python programs' synchronous HTTP (D25, `/__http`) to the relay too?
+- **Q25:** WebKit sometimes delivers the response of a worker's synchronous XHR to the app's scheme handler late: about 1 s in the app, about 3 s in a bare page (`spikes/xhr-wait/`, simulator). The handler has answered within a millisecond. It follows `Atomics.wait` (a sleeping program), never a busy loop. The app no longer makes synchronous XHRs from Python workers: HostFS and programs' HTTP go through a fetch relay (D48). Open: report it to WebKit (a draft is in `spikes/xhr-wait/README.md`), and whether it happens on a device.
 
 - **Q21:** Provider terms and App Review for subscription sign-ins (Claude Pro/Max, ChatGPT) used from a third-party app.
 - **Q2:** Can WebKit evict `app://` web storage? It survives relaunch and reinstall, but `persist()` is denied (`spikes/ios-host/`).
@@ -1748,7 +1830,6 @@ through the relay too.
 - **Q9:** App Review: guideline 2.5.2 (learning-to-code exception), 4.7 (gallery of user apps), 1.2 (user-generated content).
 - **Q10:** Model access for learners: hosted gateway, billing, in-app purchase rules.
 - **Q13:** File the upstream reports listed in `spikes/jspi-repro/README.md` (CPython UA check, Pyodide lost `SuspendError`, WebKit `Suspending` callable).
-- **Q14:** Make CPython raise `RecursionError` before the worker's native stack overflows, e.g. by lowering `c_stack_soft_limit` to match the measured native capacity, or report it to Pyodide/CPython (`spikes/device-perf/`).
 - **Q16:** Lock files / reproducible installs: write a lock (e.g. PEP 751 `pylock.toml` or micropip's freeze) per script, and decide whether uv resolves it (linked into the iOS host, or as a service), which needs a 3.14 Pyodide target in uv.
 - **Q17:** Type information for third-party packages in ty: feed installed packages (or their stubs) into ty's in-memory file system as `extra-paths`.
 - **Q18:** ty in a WebKit worker on larger files: watch for native stack overflows (D16); fall back to running ty on the main thread if needed.
@@ -1757,4 +1838,3 @@ through the relay too.
   (JSPI `await`); it stops when Python resumes. Conditional breakpoints and
   hardware-keyboard shortcuts (⌘. / F6-F8) are not built yet.
 - **Q20:** iCloud sync between devices: the app's own iCloud Drive container needs the iCloud entitlement (paid developer account). Until then, linked folders (D28) reach iCloud Drive.
-- **Q15:** Memory: iOS kills WebContent at about 1.9 GB (iPhone 14 Pro) without a `MemoryError`. Cap the wasm heap below the jetsam limit, and have the host recover from WebContent termination (recreate the web view, report "out of memory").

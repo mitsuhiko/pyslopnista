@@ -122,7 +122,8 @@ apps are native views (D30).
   autocorrection or smart punctuation, enforced natively.
 - **HTTP** (D25): `requests`, `urllib`, `httpx` and `pyfetch` work without
   CORS limits. Cross-origin requests from Python go through the host, which
-  makes them with `URLSession`; a custom `User-Agent` works too. Example:
+  makes them with `URLSession`; a custom `User-Agent` works too. Blocking
+  requests go through the fetch relay, not synchronous XHRs (D48). Example:
   `Web Requests.py`.
 - **Run / Stop**: the file's folder is the program's working directory, used
   in place (D35): `open()`, `sqlite3` (with its journal, on the real
@@ -255,8 +256,14 @@ apps are native views (D30).
   - **Sign-in** runs pi-ai's own flows in a browser sheet. Credentials stay
     in the Keychain (D33).
   - Pick the model from ⋯ → Model.
-- **Crashes**: a native stack overflow ends the run with "Python crashed" and
-  the next run gets a fresh interpreter (D16).
+- **Crashes**: a native stack overflow (deep recursion through C code) ends
+  the run with a `RecursionError` traceback at the program's frames, and
+  the next run gets a fresh interpreter (D16, D49). New interpreters warm up
+  first, which makes such recursion 1.5-6 times deeper (`_pyslop_warmup.py`).
+- **Memory** (D50): all Python heaps share a budget (about 0.22 of the
+  device's memory); past it a program gets `MemoryError` and the console says
+  how much there is. If iOS ends the engine's process anyway, the new page
+  gets the console back and the running program is marked crashed.
 - **Layouts**: on iPhone, Files → Code/Console; on iPad, a sidebar with the
   editor and console side by side (stacked in portrait).
 
@@ -298,7 +305,8 @@ app/
     editor.html           one CodeMirror pane (src/editor/; notebook.ts: cells, their widgets and
                           commands; outputs.ts: Markdown, HTML, images, D44; markdown.ts: .md previews, D46)
     public/runtime/       py-worker.js, hostfs.js (the project folder in Pyodide, D35), sab-polyfill.js,
-                          fetch-relay.js and relay-client.js (HostFS's requests without synchronous XHRs, D48),
+                          fetch-relay.js and relay-client.js (blocking requests without synchronous XHRs, D48),
+                          python/_pyslop_warmup.py (deeper recursion through C code, D49),
                           python/_pyslop.py, python/_pyslop_notebook.py (notebook kernels, the IPython
                           shim, magics, D44), python/ui.py (from uikit/), python/_device.py and the
                           device modules (clipboard.py, dialogs.py, photos.py, ..., D40),
@@ -338,9 +346,13 @@ The pages can be inspected with Safari's Web Inspector (Develop → Simulator):
 "Engine" and one "Editor" per pane.
 ```
 
-## Status (2026-10-16)
+## Status (2026-10-17)
 
-Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 71
+Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 79
+checks in the iPhone 18 Pro simulator, including `crash_recovery` with a
+RecursionError traceback (D49), `memory_budget` and `engine_recovery`
+(D50, the last check: it ends the engine's process and finishes in the new
+page) (2026-10-17). Before that, it passed all 71
 checks in the iPhone 18 Pro Max simulator, including `markdown_preview`
 and `markdown_links` (D46) (2026-10-16). Before that, it passed all 69
 there, including `traceback_data` (D45) (2026-10-15). Before that, it passed all 68 there, including the
@@ -437,6 +449,15 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   - No per-turn undo.
   - A write to a file you are typing in replaces the editor's text.
   - No teaching mode.
+
+- Stack and memory (D49, D50):
+  - Recursion through C code still crashes the interpreter after a few
+    hundred levels (plain Python recursion is fine); a program can't catch
+    that RecursionError. The fix is upstream.
+  - The memory budget is a heuristic and hasn't been tried on a device. It
+    only counts the Python heaps, not the rest of the page.
+  - When iOS ends the engine's process, a notebook's kernel (its
+    variables) and a paused debugger are gone; the console comes back.
 
 - The problem bar is still HTML inside the editor page.
 - Turtle screens in the console fit the width but not the console's height.

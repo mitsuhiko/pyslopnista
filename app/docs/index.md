@@ -79,6 +79,17 @@ from rich import print
 the block above picks another bundled version, like the 3.15 preview. The
 ⋯ menu shows the version and can pin the folder to one.
 
+**Memory and recursion.** Programs can use about a fifth of the device's
+memory together (about 1.3 GB on an iPhone with 6 GB); past that, Python
+raises `MemoryError`, and the console says how much there is. The stack is
+smaller than on a computer: plain Python recursion goes 1000 levels deep as
+usual (`sys.setrecursionlimit()` raises that), but recursion through code
+written in C, like `functools.lru_cache`, `map()`, `__repr__` or `json` of
+deeply nested data, can run out after a few hundred levels. Python then
+stops with a `RecursionError` that shows where, and the next run starts a
+fresh Python. If iOS ever ends Python for using too much memory, the console
+keeps what it showed and says so.
+
 **HTTP.** `requests`, `httpx`, `urllib` and `pyodide.http.pyfetch` work for
 any site. There are no raw sockets and no threads, but there are
 [processes](processes.html).

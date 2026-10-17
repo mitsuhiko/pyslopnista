@@ -112,6 +112,33 @@ export async function selftest() {
     return { done, t0 };
   }
 
+  // engine_recovery ended the last page's process (D50): this page replaced
+  // it. Check what it got from the host, then report everything.
+  const stash = await appCall<string | null>("takeStash").catch(() => null);
+  if (stash) {
+    Object.assign(r, JSON.parse(stash));
+    await step("engine_recovery", async () => {
+      // The console came back, and the program that was running says why it ended.
+      const text = await until(() => {
+        const t = consoleText();
+        return t.includes("before the end") && t.includes("Python was stopped") ? t : null;
+      }, 15000).catch(() => {
+        throw new Error(`restored: ${consoleText().slice(-400)}`);
+      });
+      const run = Object.values(session.getSnapshot().runs).find((x) => x.file === "Tests/recover.py");
+      if (run?.status !== "crashed") throw new Error(`run: ${JSON.stringify(run)}`);
+      // Python works in the new page, and the console keeps growing after the old lines.
+      await fs.writeText("Tests/after.py", "print('alive after the reload')\n");
+      const { done } = await runFile("Tests/after.py");
+      await done;
+      if (!consoleText().includes("alive after the reload")) throw new Error(consoleText().slice(-400));
+      return { restoredChars: text.length };
+    });
+    await fs.remove("Tests").catch(() => {});
+    await call("result", JSON.stringify(r, null, 2));
+    return;
+  }
+
   // Breakpoints live in the web view's storage, which --reset does not clear.
   breakpoints.clearAll();
   await app.setSplit(false); // a split view restored from the last session
@@ -739,13 +766,65 @@ export async function selftest() {
   });
 
   await step("crash_recovery", async () => {
+    // Recursion through C code runs out of the worker's native stack (D16):
+    // the run crashes and shows where, as a RecursionError (D49).
     await fs.writeText("Tests/deep.py", "x = []\nfor _ in range(50000): x = [x]\nprint(len(repr(x)))\n");
     await runFile("Tests/deep.py");
     await until(idle);
-    if (!consoleText().includes("Python crashed")) throw new Error(consoleText());
-    await runFile("Tests/edit.py", "print('alive again')\n");
+    let trace = await until(() => lastTrace(), 5000).catch(() => undefined);
+    let exc = trace?.exceptions[0];
+    if (!exc || exc.type !== "RecursionError" || exc.frames.at(-1)?.line !== 3 || exc.frames.at(-1)?.context?.lines[0] !== "print(len(repr(x)))") {
+      throw new Error(`repr: ${JSON.stringify(trace) ?? consoleText()}`);
+    }
+    if (Object.values(session.getSnapshot().runs).at(-1)?.status !== "crashed") throw new Error("not crashed");
+    // Recursion through a C-implemented decorator: the repeated frame is folded.
+    await fs.writeText("Tests/deep_cached.py", "import functools\n\n@functools.lru_cache(None)\ndef f(n):\n    return f(n - 1) + 1 if n else 0\n\nprint(f(5000))\n");
+    await runFile("Tests/deep_cached.py");
+    await until(idle);
+    trace = await until(() => lastTrace()?.exceptions[0].frames.some((f) => f.name === "f") && lastTrace(), 5000).catch(() => undefined);
+    exc = trace?.exceptions[0];
+    const f = exc?.frames.find((x) => x.name === "f");
+    if (!f || f.line !== 5 || !(f.repeat! > 10) || !trace!.text.includes("Previous line repeated")) throw new Error(`lru_cache: ${JSON.stringify(trace) ?? consoleText()}`);
+    await fs.writeText("Tests/alive.py", "print('alive again')\n");
+    await runFile("Tests/alive.py");
     await until(idle);
     if (!consoleText().includes("alive again")) throw new Error(consoleText());
+    return { repeat: f.repeat };
+  });
+
+  await step("memory_budget", async () => {
+    // The heaps of all Python workers share a budget (D50): past it, a
+    // program gets MemoryError instead of iOS ending the page's process.
+    const { memoryUse, setMemoryBudget } = await import("./python");
+    const before = memoryUse();
+    if (!before.budget) throw new Error("no budget from the host");
+    setMemoryBudget(before.used + (300 << 20));
+    try {
+      await fs.writeText("Tests/memory.py", [
+        "chunks = []",
+        "try:",
+        "    while True:",
+        "        chunks.append(bytearray(16 << 20))",
+        "except MemoryError:",
+        "    print('stopped at', len(chunks) * 16, 'MB')",
+        "chunks.clear()",
+        "x = bytearray(64 << 20)",
+        "print('still works')",
+        "bytearray(1 << 30)",
+        "",
+      ].join("\n"));
+      const { done } = await runFile("Tests/memory.py");
+      await done;
+      const out = consoleText();
+      const stopped = Number(/stopped at (\d+) MB/.exec(out)?.[1]);
+      if (!(stopped > 64 && stopped <= 300) || !out.includes("still works")) throw new Error(out.slice(-600));
+      if (lastTrace()?.exceptions.at(-1)?.type !== "MemoryError" || !out.includes("Python programs can use about")) throw new Error(out.slice(-600));
+      const used = memoryUse().used;
+      if (used > before.used + (300 << 20)) throw new Error(`used ${Math.round(used / 2 ** 20)} MB`);
+      return { stoppedMB: stopped, budgetMB: Math.round(before.budget / 2 ** 20), usedMB: Math.round(used / 2 ** 20) };
+    } finally {
+      setMemoryBudget(before.budget);
+    }
   });
 
   // -- code intelligence and dependencies -------------------------------------------
@@ -1399,6 +1478,15 @@ export async function selftest() {
       "print('httpx', httpx.get('https://httpbin.org/status/202').status_code)",
       "from pyodide.http import pyfetch",
       "print('pyfetch', (await pyfetch('https://httpbin.org/status/203')).status)",
+      // A blocking XHR goes through the fetch relay (Q25), with what XHR does.
+      "import js, time",
+      "time.sleep(1)",
+      "x = js.XMLHttpRequest.new()",
+      "x.open('POST', 'https://httpbin.org/post?a=1', False)",
+      "x.setRequestHeader('X-Test', 'yes')",
+      "x.send('body text')",
+      "d = __import__('json').loads(x.responseText)",
+      "print('relayed', x.status, x.readyState, d['data'], d['headers']['X-Test'], d['args'], js._pyslopRelayedRequests > 1)",
       "try:",
       "    requests.get('https://does-not-exist.invalid/', timeout=5)",
       "except requests.ConnectionError:",
@@ -1410,7 +1498,7 @@ export async function selftest() {
     await done;
     await until(idle, 60000);
     const out = consoleText();
-    for (const want of ["get 200 {'q': 'x'} pyslop-test/1", "post 200 {'a': 1}", "urllib 201", "httpx 202", "pyfetch 203", "connection error ok"]) {
+    for (const want of ["get 200 {'q': 'x'} pyslop-test/1", "post 200 {'a': 1}", "urllib 201", "httpx 202", "pyfetch 203", "relayed 200 4 body text yes {'a': '1'} True", "connection error ok"]) {
       if (!out.includes(want)) throw new Error(out.slice(-600));
     }
     return { ms: Math.round(performance.now() - t0) };
@@ -2123,6 +2211,19 @@ export async function selftest() {
     await until(async () => !(await appCall("docsState")).shown, 5000);
     await appCall("closeSheet");
   });
+
+  // Last: iOS ends the engine's process (D50). The host reloads the page, which
+  // gets the console back and finishes the self-test (above).
+  if (!only || new RegExp(only).test("engine_recovery")) {
+    await fs.writeText("Tests/recover.py", "import time\nprint('before the end')\ntime.sleep(60)\n");
+    const { done } = await runFile("Tests/recover.py");
+    done.catch(() => {});
+    await until(() => consoleText().includes("before the end"), 30000);
+    await appCall("stashResults", JSON.stringify(r));
+    if (await appCall<boolean>("killEngine")) return; // this page ends here
+    r.engine_recovery = { ok: false, error: "WKWebView has no _killWebContentProcess" };
+    session.stop();
+  }
 
   await fs.remove("Tests").catch(() => {});
   await call("result", JSON.stringify(r, null, 2));

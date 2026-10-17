@@ -11,7 +11,9 @@ Stop of programs with child processes (D47).
 instead (D48): a worker that never blocks makes the requests
 asynchronously, and the Python worker waits on a SharedArrayBuffer. No
 stalls since in over 100 calls right after a sleep, against 9 of 36 with
-the synchronous XHR. The WebKit report and a device run are still open.
+the synchronous XHR. Programs' blocking HTTP goes through it too (D48,
+2026-10-17). The WebKit report (draft below) and a device run are still
+open.
 
 **Answer (so far):** WebKit sometimes delivers the response of a
 synchronous XHR from a worker late.
@@ -106,10 +108,49 @@ process, but it can't be seen from outside.
 
 - **A device:** try on a real device, with both this spike and the app
   (needs the phone).
-- **Report it to WebKit** with this spike, next to Q13's reports.
+- **Report it to WebKit** with this spike, next to Q13's reports (draft
+  below, not filed yet).
 - **Workarounds** (each changes D35):
   - HostFS over the bridge, which never stalled but costs about twice as
     much per call (`spikes/host-fs`), or only for metadata calls.
   - A helper worker that makes the requests asynchronously and hands the
     results back through a SharedArrayBuffer. That wait would be an
     `Atomics.wait`, not a synchronous XHR. Built into the app (D48).
+
+## WebKit report (draft, 2026-10-17)
+
+For bugs.webkit.org (component: Web Workers or Networking), with this
+spike attached.
+
+**Title:** A worker's synchronous XHR is answered about a second late
+after the worker waited in `Atomics.wait` (WKWebView, custom scheme)
+
+**Summary:** In a dedicated worker that blocked in `Atomics.wait` (with a
+timeout, or woken by `Atomics.notify`), the next synchronous
+XMLHttpRequest to the page's `WKURLSchemeHandler` sometimes returns about
+1000 ms late (about 3000 ms in a page without other activity). The scheme
+handler has received the request and answered it within 1-2 ms; the delay
+is between its `didFinish` and the response reaching the worker. A
+`setTimeout(0)` in the same worker is late by as much, so the whole
+worker seems to wait. It never happens after a busy loop of the same
+length, and requests made over `postMessage` to the page, or with an
+asynchronous XHR from another worker, are not delayed.
+
+**Steps:**
+1. Build and run `spikes/xhr-wait` (`./run.sh`, iOS simulator): a
+   WKWebView with an `app://` scheme handler that answers `/__echo` at
+   once, with the time it handled the request in `X-Handled-At`.
+2. Each case starts a worker that blocks with `Atomics.wait` (0.1-5 s)
+   and then makes synchronous XHRs to `/__echo`, timing request -> handler
+   and handler -> response.
+
+**Expected:** the response arrives within a few milliseconds of the
+handler's answer, as it does after a busy loop.
+
+**Actual:** 0-7 of 208 requests per run take 3004-3006 ms (1000-1008 ms in
+our app, where it happens once or twice per program run); handler ->
+response is the whole delay.
+
+**Environment:** Xcode 27, iOS 27 simulator (iPhone 18 Pro Max), WKWebView
+with `inactiveSchedulingPolicy = .none`, cross-origin isolated
+(COOP/COEP from the scheme handler).

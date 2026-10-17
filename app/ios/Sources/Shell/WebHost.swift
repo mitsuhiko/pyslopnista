@@ -209,17 +209,31 @@ final class WebHost: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDele
     }
 
     var onTerminate: (Role) -> Void = { _ in }
+    /// The self-test ends the engine's process on purpose (`killWebContent`).
+    private var expectedTermination: ObjectIdentifier?
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        // Usually memory pressure (D16/Q15). Reload; files are on disk.
+        // Usually memory pressure (D16, D50). Reload; files are on disk, and the
+        // app model hands the console to the new page.
         guard let role = roles[ObjectIdentifier(webView)] else { return }
         Self.appendDocument(".probe-log.txt", "[host] web content process terminated (\(role))\n")
-        if CommandLine.arguments.contains("--selftest") {
+        if CommandLine.arguments.contains("--selftest"), expectedTermination != ObjectIdentifier(webView) {
             try? #"{"webContentTerminated": true}"#.write(to: Self.documentURL(".probe-result.json"), atomically: true, encoding: .utf8)
             return
         }
+        expectedTermination = nil
         onTerminate(role)
         webView.reload()
+    }
+
+    /// Ends the page's web content process, as iOS does under memory pressure
+    /// (self-test only; WKWebViewPrivate's `_killWebContentProcess`).
+    func killWebContent(_ webView: WKWebView) -> Bool {
+        let selector = NSSelectorFromString("_killWebContentProcess")
+        guard webView.responds(to: selector) else { return false }
+        expectedTermination = ObjectIdentifier(webView)
+        webView.perform(selector)
+        return true
     }
 
     // MARK: native dialogs for alert/confirm/prompt (turtle's textinput, ...)

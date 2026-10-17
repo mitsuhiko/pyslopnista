@@ -210,6 +210,19 @@ final class AppModel {
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var restored = false
     @ObservationIgnored let selftest = CommandLine.arguments.contains("--selftest")
+    /// The console of an engine page iOS ended (D50), for the page that replaces it.
+    @ObservationIgnored private var lostSession: String?
+    /// The self-test's results while its page is replaced (`engine_recovery`).
+    @ObservationIgnored var selftestStash: String?
+
+    /// What the heaps of all Python programs may use together (D50). iOS ends
+    /// the web content process without a MemoryError at about 1.9 GB on a
+    /// 6 GB iPhone 14 Pro (spikes/device-perf); the rest of the page (workers'
+    /// JavaScript, analysis, the agent) needs room too.
+    static var pythonMemoryBudget: Int {
+        let ram = Double(ProcessInfo.processInfo.physicalMemory)
+        return Int(min(max(ram * 0.22, 512 * 1_048_576), 3 * 1_073_741_824))
+    }
 
     static let maxTabs = 10
 
@@ -257,6 +270,7 @@ final class AppModel {
                 self?.engine.markNotReady()
                 self?.agentHost.engineTerminated()
                 self?.host.unmountAll() // its interpreters are gone
+                self?.engineLost()
             case .editor(let i): self?.editors[i].markNotReady()
             }
         }
@@ -388,7 +402,11 @@ final class AppModel {
         case (.engine, "engine.ready"):
             engine.markReady()
             host.unmountAll() // left by a page that reloaded
+            let lost = lostSession
+            lostSession = nil
             Task {
+                await command("setMemoryBudget", ["bytes": Self.pythonMemoryBudget])
+                if let lost { await command("restoreSession", ["json": lost]) }
                 await command("setDefaultPython", ["python": defaultPython])
                 await command("setBreakpoints", ["data": breakpointsJSON()])
                 await syncAnalysisRoot(force: true)
@@ -475,6 +493,18 @@ final class AppModel {
     }
 
     // MARK: session changes
+
+    /// iOS ended the engine's process (D50): keep the console for the page
+    /// that replaces it, and end what its programs had on screen.
+    private func engineLost() {
+        lostSession = session.snapshotJSON()
+        device.reset() // its dialogs, sensors and sounds
+        for scene in turtles.values { scene.setState(live: false, active: false, pointer: false, keys: false) }
+        if let kernel = session.kernel {
+            notebookEvents(["path": kernel.path, "events": [["type": "kernel", "state": "dead"]]])
+        }
+        if notebookPrompt != nil { answerNotebookPrompt(nil, dismiss: true) }
+    }
 
     private func sessionChanged() {
         let debug = session.debug

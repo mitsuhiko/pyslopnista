@@ -10,6 +10,28 @@ const encoder = new TextEncoder();
 const CHANNEL_BYTES = 8 + 1024 * 1024;
 const RELAY_BYTES = 16 + 1024 * 1024;
 
+/**
+ * Memory (D50): iOS ends the web content process when it uses too much (about
+ * 1.9 GB on a 6 GB iPhone 14 Pro), without a MemoryError. So the heaps of all
+ * Python workers of the page share a budget, set by the host: a heap that would
+ * grow past it doesn't, and the program gets a MemoryError. Shared with every
+ * worker: [0] pages in use, [1] the budget in pages (0: none), then one slot per
+ * worker with its own pages (given back when it ends).
+ */
+const MEMORY_SLOTS = 128;
+const PAGE = 65536;
+const memory = self.crossOriginIsolated && typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(4 * (2 + MEMORY_SLOTS))) : null;
+const freeSlots = Array.from({ length: MEMORY_SLOTS }, (_, i) => MEMORY_SLOTS + 1 - i);
+
+export function setMemoryBudget(bytes: number) {
+  if (memory) Atomics.store(memory, 1, Math.max(0, Math.floor(bytes / PAGE)));
+}
+
+/** The heaps of all workers and the budget, in bytes (budget 0: none). */
+export function memoryUse() {
+  return { used: memory ? Atomics.load(memory, 0) * PAGE : 0, budget: memory ? Atomics.load(memory, 1) * PAGE : 0 };
+}
+
 /** The page's fetch relay (Q25): makes HostFS's requests for blocked workers,
  * so they don't use synchronous XHRs, which WebKit sometimes answers about a
  * second late after a worker slept. `?fs=xhr` turns it off. */
@@ -61,6 +83,7 @@ function workerOptions(python: string) {
     packageBaseUrl: new URL(`/pkgs/${python}/`, location.href).href,
     jspi: params.get("jspi") !== "0",
     gcTrampoline: params.get("gc") !== "0",
+    warm: params.get("warm") !== "0", // D49: _pyslop_warmup
     pythonFiles: Object.fromEntries(RUNTIME_FILES.map((f) => [f, new URL(`/runtime/python/${f}`, location.href).href])),
   };
 }
@@ -77,7 +100,8 @@ export class PyWorker {
   onUIRender: (json: string) => void = () => {};
   /** A rich output, an error of a cell, display() (JSON, D44). */
   onDisplay: (json: string) => void = () => {};
-  onCrash: (error: string) => void = () => {};
+  /** The interpreter failed (D16); `dump` is the Python stack then (D49). */
+  onCrash: (error: string, dump?: string) => void = () => {};
   /** A debugger message; the returned promise is the next command (D23). */
   onDebug: (message: any) => Promise<unknown> = async () => ({ op: "continue" });
   /** Turtle graphics ops: JSON strings of {id, ops} (D29). */
@@ -96,6 +120,7 @@ export class PyWorker {
   private interrupt: Int32Array | null;
   private channel: SharedArrayBuffer | null;
   private relayChannel: SharedArrayBuffer | null = null;
+  private memorySlot = -1;
   private syncPending = false;
   private syncSeq = 0; // the blocking call being answered (a late answer to an interrupted one is dropped)
   private current: ((r: RunResult) => void) | null = null;
@@ -122,8 +147,10 @@ export class PyWorker {
     this.ready.catch(() => {});
     this.worker.onmessage = (e) => this.handle(e.data);
     this.worker.onerror = (e) => this.rejectReady(new Error(e.message));
+    if (memory && freeSlots.length) this.memorySlot = freeSlots.pop()!;
     this.worker.postMessage({
-      type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, relay: this.relayChannel, preload: options.preload, ...workerOptions(this.python),
+      type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, relay: this.relayChannel, preload: options.preload,
+      memory: this.memorySlot >= 0 ? { buffer: memory!.buffer, slot: this.memorySlot } : null, ...workerOptions(this.python),
     });
   }
 
@@ -174,14 +201,15 @@ export class PyWorker {
         // while something is running (a late error must not rewrite a run).
         const hint = /call stack/i.test(msg.error) ? " (recursion too deep)" : "";
         if (this.current) {
-          this.onCrash(`${msg.error}${hint}`);
+          this.onCrash(`${msg.error}${hint}`, msg.dump);
           this.terminate(`Python crashed: ${msg.error}${hint}`);
         } else {
           this.dead = true;
           this.worker.terminate();
           this.detachRelay();
+          this.releaseMemory();
           this.unmount();
-          if (this.processPid) this.onCrash(`${msg.error}${hint}`);
+          if (this.processPid) this.onCrash(`${msg.error}${hint}`, msg.dump);
           this.procs?.workerGone(this, true);
         }
         break;
@@ -365,9 +393,18 @@ export class PyWorker {
     this.dead = true;
     this.worker.terminate();
     this.detachRelay();
+    this.releaseMemory();
     this.unmount();
     this.procs?.workerGone(this);
     this.finish({ ok: false, error: reason, ms: 0, killed: true });
+  }
+
+  /** The ended worker's heap no longer counts against the budget. */
+  private releaseMemory() {
+    if (this.memorySlot < 0 || !memory) return;
+    Atomics.sub(memory, 0, Atomics.exchange(memory, this.memorySlot, 0));
+    freeSlots.push(this.memorySlot);
+    this.memorySlot = -1;
   }
 
   private detachRelay() {

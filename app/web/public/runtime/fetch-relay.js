@@ -1,5 +1,6 @@
 // The fetch relay (Q25): makes HTTP requests for Python workers that block
-// until the answer is there (HostFS, D35).
+// until the answer is there (HostFS, D35; synchronous XHRs of programs to the
+// /__http proxy, D25).
 //
 // A worker's synchronous XHR is sometimes answered about a second late by
 // WebKit after the worker slept in Atomics.wait (spikes/xhr-wait). So the
@@ -65,10 +66,12 @@ async function perform(bytes) {
     xhr.open(meta.method ?? "GET", meta.url);
     xhr.responseType = "arraybuffer";
     for (const [name, value] of Object.entries(meta.headers ?? {})) xhr.setRequestHeader(name, value);
+    if (meta.timeout > 0) xhr.timeout = meta.timeout;
     await new Promise((resolve, reject) => {
       xhr.onload = resolve;
       xhr.onerror = () => reject(new Error("the request failed"));
       xhr.onabort = () => reject(new Error("the request was aborted"));
+      xhr.ontimeout = () => reject(Object.assign(new Error("the request timed out"), { timeout: true }));
       xhr.send(body.length ? body : null);
     });
     const headers = {};
@@ -76,9 +79,9 @@ async function perform(bytes) {
       const colon = line.indexOf(":");
       if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
     }
-    return pack({ status: xhr.status, headers }, new Uint8Array(xhr.response ?? new ArrayBuffer(0)));
+    return pack({ status: xhr.status, statusText: xhr.statusText, headers }, new Uint8Array(xhr.response ?? new ArrayBuffer(0)));
   } catch (e) {
-    return pack({ error: String(e?.message ?? e) });
+    return pack({ error: String(e?.message ?? e), ...(e?.timeout ? { timeout: true } : {}) });
   }
 }
 

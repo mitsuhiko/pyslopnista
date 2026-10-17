@@ -42,7 +42,11 @@ templates (D41), documented with the Python docs (D42; sources in
 with rich output (D44), and tracebacks as data, drawn as frames in the
 console and notebooks (D45), and Markdown files as a preview or their
 source, with links between files (D46), and processes: `multiprocessing`
-and `subprocess`, each process a Pyodide worker (D47). Everything so far works on the iPhone 14 Pro (2026-10-17). Next: the rest of D34's list (write
+and `subprocess`, each process a Pyodide worker (D47), and robustness:
+blocking HTTP through the fetch relay (D48), warmed-up interpreters and
+stack overflows shown as a RecursionError (D49), a memory budget for
+Python's heaps and the console kept when iOS ends the engine (D50; not
+tried on a device yet). Everything before D48 works on the iPhone 14 Pro (2026-10-17). Next: the rest of D34's list (write
 conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 Bundled Python versions and docs archives are pinned in `app/runtimes.json`
@@ -54,7 +58,7 @@ Spike queue (update the status here). The pi-durable agent always comes last
 1. [x] `ios-host`: Swift host, WKWebView, `app://` scheme handler; probe inside it (Q1 answered: D9; Q2/Q3 narrowed)
 2. [x] `pyodide-worker`: bundled Pyodide in a worker: console, `input()`, interrupt, restart, package cache (D10-D12; open: PyPI offline cache, Q11)
 3. [x] `ui-toolkit`: declarative Python UI in the app and exported as a static site (D14, D15)
-4. [x] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, wasm-GC trampoline check (D13 confirmed, D16; open: App Intents Q6, Q14, Q15)
+4. [x] `device-perf`: real-phone startup, memory, speed, bridge latency, backgrounding, wasm-GC trampoline check (D13 confirmed, D16; Q14 and Q15 answered by D49 and D50; open: App Intents Q6)
 5. [x] `debugger`: breakpoints, stepping, pause and post-mortem on bdb's `monitoring` backend (D23, built into the app; open: Q19)
 6. [x] `agent`: pi-durable in a web view on native SQLite, a project `ExecutionEnv`, streaming proxy, resume after a reload, pi-ai sign-in flows with a loopback listener and the Keychain (D32, D33). Built into the app (D34).
 
@@ -62,6 +66,8 @@ Done:
 - [x] `jspi-repro`: JSPI "hang" root-caused to CPython's iOS JS-trampoline fallback (D13)
 - [x] `webkit-probe`: wasm and threading features of iOS 27 Safari (simulator)
 - [x] `host-fs`: Pyodide on the host's files (an Emscripten FS over sync XHR), costs, caches, SQLite crash safety (D35, built into the app)
+- [x] `xhr-wait`: why a worker's synchronous XHR is sometimes a second late (Q25; worked around with a fetch relay, D48; WebKit report drafted, not filed)
+- [x] `native-stack`: recursion through C code vs. the worker's native stack; CPython's stack protection can't help, a warm-up does (Q14, D49)
 - [x] `processes`: `multiprocessing` (spawn) and `subprocess` (Python only), each process a Pyodide worker, on stock Pyodide (D47, built into the app; works on the iPhone 14 Pro). First step towards local servers and several programs at once.
 
 ## Conventions

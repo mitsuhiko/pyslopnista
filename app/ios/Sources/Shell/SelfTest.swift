@@ -204,6 +204,20 @@ enum SelfTest {
                     "tools": s.items.filter { $0.kind == "tool" }.map { "\($0.tool ?? ""):\($0.status ?? "")" },
                     "last": s.items.last?.text ?? "", "model": s.model?.id ?? NSNull(), "error": s.error ?? NSNull(),
                     "conversations": s.conversations?.count ?? 0] as [String: Any]
+        case "stashResults":
+            // The results so far, for the page that replaces this one (engine_recovery).
+            model.selftestStash = str(0)
+        case "takeStash":
+            defer { model.selftestStash = nil }
+            return model.selftestStash ?? NSNull()
+        case "killEngine":
+            // As iOS does under memory pressure (D50), after this call returns.
+            let webView = model.engine.webView
+            Task {
+                try? await Task.sleep(for: .milliseconds(200))
+                _ = model.host.killWebContent(webView)
+            }
+            return webView.responds(to: NSSelectorFromString("_killWebContentProcess"))
         default:
             throw NSError(domain: "selftest", code: 1, userInfo: [NSLocalizedDescriptionKey: "unknown app method \(method)"])
         }

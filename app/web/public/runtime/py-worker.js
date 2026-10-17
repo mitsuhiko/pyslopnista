@@ -10,6 +10,8 @@ import { createRelayClient } from "./relay-client.js";
 // HTTP for Python programs (D25): cross-origin XHR and fetch go through the
 // host's /__http proxy, which makes the request natively (no CORS). requests
 // (urllib3's Pyodide backend), urllib (pyodide-http) and pyfetch all use these.
+// A synchronous XHR to the proxy goes through the fetch relay instead (Q25,
+// D48): WebKit sometimes answers a worker's synchronous XHR a second late.
 {
   const PROXY = new URL("/__http", location.href).href;
   // Headers scripts may not set; the proxy sets them for us.
@@ -25,24 +27,117 @@ import { createRelayClient } from "./relay-client.js";
   const networkError = (message) => new DOMException(`Network error: ${message}`, "NetworkError");
 
   const NativeXHR = self.XMLHttpRequest;
+  const encoder = new TextEncoder();
+  /** A request body as bytes, and the Content-Type it implies (as XHR does). */
+  const bodyBytes = (body) => {
+    if (body == null) return [null, null];
+    if (typeof body === "string") return [encoder.encode(body), "text/plain;charset=UTF-8"];
+    if (body instanceof URLSearchParams) return [encoder.encode(body.toString()), "application/x-www-form-urlencoded;charset=UTF-8"];
+    if (body instanceof ArrayBuffer) return [new Uint8Array(body), null];
+    if (ArrayBuffer.isView(body)) return [new Uint8Array(body.buffer, body.byteOffset, body.byteLength), null];
+    if (body instanceof Blob) return [new Uint8Array(new FileReaderSync().readAsArrayBuffer(body)), body.type || null];
+    return [encoder.encode(String(body)), "text/plain;charset=UTF-8"];
+  };
+  /** The charset of a Content-Type ("x-user-defined" keeps bytes as chars). */
+  const charset = (type) => /;\s*charset="?([^";]+)/i.exec(type ?? "")?.[1] ?? "utf-8";
+
   self.XMLHttpRequest = class extends NativeXHR {
     open(method, url, async = true, ...rest) {
       this._via = proxied(url);
       this._hidden = {};
       this._sync = async === false;
+      // Blocking and proxied: the fetch relay makes it (send below). The
+      // native request stays unopened; the getters below answer instead.
+      this._relay = this._via && this._sync && fetchSync ? { method: String(method).toUpperCase(), headers: {}, mime: null, done: null } : null;
+      if (this._relay) return;
       return super.open(method, this._via ?? url, async, ...rest);
     }
     setRequestHeader(name, value) {
       if (this._via && FORBIDDEN.has(name.toLowerCase())) this._hidden[name] = value;
+      else if (this._relay) this._relay.headers[name] = this._relay.headers[name] != null ? `${this._relay.headers[name]}, ${value}` : String(value);
       else super.setRequestHeader(name, value);
     }
+    overrideMimeType(mime) {
+      if (this._relay) this._relay.mime = mime;
+      else super.overrideMimeType(mime);
+    }
     send(body) {
+      if (this._relay) return this._sendRelayed(body);
       if (this._via && Object.keys(this._hidden).length) super.setRequestHeader("X-Pyslop-Headers", JSON.stringify(this._hidden));
       super.send(body);
       const error = this._via && this._sync ? this.getResponseHeader("X-Pyslop-Error") : null;
       if (error) throw networkError(error);
     }
+    _sendRelayed(body) {
+      const relay = this._relay;
+      const headers = { ...relay.headers };
+      if (Object.keys(this._hidden).length) headers["X-Pyslop-Headers"] = JSON.stringify(this._hidden);
+      const [bytes, type] = ["GET", "HEAD"].includes(relay.method) ? [null, null] : bodyBytes(body);
+      if (type && !Object.keys(headers).some((h) => h.toLowerCase() === "content-type")) headers["Content-Type"] = type;
+      let response;
+      try {
+        response = fetchSync(this._via, { method: relay.method, headers, body: bytes, timeout: this.timeout || 0 });
+      } catch (e) {
+        if (e.timeout) throw new DOMException("The request timed out", "TimeoutError");
+        throw networkError(e.message.replace(/^Network error: /, ""));
+      }
+      if (response.headers["x-pyslop-error"]) throw networkError(response.headers["x-pyslop-error"]);
+      relay.done = response;
+      self._pyslopRelayedRequests = (self._pyslopRelayedRequests ?? 0) + 1; // for the self-test
+      for (const type of ["readystatechange", "load", "loadend"]) this.dispatchEvent(new ProgressEvent(type));
+    }
+    _text() {
+      const { done, mime } = this._relay;
+      return new TextDecoder(charset(mime ?? done.headers["content-type"])).decode(done.body);
+    }
+    get readyState() {
+      return this._relay ? (this._relay.done ? 4 : 1) : super.readyState;
+    }
+    get status() {
+      return this._relay ? (this._relay.done?.status ?? 0) : super.status;
+    }
+    get statusText() {
+      return this._relay ? (this._relay.done?.statusText ?? "") : super.statusText;
+    }
+    get response() {
+      if (!this._relay) return super.response;
+      const done = this._relay.done;
+      if (!done) return this.responseType === "" || this.responseType === "text" ? "" : null;
+      switch (this.responseType) {
+        case "arraybuffer":
+          return done.body.slice().buffer;
+        case "blob":
+          return new Blob([done.body], { type: this._relay.mime ?? done.headers["content-type"] ?? "" });
+        case "json":
+          try {
+            return JSON.parse(this._text());
+          } catch {
+            return null;
+          }
+        case "document":
+          return null;
+        default:
+          return this._text();
+      }
+    }
+    get responseText() {
+      if (!this._relay) return super.responseText;
+      return this._relay.done ? this._text() : "";
+    }
+    get responseXML() {
+      return this._relay ? null : super.responseXML;
+    }
+    getResponseHeader(name) {
+      if (!this._relay) return super.getResponseHeader(name);
+      return this._relay.done?.headers[String(name).toLowerCase()] ?? null;
+    }
+    getAllResponseHeaders() {
+      if (!this._relay) return super.getAllResponseHeaders();
+      const headers = this._relay.done?.headers ?? {};
+      return Object.entries(headers).filter(([name]) => !name.startsWith("x-pyslop-")).map(([name, value]) => `${name}: ${value}\r\n`).join("");
+    }
     get responseURL() {
+      if (this._relay) return this._relay.done?.headers["x-pyslop-final-url"] ?? "";
       return (this._via && this.getResponseHeader("X-Pyslop-Final-Url")) || super.responseURL;
     }
   };
@@ -167,9 +262,85 @@ function asyncCall(op, value) {
   });
 }
 
+// When Pyodide fails (a native stack overflow, D16), it says so on the
+// console and then prints the Python stack to stdout (_dump_traceback). That
+// stack goes with the crash report (worker-error) instead of the console: the
+// page shows it as a traceback (D49).
+let fatal = null; // {dump} once Pyodide has failed
+const consoleError = console.error.bind(console);
+console.error = (...args) => {
+  if (typeof args[0] === "string" && args[0].startsWith("Pyodide has suffered a fatal error")) fatal ??= { dump: "" };
+  consoleError(...args);
+};
+
+/**
+ * The Python stack of the thread state that was running when Pyodide failed,
+ * in _dump_traceback's format (most recent call first). Pyodide's own dump
+ * shows the main thread state, but a program runs in its task's (JSPI), so
+ * walk that one with the C API. Null if that fails (a wasm trap is caught).
+ */
+function crashedStack() {
+  const m = py._module;
+  const allocated = [];
+  const cString = (s) => {
+    const bytes = new TextEncoder().encode(`${s}\0`);
+    const p = m._malloc(bytes.length);
+    m.HEAPU8.set(bytes, p);
+    allocated.push(p);
+    return p;
+  };
+  const jsString = (p) => {
+    if (!p) return "?";
+    const heap = m.HEAPU8;
+    let end = p;
+    while (heap[end]) end++;
+    return decoder.decode(heap.subarray(p, end));
+  };
+  try {
+    const names = { file: cString("co_filename"), name: cString("co_qualname") };
+    const attr = (code, name) => {
+      const value = m._PyObject_GetAttrString(code, name);
+      if (!value) return "?";
+      const text = jsString(m._PyUnicode_AsUTF8(value));
+      m._Py_DecRef(value);
+      return text;
+    };
+    const stack = (tstate) => {
+      const lines = ["Stack (most recent call first):"];
+      let frame = m._PyThreadState_GetFrame(tstate);
+      for (let n = 0; frame && n < 20000; n++) {
+        const code = m._PyFrame_GetCode(frame);
+        lines.push(`  File "${attr(code, names.file)}", line ${m._PyFrame_GetLineNumber(frame)} in ${attr(code, names.name)}`);
+        m._Py_DecRef(code);
+        const back = m._PyFrame_GetBack(frame);
+        m._Py_DecRef(frame);
+        frame = back;
+      }
+      if (frame) lines.push("  ...");
+      return lines;
+    };
+    // Every task has its own thread state: the deepest stack is the one that overflowed.
+    let deepest = [];
+    for (let t = m._PyInterpreterState_ThreadHead(m._PyInterpreterState_Main()); t; t = m._PyThreadState_Next(t)) {
+      const lines = stack(t);
+      if (lines.length > deepest.length) deepest = lines;
+    }
+    m._PyErr_Clear();
+    return deepest.length > 1 ? deepest.join("\n") : null;
+  } catch {
+    return null;
+  } finally {
+    for (const p of allocated) m._free(p);
+  }
+}
+
 function writer(stream) {
   return {
     write(buf) {
+      if (fatal) {
+        fatal.dump += decoder.decode(buf);
+        return buf.length;
+      }
       if (turtleBatches.length) flushTurtle();
       postMessage({ type: "output", stream, text: decoder.decode(buf) });
       return buf.length;
@@ -177,9 +348,46 @@ function writer(stream) {
   };
 }
 
-async function boot({ interrupt, channel, relay, jspi, gcTrampoline, indexURL, packageBaseUrl, pythonFiles, preload }) {
+/**
+ * Memory (D50): the heaps of all Python workers of the page share a budget
+ * (python.ts). Growing this interpreter's heap past it fails, as if the
+ * device had no more memory: malloc returns NULL and Python raises
+ * MemoryError, instead of iOS ending the web content process.
+ */
+function limitMemory({ buffer, slot }) {
+  const ints = new Int32Array(buffer);
+  const grow = WebAssembly.Memory.prototype.grow;
+  let heap = null; // the first memory that grows: Pyodide's
+  WebAssembly.Memory.prototype.grow = function (delta) {
+    if (heap === null) {
+      heap = this;
+      const pages = this.buffer.byteLength / 65536;
+      Atomics.add(ints, 0, pages);
+      Atomics.add(ints, slot, pages);
+    }
+    if (this !== heap || !(delta > 0)) return grow.call(this, delta);
+    const budget = Atomics.load(ints, 1);
+    if (budget && Atomics.add(ints, 0, delta) + delta > budget) {
+      Atomics.sub(ints, 0, delta);
+      throw new RangeError("WebAssembly.Memory.grow(): over the memory budget for Python");
+    } else if (!budget) {
+      Atomics.add(ints, 0, delta);
+    }
+    try {
+      const old = grow.call(this, delta);
+      Atomics.add(ints, slot, delta);
+      return old;
+    } catch (e) {
+      Atomics.sub(ints, 0, delta);
+      throw e;
+    }
+  };
+}
+
+async function boot({ interrupt, channel, relay, memory, jspi, gcTrampoline, warm, indexURL, packageBaseUrl, pythonFiles, preload }) {
   syncChannel = channel;
   interruptBuffer = interrupt;
+  if (memory) limitMemory(memory);
   if (relay) fetchSync = createRelayClient(relay);
   // CPython's Emscripten build falls back to a JS call trampoline on iOS, which
   // makes JSPI impossible; hiding the iOS UA selects the wasm-gc trampoline (D13).
@@ -203,6 +411,10 @@ async function boot({ interrupt, channel, relay, jspi, gcTrampoline, indexURL, p
   });
   py.setStdout(writer("stdout"));
   py.setStderr(writer("stderr"));
+  py._api.on_fatal = () => {
+    const stack = crashedStack();
+    if (stack && fatal) fatal.dump = stack;
+  };
   py.setStdin({ stdin: () => (syncChannel ? syncCall("stdin", null) ?? undefined : undefined) });
   if (interruptInts) py.setInterruptBuffer(interruptInts);
   py.registerJsModule("host", {
@@ -283,9 +495,10 @@ async function boot({ interrupt, channel, relay, jspi, gcTrampoline, indexURL, p
     py.FS.writeFile(`/lib/pyslop/${name}`, new Uint8Array(await res.arrayBuffer()));
   }
   plumbing = py.runPython("dict()");
+  runPlumbing("import sys\nsys.path.append('/lib/pyslop')");
+  // Deeper recursion through C code before the native stack runs out (D49).
+  if (warm) runPlumbing("import _pyslop_warmup\n_pyslop_warmup.run()\ndel _pyslop_warmup, sys.modules['_pyslop_warmup']");
   runPlumbing([
-    "import sys",
-    "sys.path.append('/lib/pyslop')",
     "import _pyslop, _pyslop_debug, _pyslop_notebook, _pyslop_traceback",
     interruptInts ? "import host\n_pyslop_debug.install(host.sleep)\ndel host" : "_pyslop_debug.install()",
   ].join("\n"));
@@ -430,6 +643,9 @@ async function run({ code, filename, cwd, mount: token, repl, cell, indexURL, br
     flushFiles();
     postMessage({ type: "done", ok: true, ms: performance.now() - t0 });
   } catch (e) {
+    // The interpreter itself failed (in our own code, before or after the
+    // program's): a crash, not the program's error.
+    if (fatal) return reportEscaped(String(e.message ?? e));
     finishTurtle();
     flushFiles();
     postMessage({ type: "done", ok: false, error: String(e.message ?? e), trace: lastTrace(), ms: performance.now() - t0 });
@@ -470,6 +686,7 @@ async function runProcess({ task, payload, packages, mount: token, cwd, indexURL
       mod.destroy();
     }
   } catch (e) {
+    if (fatal) return reportEscaped(String(e.message ?? e));
     postMessage({ type: "output", stream: "stderr", text: `${e.message ?? e}\n` });
   }
   flushFiles();
@@ -497,9 +714,12 @@ function finishTurtle() {
 
 // Errors escaping Pyodide are crashes (D16), except KeyboardInterrupt: it is a
 // BaseException, so asyncio re-raises it out of the event loop after Stop.
+let crashReported = false;
 function reportEscaped(error) {
   if (/KeyboardInterrupt\s*$/.test(error.trim())) return;
-  postMessage({ type: "worker-error", error });
+  if (crashReported) return;
+  crashReported = true;
+  postMessage({ type: "worker-error", error, dump: fatal?.dump || undefined });
 }
 addEventListener("error", (e) => {
   // A plain Event (not an ErrorEvent) has no message: say where it came from.

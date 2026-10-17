@@ -4,7 +4,7 @@ import Observation
 // The Python session as the engine page reports it (D31, engine/state.ts):
 // the console transcript, runs, status and the debugger's state.
 
-struct ConsoleLine: Identifiable, Equatable {
+struct ConsoleLine: Identifiable, Equatable, Codable {
     let id: Int
     let runId: Int
     let kind: String // stdout, stderr, system, image, input, prompt, run, turtle
@@ -136,6 +136,19 @@ final class SessionMirror {
         if canInspect != p.canInspect { canInspect = p.canInspect }
         if kernel != p.kernel { kernel = p.kernel }
         return true
+    }
+
+    /// The console for a reloaded engine page (D50): what `session.restore`
+    /// takes (JSON), or nil when there is nothing to keep.
+    func snapshotJSON() -> String? {
+        guard !lines.isEmpty else { return nil }
+        struct Snapshot: Encodable {
+            let lines: [ConsoleLine]
+            let runs: [String: RunInfo]
+        }
+        let snapshot = Snapshot(lines: lines, runs: Dictionary(uniqueKeysWithValues: runs.map { (String($0.key), $0.value) }))
+        guard let data = try? JSONEncoder().encode(snapshot) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// The transcript as text, without images and turtle screens.

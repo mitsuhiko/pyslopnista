@@ -1,12 +1,12 @@
 // The running Python session: one worker at a time, the console transcript
 // (grouped into runs), pending input(), the >>> console and UI apps. React
 // subscribes via useSyncExternalStore. Output is batched per animation frame.
-import { basename, call, dirname, haptic, join } from "./host";
+import { basename, call, dirname, fs, haptic, join } from "./host";
 import { breakpoints } from "./debug/breakpoints";
 import type { CellRequest, KernelEvent, Output } from "./notebook/types";
-import { PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
+import { memoryUse, PyWorker, SIGNAL, WorkerPool, type Stream } from "./python";
 import { chooseFor, onDefaultPython, runtimeFor } from "./runtimes";
-import { parseTrace, type Trace } from "./trace";
+import { crashTrace, parseTrace, type Trace } from "./trace";
 import { TurtleScene, turtleScenes } from "./turtle";
 
 /** "turtle": a turtle screen; the line's text is the key of its scene (D29). */
@@ -224,6 +224,35 @@ export class Session {
     }
   }
 
+  /**
+   * The page was reloaded because iOS ended its process (D50), usually for
+   * using too much memory: the console as the host still had it. Its programs
+   * are gone; a run that was going on is marked crashed and says why. Only
+   * into a session that has nothing yet.
+   */
+  restore(snapshot: { lines: Line[]; runs: Record<string, Run> }) {
+    if (this.state.lines.length || this.state.status !== "idle" || this.worker) return false;
+    const now = Date.now();
+    const runs: Record<number, Run> = {};
+    const ended: number[] = [];
+    for (const run of Object.values(snapshot.runs ?? {})) {
+      if (run.status === "running") ended.push(run.id);
+      runs[run.id] = run.status === "running" ? { ...run, status: "crashed", endedAt: now } : run;
+    }
+    const lines = (snapshot.lines ?? []).filter((l) => runs[l.runId]);
+    const ids = [...lines.map((l) => l.id), ...Object.keys(runs).map(Number)];
+    this.nextId = Math.max(this.nextId, ...ids.map((id) => id + 1));
+    this.currentRun = Math.max(0, ...Object.keys(runs).map(Number));
+    // Turtle screens keep their drawings (the host has them); new ones get new keys.
+    for (const l of lines) if (l.kind === "turtle") this.workerSerial = Math.max(this.workerSerial, Number(l.text.split(":")[0]) || 0);
+    this.set({ lines, runs });
+    for (const id of ended) {
+      this.append("stderr", "Python was stopped: iOS ended the process it runs in, most likely because the program used too much memory.\n", id);
+    }
+    this.flushOutput();
+    return true;
+  }
+
   clear() {
     this.pendingOutput = [];
     const running = this.state.status !== "idle" ? this.state.runs[this.currentRun] : null;
@@ -327,7 +356,7 @@ export class Session {
       this.set({ uiOpen: true });
       this.uiListener?.(json);
     };
-    worker.onCrash = (error) => this.append("stderr", `Python crashed: ${error}\n`);
+    worker.onCrash = (error, dump) => this.crashed(error, dump);
     worker.onDebug = (message) => this.onDebugMessage(worker, message);
     worker.onTurtle = (batches) => {
       for (const json of batches) {
@@ -353,6 +382,24 @@ export class Session {
       return scene ? scene.take(request.wait ?? 0) : [];
     };
     return worker;
+  }
+
+  /**
+   * The interpreter failed (D16). Out of native stack, with the Python stack
+   * the worker found then, it is shown as a RecursionError where the program
+   * was (D49); the program can't catch it, and the next run gets a new
+   * interpreter.
+   */
+  private crashed(error: string, dump?: string) {
+    const runId = this.currentRun;
+    const dir = this.workerDir;
+    if (!dump || !/call stack/i.test(error)) return this.append("stderr", `Python crashed: ${error}\n`, runId);
+    const exception = { type: "RecursionError", message: "maximum recursion depth exceeded (Python ran out of stack space and was restarted)" };
+    const sources = (file: string) => fs.readText(join(dir, file)).then((text) => text.split("\n"));
+    void crashTrace(dump, exception, sources).then(
+      (trace) => this.append("stderr", trace ? `${trace.text}\n` : `Python crashed: ${error}\n`, runId, trace),
+      () => this.append("stderr", `Python crashed: ${error}\n`, runId),
+    );
   }
 
   /** Whether the worker's turtle screens take events (only while code runs). */
@@ -488,6 +535,14 @@ export class Session {
   private appendError(result: { error?: string; trace?: string }) {
     const trace = parseTrace(result.trace);
     this.append("stderr", (trace?.text ?? cleanTraceback(result.error ?? "")) + "\n", this.currentRun, trace);
+    // Out of the memory Python may use here (D50): say how much that is.
+    const { budget } = memoryUse();
+    const last = trace?.exceptions.at(-1)?.type ?? /(\w+Error)\b[^\n]*\s*$/.exec(result.error ?? "")?.[1];
+    if (last === "MemoryError" && budget) {
+      const gb = budget / 2 ** 30;
+      const size = gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(budget / 2 ** 20)} MB`;
+      this.append("system", `Python programs can use about ${size} of memory on this device.\n`);
+    }
   }
 
   /** Breakpoints changed: tell a program that is running (or paused). */

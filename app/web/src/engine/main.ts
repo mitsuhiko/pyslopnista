@@ -9,6 +9,7 @@ import { breakpoints } from "../debug/breakpoints";
 import { seedExamples } from "../examples";
 import { call } from "../host";
 import { chooseFor, forgetFolders, label, runtimeFor, setDefaultPython } from "../runtimes";
+import { setMemoryBudget } from "../python";
 import { session } from "../session";
 import { turtleScenes, turtleSync, type TurtleEvent } from "../turtle";
 import { startStateSync } from "./state";
@@ -59,6 +60,10 @@ const commands: Record<string, Command> = {
   closeUI: () => session.closeUI(),
   uiEvent: ({ id, args }) => session.sendUIEvent(id, args),
   background: () => session.syncInBackground(),
+  // Memory (D50): what Python's heaps may use together, and the console of a
+  // page iOS ended (the host kept it).
+  setMemoryBudget: ({ bytes }) => setMemoryBudget(Number(bytes) || 0),
+  restoreSession: ({ json }) => session.restore(JSON.parse(json)),
   setBreakpoints: ({ data }) => breakpoints.replaceAll(data ?? {}),
   // Python versions (D37): the default from Settings, and which one a file runs on.
   setDefaultPython: ({ python }) => setDefaultPython(python),
