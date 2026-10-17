@@ -1,6 +1,7 @@
 // HOSTFS (D35): the program's project folder as an Emscripten file system
 // whose files are the host's. Modelled on Emscripten's NODEFS; every
-// operation that reaches the host is one synchronous XHR to /__fs (HostFS.swift).
+// operation that reaches the host is one blocking request to /__fs
+// (HostFS.swift): through the fetch relay (Q25), or a synchronous XHR without one.
 //
 // Round trips cost 0.1-0.2 ms (simulator; spikes/host-fs), so the worker keeps:
 // - a write-behind queue: writes to any file wait in the worker and go to the
@@ -20,7 +21,7 @@ const MAX_CACHED = 64 * 1024 * 1024; // bytes of blocks, for all files
 const MAX_QUEUED = 1024 * 1024;
 const ATTR_TTL = 1000;
 
-export function createHostFS(py, token) {
+export function createHostFS(py, token, fetchSync = null) {
   const FS = py.FS;
   const ERRNO = py.ERRNO_CODES;
   const errno = (name) => new FS.ErrnoError(ERRNO[name] ?? ERRNO.EIO);
@@ -39,21 +40,34 @@ export function createHostFS(py, token) {
     cachedBytes = 0;
   }
 
-  function send(meta, data) {
+  /** The host's answer: the X-Fs-Result header and the body. */
+  function request(meta, data) {
+    const headers = { "X-Fs-Mount": token, "X-Fs": encodeURIComponent(JSON.stringify(meta)) };
+    if (fetchSync) {
+      try {
+        const response = fetchSync("/__fs", { method: "POST", headers, body: data ?? null });
+        return { header: response.headers["x-fs-result"], body: response.body };
+      } catch {
+        return { header: null, body: null };
+      }
+    }
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/__fs", false);
     xhr.responseType = "arraybuffer";
-    xhr.setRequestHeader("X-Fs-Mount", token);
-    xhr.setRequestHeader("X-Fs", encodeURIComponent(JSON.stringify(meta)));
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
     xhr.send(data ?? null);
-    const header = xhr.getResponseHeader("X-Fs-Result");
+    return { header: xhr.getResponseHeader("X-Fs-Result"), body: new Uint8Array(xhr.response ?? new ArrayBuffer(0)) };
+  }
+
+  function send(meta, data) {
+    const { header, body } = request(meta, data);
     const result = header ? JSON.parse(decodeURIComponent(header)) : { error: "EIO" };
     if (result.gen !== undefined && result.gen !== generation) {
       if (generation !== null) dropCaches();
       generation = result.gen;
     }
     if (result.error) throw errno(result.error);
-    return { meta: result, data: new Uint8Array(xhr.response ?? new ArrayBuffer(0)) };
+    return { meta: result, data: body ?? new Uint8Array(0) };
   }
 
   // -- write-behind ------------------------------------------------------------------

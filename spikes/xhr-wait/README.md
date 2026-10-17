@@ -7,6 +7,12 @@ real device.
 handler (HostFS, D35) sometimes about a second slow? It showed up as a slow
 Stop of programs with child processes (D47).
 
+**Outcome (2026-10-17):** the app's HostFS goes through a fetch relay
+instead (D48): a worker that never blocks makes the requests
+asynchronously, and the Python worker waits on a SharedArrayBuffer. No
+stalls since in over 100 calls right after a sleep, against 9 of 36 with
+the synchronous XHR. The WebKit report and a device run are still open.
+
 **Answer (so far):** WebKit sometimes delivers the response of a
 synchronous XHR from a worker late.
 - **How late:** about 1000 ms in the app, about 3000 ms in this spike's
@@ -106,4 +112,4 @@ process, but it can't be seen from outside.
     much per call (`spikes/host-fs`), or only for metadata calls.
   - A helper worker that makes the requests asynchronously and hands the
     results back through a SharedArrayBuffer. That wait would be an
-    `Atomics.wait`, not a synchronous XHR.
+    `Atomics.wait`, not a synchronous XHR. Built into the app (D48).

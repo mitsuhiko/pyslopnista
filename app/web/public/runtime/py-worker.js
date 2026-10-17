@@ -5,6 +5,7 @@
 import "./sab-polyfill.js";
 import { createHostFS } from "./hostfs.js";
 import { createProcs } from "./procs-worker.js";
+import { createRelayClient } from "./relay-client.js";
 
 // HTTP for Python programs (D25): cross-origin XHR and fetch go through the
 // host's /__http proxy, which makes the request natively (no CORS). requests
@@ -85,6 +86,7 @@ let flushTimer = null;
 let plumbing; // a private namespace for our own Python, so the program's globals stay clean
 let interruptBuffer = null; // the SharedArrayBuffer behind Stop and the debugger's signals
 let procs = null; // this interpreter as a process (D47): _procs and _pyslop_procs are installed
+let fetchSync = null; // blocking requests through the page's fetch relay (Q25); null: synchronous XHR
 
 // Turtle graphics (D29): ops from _pyslop_turtle.py, sent to the page at most
 // every 16 ms, and always before the program blocks, sleeps or prints (so the
@@ -175,9 +177,10 @@ function writer(stream) {
   };
 }
 
-async function boot({ interrupt, channel, jspi, gcTrampoline, indexURL, packageBaseUrl, pythonFiles, preload }) {
+async function boot({ interrupt, channel, relay, jspi, gcTrampoline, indexURL, packageBaseUrl, pythonFiles, preload }) {
   syncChannel = channel;
   interruptBuffer = interrupt;
+  if (relay) fetchSync = createRelayClient(relay);
   // CPython's Emscripten build falls back to a JS call trampoline on iOS, which
   // makes JSPI impossible; hiding the iOS UA selects the wasm-gc trampoline (D13).
   if (gcTrampoline) {
@@ -304,7 +307,7 @@ function mount(token, cwd) {
     py.FS.unmount(mounted.cwd);
   }
   py.FS.mkdirTree(cwd);
-  hostfs = createHostFS(py, token);
+  hostfs = createHostFS(py, token, fetchSync);
   py.FS.mount(hostfs, {}, cwd);
   mounted = { token, cwd };
 }

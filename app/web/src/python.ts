@@ -8,6 +8,19 @@ import { getDefaultPython, runtimeFor } from "./runtimes";
 
 const encoder = new TextEncoder();
 const CHANNEL_BYTES = 8 + 1024 * 1024;
+const RELAY_BYTES = 16 + 1024 * 1024;
+
+/** The page's fetch relay (Q25): makes HostFS's requests for blocked workers,
+ * so they don't use synchronous XHRs, which WebKit sometimes answers about a
+ * second late after a worker slept. `?fs=xhr` turns it off. */
+let relay: Worker | null | undefined;
+function fetchRelay(): Worker | null {
+  if (relay === undefined) {
+    const usable = typeof (Atomics as any).waitAsync === "function" && new URLSearchParams(location.search).get("fs") !== "xhr";
+    relay = usable ? new Worker("/runtime/fetch-relay.js") : null;
+  }
+  return relay;
+}
 
 export type Stream = "stdout" | "stderr" | "system" | "image";
 
@@ -82,6 +95,7 @@ export class PyWorker {
   private worker: Worker;
   private interrupt: Int32Array | null;
   private channel: SharedArrayBuffer | null;
+  private relayChannel: SharedArrayBuffer | null = null;
   private syncPending = false;
   private syncSeq = 0; // the blocking call being answered (a late answer to an interrupted one is dropped)
   private current: ((r: RunResult) => void) | null = null;
@@ -96,6 +110,11 @@ export class PyWorker {
     const isolated = self.crossOriginIsolated && typeof SharedArrayBuffer === "function";
     this.interrupt = isolated ? new Int32Array(new SharedArrayBuffer(4)) : null;
     this.channel = isolated ? new SharedArrayBuffer(CHANNEL_BYTES) : null;
+    const relay = isolated ? fetchRelay() : null;
+    if (relay) {
+      this.relayChannel = new SharedArrayBuffer(RELAY_BYTES);
+      relay.postMessage({ type: "attach", channel: this.relayChannel });
+    }
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -104,7 +123,7 @@ export class PyWorker {
     this.worker.onmessage = (e) => this.handle(e.data);
     this.worker.onerror = (e) => this.rejectReady(new Error(e.message));
     this.worker.postMessage({
-      type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, preload: options.preload, ...workerOptions(this.python),
+      type: "boot", interrupt: this.interrupt?.buffer ?? null, channel: this.channel, relay: this.relayChannel, preload: options.preload, ...workerOptions(this.python),
     });
   }
 
@@ -160,6 +179,7 @@ export class PyWorker {
         } else {
           this.dead = true;
           this.worker.terminate();
+          this.detachRelay();
           this.unmount();
           if (this.processPid) this.onCrash(`${msg.error}${hint}`);
           this.procs?.workerGone(this, true);
@@ -344,9 +364,15 @@ export class PyWorker {
   terminate(reason = "terminated") {
     this.dead = true;
     this.worker.terminate();
+    this.detachRelay();
     this.unmount();
     this.procs?.workerGone(this);
     this.finish({ ok: false, error: reason, ms: 0, killed: true });
+  }
+
+  private detachRelay() {
+    if (this.relayChannel) relay?.postMessage({ type: "detach", channel: this.relayChannel });
+    this.relayChannel = null;
   }
 
   private unmount() {

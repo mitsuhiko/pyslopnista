@@ -298,6 +298,7 @@ app/
     editor.html           one CodeMirror pane (src/editor/; notebook.ts: cells, their widgets and
                           commands; outputs.ts: Markdown, HTML, images, D44; markdown.ts: .md previews, D46)
     public/runtime/       py-worker.js, hostfs.js (the project folder in Pyodide, D35), sab-polyfill.js,
+                          fetch-relay.js and relay-client.js (HostFS's requests without synchronous XHRs, D48),
                           python/_pyslop.py, python/_pyslop_notebook.py (notebook kernels, the IPython
                           shim, magics, D44), python/ui.py (from uikit/), python/_device.py and the
                           device modules (clipboard.py, dialogs.py, photos.py, ..., D40),
@@ -406,8 +407,6 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   - No shared memory, no managers, no threads (`ThreadPool`).
   - Functions from the console or a notebook cell can't go to a child.
   - The debugger doesn't follow child processes.
-  - Stop can take about a second when WebKit delays the root's next file
-    call (Q25).
 
 - Notebooks (D44): no interactive widgets (ipywidgets), no debugger,
   breakpoints or variable inspector in cells, no LaTeX math rendering;

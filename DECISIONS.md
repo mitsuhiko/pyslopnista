@@ -1689,6 +1689,50 @@ All 76 checks pass in the iPhone 18 Pro Max simulator (2026-10-16). The
 spike's own tests (102 checks, both Pythons, Node and WKWebView) cover the
 rest of the API. Not tried on a device (Q24).
 
+## D48: HostFS's requests go through a fetch relay, not synchronous XHRs
+
+2026-10-17 - Accepted (changes D35's transport; answers Q25's workaround)
+
+WebKit sometimes answers a worker's synchronous XHR about a second late
+after the worker slept in `Atomics.wait` (Q25, `spikes/xhr-wait/`). In
+the app that hit HostFS (D35) once or twice per run: a file call after
+`time.sleep()` or `input()`, and Stop of a program with child
+processes (D47).
+
+So a blocked worker no longer makes the request itself:
+- **The relay** (`runtime/fetch-relay.js`): one worker per page, started
+  with the first Python worker. It never blocks: it waits for requests with
+  `Atomics.waitAsync` and makes them with an asynchronous XHR.
+- **The client** (`runtime/relay-client.js`): each Python worker has a
+  1 MB SharedArrayBuffer shared with the relay. It writes the request
+  there and sleeps in `Atomics.wait` until the response is there.
+  Requests and responses bigger than the buffer go in pieces.
+- **HostFS** sends its calls through it (`createHostFS(py, token,
+  fetchSync)`). Without `Atomics.waitAsync` or cross-origin isolation, or
+  with `?fs=xhr`, it uses the synchronous XHR as before.
+
+Costs (iPhone 18 Pro simulator, 1000 calls each):
+- **Per call:** about 0.18 ms against 0.15 ms for the synchronous XHR. The
+  SharedArrayBuffer round trip to the relay is about 0.02 ms. With
+  `fetch()` in the relay instead of an XHR it was 0.22-0.30 ms.
+- **Through HostFS:** a missing-file `os.stat` costs 0.26-0.30 ms
+  against 0.23-0.24 ms; creating and writing a small file 1.4-1.6 ms
+  against 1.4-1.5 ms. 4 MB writes and reads take 6-8 ms against 4-5 ms
+  (the pieces).
+- **After a sleep:** the first call after `time.sleep(2)` took 1-3 ms in
+  every one of over 100 samples. With the synchronous XHR, 9 of 36 took
+  1001-1003 ms.
+
+Evidence: the self-test's new `files_after_sleep` check (four calls
+right after `time.sleep(2)`, and 3 MB through the relay both ways) fails
+with `?fs=xhr` and passes with the relay. `processes_stop` stops in
+about 50 ms. All 77 checks pass in the iPhone 18 Pro simulator. Not tried
+on a device.
+
+Still synchronous XHRs: HTTP from Python programs (D25: urllib through
+pyodide-http, requests, `open_url`) to `/__http`. They could go
+through the relay too.
+
 ## Proposed (not yet decided)
 
 (none)
@@ -1696,7 +1740,7 @@ rest of the API. Not tried on a device (Q24).
 ## Open questions
 
 - **Q24:** Processes (D47) on a device. In the simulator an idle Pyodide worker costs about 95 MB of WebContent RSS, and RSS stayed at 1.8-2.1 GB after about 150 short-lived workers (`spikes/processes/`). How many workers fit under the jetsam limit (about 1.9 GB on the iPhone 14 Pro, Q15)? Is the memory of terminated workers returned? What do boot time, `hardwareConcurrency` and speedup look like on 2 performance + 4 efficiency cores? Are the limits (10 processes, `os.cpu_count()` ≤ 4) right?
-- **Q25:** WebKit sometimes delivers the response of a worker's synchronous XHR to the app's scheme handler late: about 1 s in the app, about 3 s in a bare page (`spikes/xhr-wait/`, simulator). The handler has answered within a millisecond. It follows `Atomics.wait` (a sleeping program), never a busy loop. In the app it hits HostFS (D35) about once or twice per run: a file operation, or Stop of a program with child processes (D47), takes a second. Not caused by processes, HostFS, the method or the response. The app's main thread is free, and a message to the worker doesn't end it. The page bridge (`host.call_sync`) never stalled. Open: does it happen on a device? Report it to WebKit, and decide whether HostFS should avoid synchronous XHR (the bridge, or a helper worker making async requests behind a SharedArrayBuffer).
+- **Q25:** WebKit sometimes delivers the response of a worker's synchronous XHR to the app's scheme handler late: about 1 s in the app, about 3 s in a bare page (`spikes/xhr-wait/`, simulator). The handler has answered within a millisecond. It follows `Atomics.wait` (a sleeping program), never a busy loop. HostFS no longer uses synchronous XHRs (D48). Open: does it happen on a device? Report it to WebKit. Move Python programs' synchronous HTTP (D25, `/__http`) to the relay too?
 
 - **Q23:** On a device: the app size with two cores and two sets of docs (about 27 MB of cores and 70 MB of HTML, plus 40 MB of indexes, before App Store compression), memory when workers of both versions are warm, and whether 3.15's Pyodide (Emscripten 6) works in WKWebView there as 3.14's does (D13).
 - **Q21:** Provider terms and App Review for subscription sign-ins (Claude Pro/Max, ChatGPT) used from a third-party app.

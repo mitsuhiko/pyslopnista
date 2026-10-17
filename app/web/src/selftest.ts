@@ -284,6 +284,35 @@ export async function selftest() {
     if ((await fs.readText(`${dir}/sub/deeper/x.txt`)) !== "x") throw new Error("sub/deeper/x.txt");
   });
 
+  await step("files_after_sleep", async () => {
+    // Q25: a file call right after time.sleep() isn't held up (WebKit answered
+    // synchronous XHRs about a second late there), and data bigger than the
+    // fetch relay's buffer goes through it whole, both ways.
+    const dir = "Tests/sleepfs";
+    await fs.mkdir(dir).catch(() => {});
+    await fs.writeText(`${dir}/sleepfs.py`, [
+      "import os, time",
+      "data = os.urandom(3 << 20)",
+      "open('big.bin', 'wb').write(data)",
+      "assert open('big.bin', 'rb').read() == data",
+      "os.remove('big.bin')",
+      "slowest = 0",
+      "for i in range(4):",
+      "    time.sleep(2)",
+      "    t = time.perf_counter()",
+      "    os.path.exists(f'missing{i}')",
+      "    slowest = max(slowest, time.perf_counter() - t)",
+      "print('slowest:', round(slowest * 1000))",
+      "",
+    ].join("\n"));
+    const { done } = await runFile(`${dir}/sleepfs.py`);
+    await done;
+    const m = /slowest: (\d+)/.exec(consoleText());
+    if (!m) throw new Error(consoleText().slice(-600));
+    if (Number(m[1]) > 300) throw new Error(`a file call after sleep took ${m[1]} ms`);
+    return { slowestMs: Number(m[1]) };
+  });
+
   await step("plot", async () => {
     await runFile("Examples/Plot.py");
     await until(idle, 30000);
