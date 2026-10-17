@@ -225,8 +225,9 @@ What we learned:
   - In the full runs, after about 150 workers had come and gone, RSS
     stayed at 1.8-2.1 GB instead of going back down. Memory of terminated
     workers isn't returned quickly.
-  - On a device, either could end in the jetsam kill. That needs a device
-    run (Q24).
+  - On a device, either could end in the jetsam kill. That needed a device
+    run (Q24). Update 2026-10-17: processes work in the app on the iPhone
+    14 Pro (D47).
 - **Bugs found on the way, now fixed:**
   - Closing Pyodide's own stdin stream on Node crashes it (`dup2` onto
     fd 0), so stdio is adopted without closing what was there.

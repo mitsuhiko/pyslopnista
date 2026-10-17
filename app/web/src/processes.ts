@@ -34,7 +34,7 @@ const PRELOAD = [
 /** Booted spares kept for a program once it has started a process. */
 const SPARES = 2;
 /** Processes alive at once, the root included: each is a whole interpreter
- * (about 100 MB), and iOS ends the web view at about 1.9 GB (Q15, Q24). */
+ * (about 100 MB), and iOS ends the web view at about 1.9 GB (Q15). */
 const MAX_LIVE = 10;
 /** os.cpu_count(): Pool() and ProcessPoolExecutor() start this many. */
 export const CPU_COUNT = Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1));

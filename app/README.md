@@ -371,7 +371,7 @@ and check that it shows only with the software keyboard. The
 self-test runs in the engine page and drives the native views through hooks
 (`Shell/SelfTest.swift`): ui apps through the renderer's tree, typing through
 UIKit into the native console fields, turtle checks on the native drawing.
-None of the native shell has been tried on a device yet.
+The app, with all of the features above, works on the iPhone 14 Pro (2026-10-17).
 
 Before D31: `./run.sh --selftest` passed all 39 checks in the iPhone 17 simulator
 (2026-10-13), including the four turtle checks, which also pass in the iPad
@@ -402,8 +402,6 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
 ## Known gaps
 
 - Processes (D47):
-  - Not tried on a device: memory (about 95 MB per process in the
-    simulator) and the jetsam limit (Q24).
   - No shared memory, no managers, no threads (`ThreadPool`).
   - Functions from the console or a notebook cell can't go to a child.
   - The debugger doesn't follow child processes.
@@ -413,22 +411,18 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   turtle graphics from a cell draw in the console. A `.py`'s cell outputs
   are gone after a relaunch. One kernel at a time (running anything else
   ends it). The agent edits a `.ipynb` as JSON and can't run cells. Not
-  tried on a device or an iPad.
+  tried on an iPad.
 
 - Markdown (D46): no tap-to-edit in the preview, no checkbox toggling, no
-  math or diagrams. Not tried on a device.
-- Device modules (D40): not tried on a device; the camera, microphone
-  and speech recognition untested (the simulator has none). No `cb`,
-  `scene`, Pythonista's `ui` API, `appex`, `keyboard` or `editor`; only
-  synthesized built-in sound effects. 3.15 has no Pillow, so image
-  functions need `raw_data=True` there.
+  math or diagrams.
+- Device modules (D40): no `cb`, `scene`, Pythonista's `ui` API, `appex`,
+  `keyboard` or `editor`; only synthesized built-in sound effects. 3.15 has
+  no Pillow, so image functions need `raw_data=True` there.
 - File management (D41): no multiple selection; SQLite files have no preview.
 - Home Screen shortcuts (D38): the user builds the shortcut in the
   Shortcuts app (four steps); programs in linked folders aren't listed
-  there. Not tried on a device.
+  there.
 - Python versions and docs (D37):
-  - Not tried on a device (Q23): app size, memory with both versions
-    warm, 3.15 in WKWebView there.
   - 3.15's Pyodide has 31 packages; matplotlib, pandas and Pillow are
     missing there.
   - The docs viewer is a sheet, not a tab next to the code on iPad.
@@ -437,9 +431,6 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   - The 3.14 docs are 3.14.8's (the runtime is 3.14.2); the 3.15 docs are
     a branch snapshot (the runtime is 3.15.0rc1).
 - Agent (D34):
-  - Not tried on a device. Whether the sign-in sheet reaches the loopback
-    listener there is Q22.
-  - Only Claude Pro/Max has been signed in to for real (in the spike).
   - It is a sheet, not a panel on iPad.
   - IDE tools can't run a program in the app (`ide_run`, for turtle and
     ui apps, is not built).
@@ -447,8 +438,6 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   - A write to a file you are typing in replaces the editor's text.
   - No teaching mode.
 
-- Native shell (D31), not tried on a device yet: memory with three
-  WebContent processes, the editor's keyboard and focus, the key bar.
 - The problem bar is still HTML inside the editor page.
 - Turtle screens in the console fit the width but not the console's height.
 - HTTP is request/response only: no WebSockets or raw sockets; responses are
@@ -457,7 +446,5 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   auto-load; `micropip` works from the console). No lock files yet.
 - ty has no type information for installed third-party packages (it only
   knows the standard library); their imports are simply not flagged.
-- "Jump to Definition" and "Show Info" in the selection menu have not been
-  tried on a device yet.
 - Turtle: no on-screen keyboard for `onkey` games on a phone, no scrolling
-  of canvases bigger than the window. Not tried on a device yet.
+  of canvases bigger than the window.

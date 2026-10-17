@@ -42,7 +42,7 @@ templates (D41), documented with the Python docs (D42; sources in
 with rich output (D44), and tracebacks as data, drawn as frames in the
 console and notebooks (D45), and Markdown files as a preview or their
 source, with links between files (D46), and processes: `multiprocessing`
-and `subprocess`, each process a Pyodide worker (D47). Next: the agent on a device (Q22), the rest of D34's list (write
+and `subprocess`, each process a Pyodide worker (D47). Everything so far works on the iPhone 14 Pro (2026-10-17). Next: the rest of D34's list (write
 conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 Bundled Python versions and docs archives are pinned in `app/runtimes.json`
@@ -62,7 +62,7 @@ Done:
 - [x] `jspi-repro`: JSPI "hang" root-caused to CPython's iOS JS-trampoline fallback (D13)
 - [x] `webkit-probe`: wasm and threading features of iOS 27 Safari (simulator)
 - [x] `host-fs`: Pyodide on the host's files (an Emscripten FS over sync XHR), costs, caches, SQLite crash safety (D35, built into the app)
-- [x] `processes`: `multiprocessing` (spawn) and `subprocess` (Python only), each process a Pyodide worker, on stock Pyodide (D47, built into the app; open: device memory, Q24). First step towards local servers and several programs at once.
+- [x] `processes`: `multiprocessing` (spawn) and `subprocess` (Python only), each process a Pyodide worker, on stock Pyodide (D47, built into the app; works on the iPhone 14 Pro). First step towards local servers and several programs at once.
 
 ## Conventions
 

@@ -207,8 +207,8 @@ is replaced. Making CPython raise `RecursionError` in time is Q14. Evidence:
 
 CodeMirror 6 with lang-python, soft wrapping with a hanging indent, our own
 key bar above the keyboard, and one cached EditorState per open file (undo
-history survives file switches). Works in WKWebView on the simulator. Real
-typing on a device still needs to be tried.
+history survives file switches). Works in WKWebView on the simulator, and
+typing works on the iPhone 14 Pro (2026-10-17).
 
 ## D18: The web app is React + Vite + TypeScript
 
@@ -421,8 +421,8 @@ How it fits into the app:
 Evidence: 88 host tests, plus 12 browser checks in desktop Chrome and
 Playwright WebKit (0.1-0.23 ms per tap, 10-11 ms in Python for 1,000 rows,
 one op and about 1 ms to toggle one row of 1,000). The `ui_app` and
-`ui_todo` app selftests pass in WKWebView in the iPhone 17 simulator. Not yet
-tried on a device.
+`ui_todo` app selftests pass in WKWebView in the iPhone 17 simulator. Works
+on the iPhone 14 Pro (2026-10-17).
 
 ## D27: Program files are written back while the program idles, deletions included
 
@@ -455,7 +455,7 @@ step if that matters.
 Evidence: the `ui_todo` selftest adds a to-do and finds it in `todos.db` on
 disk while the app is still open (0.7-0.9 s later), then reads it back in a
 second run, with no journal left behind (iPhone 17 simulator, WKWebView).
-Not yet tried on a device.
+Works on the iPhone 14 Pro (2026-10-17).
 
 ## D28: Linked folders (iCloud Drive, other apps) through security-scoped bookmarks
 
@@ -487,8 +487,7 @@ the iCloud entitlement, which personal teams cannot use (Q20).
 Evidence: the `linked_folder` selftest links a folder outside Documents
 through the same bookmark code (the picker itself cannot be driven), lists,
 writes, runs a script with a sibling import and file write-back, and removes
-the link (iPhone 17 simulator). Not yet tried with iCloud Drive or a file
-provider on a device.
+the link (iPhone 17 simulator). Works on the iPhone 14 Pro (2026-10-17).
 
 ## D29: `turtle` is CPython's module on a browser canvas, drawn inline in the console
 
@@ -531,7 +530,7 @@ Evidence: the `turtle_*` selftests (draw a filled square and check its
 pixels, a tap and a key reach the handlers, `bye()` ends `done()`, a timer
 program keeps running until Stop, `Examples/Turtle.py`, and a tap that
 catches the turtle in `Examples/Catch the Turtle.py`) pass in the iPhone 17
-and iPad Pro 11 simulators (WKWebView). Not yet tried on a device.
+and iPad Pro 11 simulators (WKWebView). Works on the iPhone 14 Pro (2026-10-17).
 
 ## D30: In the app, ui apps are native SwiftUI views; the web renderer is for published apps
 
@@ -599,7 +598,7 @@ Evidence (iPhone 17 simulator, iOS 27):
 - Rendering a message takes 0.08 ms for 2 ops.
 - Screenshots of every uikit example look like native iOS.
 - `uikit/run.sh --selftest` passes (88 host tests, 12 browser checks).
-Not yet tried on a device.
+Works on the iPhone 14 Pro (2026-10-17).
 
 ## D31: The IDE is a native SwiftUI app; web views only run Python and CodeMirror
 
@@ -660,9 +659,8 @@ What it costs:
 
 Evidence: `./run.sh --selftest` passes all 40 checks in the iPhone 17 and
 iPad Pro 13" simulators (iOS 27), including typing into the native console
-fields through UIKit and pixel checks on the native turtle view. Not yet
-tried on a device; the iPhone 14 Pro should be next (memory with three
-WebContent processes, keyboard and focus behavior).
+fields through UIKit and pixel checks on the native turtle view. Works
+on the iPhone 14 Pro (2026-10-17), with three WebContent processes, the keyboard and focus.
 
 ## D32: The agent's platform: native SQLite, a project ExecutionEnv, keys added by the proxy
 
@@ -745,8 +743,9 @@ Evidence: `spikes/agent/` (iPhone 17 simulator):
   reload.
 - A real Claude Pro/Max sign-in: requests, refresh, and after a reload.
 
-The simulator shares the Mac's network, so whether the sign-in sheet reaches
-the app's loopback listener on a device is still open (Q22).
+The simulator shares the Mac's network. On the iPhone 14 Pro (2026-10-17)
+the agent works, the sign-in sheet reaches the app's loopback listener, and
+the other providers' sign-ins work too.
 
 ## D34: The coding agent in the app
 
@@ -884,7 +883,7 @@ Evidence:
   - no `__pycache__` appears.
 - The `linked_folder` check now also syncs back a new folder and a deletion.
 - All 44 checks pass in the iPhone 18 Pro simulator (2026-10-15).
-- Not yet tried on a device.
+- Works on the iPhone 14 Pro (2026-10-17).
 
 ## D36: The agent's conversations per project, and IDE tools
 
@@ -1021,7 +1020,7 @@ Evidence: the self-test's `agent-ide` and `agent-conversations` checks
 All 46 checks pass in the iPhone 18 Pro simulator. In the iPhone 17
 simulator only `turtle_catch_example` fails, and it fails the same way
 without this change. The three agent checks also pass in the iPad Pro 13"
-simulator (2026-10-15). Nothing here has been tried on a device.
+simulator (2026-10-15). Works on the iPhone 14 Pro (2026-10-17).
 
 ## D37: Two bundled Pythons (3.14 and a 3.15 preview) and the Python docs on the device
 
@@ -1103,9 +1102,8 @@ docs are a snapshot of the 3.15 branch (2026-10-15) while the runtime is
 
 Evidence: the self-test's `python_versions`, `docs_index`, `docs_viewer`,
 `help_opens_docs`, `show_info_docs` and `agent-docs` checks. All 52 checks
-pass in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15). Not
-tried on a device: the bundle size, memory with workers of two versions,
-and 3.15 in WKWebView there (Q23).
+pass in the iPhone 18 Pro and iPad Pro 13" simulators (2026-10-15). Both
+versions, 3.15 included, and the docs work on the iPhone 14 Pro (2026-10-17).
 
 ## D38: Home Screen icons for programs go through the Shortcuts app
 
@@ -1443,8 +1441,8 @@ can't reach the page), `.py` cells and Run still running the script,
 diagnostics, cell edits, protected markers, the JSON view and the
 template. All 68 checks pass in the iPhone 18 Pro Max simulator
 (2026-10-15). Screenshots of the example notebook, rich outputs and a
-`.py` with cells were checked in the simulator. Not tried on a device or
-an iPad.
+`.py` with cells were checked in the simulator. Works on the iPhone 14 Pro (2026-10-17);
+not tried on an iPad.
 
 ## D45: Tracebacks are data, drawn as frames for small screens
 
@@ -1530,7 +1528,8 @@ checks pass in the iPhone 18 Pro Max simulator (2026-10-15). Screenshots
 of the console were checked in light and dark mode: a library error, a
 chain, and a span on a long line scrolled into view. The notebook view was
 checked in Chrome. The data was also checked with Python 3.14 and 3.15
-in Pyodide under Node. Not tried on a device or an iPad.
+in Pyodide under Node. Works on the iPhone 14 Pro (2026-10-17); not tried on an
+iPad.
 
 ## D46: Markdown files open as a preview, with their source a tap away
 
@@ -1604,7 +1603,7 @@ at a heading, `../`, a `docs:` link, a missing file, and a new note
 opening as its source. All 71 checks pass in the iPhone 18 Pro Max
 simulator (2026-10-16). Screenshots were checked on iPhone (preview and
 source, dark) and iPad (split view, source next to preview, light).
-Not tried on a device.
+Works on the iPhone 14 Pro (2026-10-17).
 
 ## D47: Programs can start processes: each one a Pyodide worker
 
@@ -1629,8 +1628,7 @@ programs at once.
   terminal. `input()` in a child gets end-of-file. The device modules
   follow the root (none in the agent's runs, D40).
 - Limits: at most 10 processes alive at once. `os.cpu_count()` is
-  `min(hardwareConcurrency, 4)`, because each process costs about 100 MB
-  (Q24).
+  `min(hardwareConcurrency, 4)`, because each process costs about 100 MB.
 - **Stop** sends SIGINT to the root and then every child. A child that
   hasn't started Python yet just ends (POSIX's default action); the rest
   get SIGKILL after 1.5 s (D11). Children's tracebacks after Stop are
@@ -1687,7 +1685,7 @@ Evidence: five self-test checks:
 
 All 76 checks pass in the iPhone 18 Pro Max simulator (2026-10-16). The
 spike's own tests (102 checks, both Pythons, Node and WKWebView) cover the
-rest of the API. Not tried on a device (Q24).
+rest of the API. Works on the iPhone 14 Pro (2026-10-17).
 
 ## D48: HostFS's requests go through a fetch relay, not synchronous XHRs
 
@@ -1726,8 +1724,8 @@ Costs (iPhone 18 Pro simulator, 1000 calls each):
 Evidence: the self-test's new `files_after_sleep` check (four calls
 right after `time.sleep(2)`, and 3 MB through the relay both ways) fails
 with `?fs=xhr` and passes with the relay. `processes_stop` stops in
-about 50 ms. All 77 checks pass in the iPhone 18 Pro simulator. Not tried
-on a device.
+about 50 ms. All 77 checks pass in the iPhone 18 Pro simulator. Works
+on the iPhone 14 Pro (2026-10-17).
 
 Still synchronous XHRs: HTTP from Python programs (D25: urllib through
 pyodide-http, requests, `open_url`) to `/__http`. They could go
@@ -1739,12 +1737,9 @@ through the relay too.
 
 ## Open questions
 
-- **Q24:** Processes (D47) on a device. In the simulator an idle Pyodide worker costs about 95 MB of WebContent RSS, and RSS stayed at 1.8-2.1 GB after about 150 short-lived workers (`spikes/processes/`). How many workers fit under the jetsam limit (about 1.9 GB on the iPhone 14 Pro, Q15)? Is the memory of terminated workers returned? What do boot time, `hardwareConcurrency` and speedup look like on 2 performance + 4 efficiency cores? Are the limits (10 processes, `os.cpu_count()` ≤ 4) right?
 - **Q25:** WebKit sometimes delivers the response of a worker's synchronous XHR to the app's scheme handler late: about 1 s in the app, about 3 s in a bare page (`spikes/xhr-wait/`, simulator). The handler has answered within a millisecond. It follows `Atomics.wait` (a sleeping program), never a busy loop. HostFS no longer uses synchronous XHRs (D48). Open: does it happen on a device? Report it to WebKit. Move Python programs' synchronous HTTP (D25, `/__http`) to the relay too?
 
-- **Q23:** On a device: the app size with two cores and two sets of docs (about 27 MB of cores and 70 MB of HTML, plus 40 MB of indexes, before App Store compression), memory when workers of both versions are warm, and whether 3.15's Pyodide (Emscripten 6) works in WKWebView there as 3.14's does (D13).
 - **Q21:** Provider terms and App Review for subscription sign-ins (Claude Pro/Max, ChatGPT) used from a third-party app.
-- **Q22:** On a device, does `ASWebAuthenticationSession` reach the app's loopback listener (the simulator shares the Mac's network)? If not, Anthropic, Codex and Radius still have copy-code or device-code sign-ins; Sign in with ChatGPT and OpenRouter would not work.
 - **Q2:** Can WebKit evict `app://` web storage? It survives relaunch and reinstall, but `persist()` is denied (`spikes/ios-host/`).
 - **Q4:** Should the agent run locally, in the cloud, or both, given background suspension? (Local works and survives a page reload mid-turn, D32. Open: what happens when the app is suspended mid-stream, and whether running while the phone sleeps needs the cloud.)
 - **Q6:** Can Python run when triggered from App Intents / Shortcuts while the app is in the background? (Known: a running script is paused while the app is in the background and resumes afterwards, `spikes/device-perf/`.)

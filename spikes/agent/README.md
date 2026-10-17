@@ -130,4 +130,5 @@ Xcode does, works (`Entitlements.plist`, `run.sh`).
 
 **Not answered here:** on a device, the sign-in sheet runs in another
 process. The simulator shares the Mac's network, so it can't show that the
-sheet reaches the app's loopback listener (D33, Q22).
+sheet reaches the app's loopback listener (D33, Q22). Update 2026-10-17:
+it does; the agent and its sign-in work in the app on the iPhone 14 Pro.
