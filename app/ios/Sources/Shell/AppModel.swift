@@ -215,13 +215,14 @@ final class AppModel {
     /// The self-test's results while its page is replaced (`engine_recovery`).
     @ObservationIgnored var selftestStash: String?
 
-    /// What the heaps of all Python programs may use together (D50). iOS ends
-    /// the web content process without a MemoryError at about 1.9 GB on a
-    /// 6 GB iPhone 14 Pro (spikes/device-perf); the rest of the page (workers'
-    /// JavaScript, analysis, the agent) needs room too.
+    /// What the heaps of all Python programs may use together (D50). On the
+    /// 6 GB iPhone 14 Pro, iOS ended the engine's process (no MemoryError)
+    /// with the heaps at 925 MB but not at 850 MB, every page written
+    /// (`memory_full` self-test, 2026-10-17); the rest of the page (the agent,
+    /// bigger analysis) needs room too. 0.12 of the memory is about 680 MB there.
     static var pythonMemoryBudget: Int {
         let ram = Double(ProcessInfo.processInfo.physicalMemory)
-        return Int(min(max(ram * 0.22, 512 * 1_048_576), 3 * 1_073_741_824))
+        return Int(min(max(ram * 0.12, 512 * 1_048_576), 3 * 1_073_741_824))
     }
 
     static let maxTabs = 10

@@ -260,8 +260,8 @@ apps are native views (D30).
   the run with a `RecursionError` traceback at the program's frames, and
   the next run gets a fresh interpreter (D16, D49). New interpreters warm up
   first, which makes such recursion 1.5-6 times deeper (`_pyslop_warmup.py`).
-- **Memory** (D50): all Python heaps share a budget (about 0.22 of the
-  device's memory); past it a program gets `MemoryError` and the console says
+- **Memory** (D50): all Python heaps share a budget (0.12 of the device's
+  memory, 680 MB on the iPhone 14 Pro); past it a program gets `MemoryError` and the console says
   how much there is. If iOS ends the engine's process anyway, the new page
   gets the console back and the running program is marked crashed.
 - **Layouts**: on iPhone, Files → Code/Console; on iPad, a sidebar with the
@@ -352,7 +352,9 @@ Since D31 the app is native SwiftUI. `./run.sh --selftest` passes all 79
 checks in the iPhone 18 Pro simulator, including `crash_recovery` with a
 RecursionError traceback (D49), `memory_budget` and `engine_recovery`
 (D50, the last check: it ends the engine's process and finishes in the new
-page) (2026-10-17). Before that, it passed all 71
+page), in the simulator and on the iPhone 14 Pro (2026-10-17). On the
+phone, `FRAGMENT="selftest&only=memory_full"` fills the real memory budget
+(`&budget=<MB>` tries another). Before that, it passed all 71
 checks in the iPhone 18 Pro Max simulator, including `markdown_preview`
 and `markdown_links` (D46) (2026-10-16). Before that, it passed all 69
 there, including `traceback_data` (D45) (2026-10-15). Before that, it passed all 68 there, including the
@@ -454,7 +456,7 @@ PyPI package and running takes 0.8 s (1.3 s when cached).
   - Recursion through C code still crashes the interpreter after a few
     hundred levels (plain Python recursion is fine); a program can't catch
     that RecursionError. The fix is upstream.
-  - The memory budget is a heuristic and hasn't been tried on a device. It
+  - The memory budget is calibrated on one device (the iPhone 14 Pro) and
     only counts the Python heaps, not the rest of the page.
   - When iOS ends the engine's process, a notebook's kernel (its
     variables) and a paused debugger are gone; the console comes back.

@@ -106,9 +106,9 @@ low enough to catch `lru_cache` breaks `import pandas`.
 
 ## Not covered
 
-- A real device (the app's `crash_recovery` self-test covers the warm-up
-  and the traceback there). The ratios should hold: the worker stack and
-  JSC's tiers are the same.
+- A real device with this spike. The app's `crash_recovery` self-test
+  passes on the iPhone 14 Pro (2026-10-17): with the warm-up, `@lru_cache`
+  recursion got 288 deep there, as in the simulator.
 - Python 3.15 (Pyodide 315): not measured.
 - What would fix it upstream: CPython counting C recursion on Emscripten
   besides the stack pointer, a native-stack check from Pyodide, or bigger

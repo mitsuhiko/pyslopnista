@@ -827,6 +827,38 @@ export async function selftest() {
     }
   });
 
+  // Only when asked for (only=memory_full), for a device: a program fills the
+  // real budget, writing every page, and must get MemoryError before iOS ends
+  // the page's process (D50). If iOS ends it, the result says webContentTerminated.
+  if (only && /memory_full/.test(only)) {
+    await step("memory_full", async () => {
+      const { memoryUse, setMemoryBudget } = await import("./python");
+      // &budget=<MB> tries another budget than the host's.
+      const mb = Number(new URLSearchParams(location.hash.slice(1)).get("budget"));
+      if (mb) setMemoryBudget(mb * 2 ** 20);
+      const before = memoryUse();
+      await fs.writeText("Tests/memory_full.py", [
+        "import time",
+        "chunks = []",
+        "try:",
+        "    while True:",
+        "        b = bytearray(16 << 20)",
+        "        b[::4096] = b'\\x01' * (len(b) // 4096)",
+        "        chunks.append(b)",
+        "except MemoryError:",
+        "    print('stopped at', len(chunks) * 16, 'MB')",
+        "time.sleep(3)",
+        "print('survived')",
+        "",
+      ].join("\n"));
+      const { done } = await runFile("Tests/memory_full.py");
+      await done;
+      const out = consoleText();
+      if (!out.includes("survived")) throw new Error(out.slice(-600));
+      return { stoppedMB: Number(/stopped at (\d+) MB/.exec(out)?.[1]), budgetMB: Math.round(before.budget / 2 ** 20), usedBeforeMB: Math.round(before.used / 2 ** 20) };
+    });
+  }
+
   // -- code intelligence and dependencies -------------------------------------------
 
   const diagnostics = () => editorCall<{ source: string; message: string; actions: string[] }[]>("diagnostics");
@@ -1146,13 +1178,14 @@ export async function selftest() {
       "    print('notif', 'not allowed', notification.get_scheduled() == [])",
       "location.start_updates()",
       "loc = location.get_location()",
-      "print('loc', round(loc['latitude'], 2) if loc else None, location.is_authorized())",
+      // The simulator is at the Eiffel Tower (run.sh); a device is wherever it is.
+      "print('loc', bool(loc) and -90 <= loc['latitude'] <= 90, location.is_authorized())",
       "location.stop_updates()",
       "assets = photos.get_assets()",
       "print('photos', len(assets) > 0)",
       "if assets: print('image', assets[-1].get_image().size == (assets[-1].pixel_width, assets[-1].pixel_height))",
     ].join("\n"), [], 90000);
-    expectLines(out, ["contact ['Pyslop Selftest'] [('_$!<Work>!$_', 't@example.com')]", "contact2 0", "rem True", "del True", "notif", "loc 48.86 True", "photos True", "image True"]);
+    expectLines(out, ["contact ['Pyslop Selftest'] [('_$!<Work>!$_', 't@example.com')]", "contact2 0", "rem True", "del True", "notif", "loc True True", "photos True", "image True"]);
   });
 
   // -- file management (D41) -------------------------------------------------------

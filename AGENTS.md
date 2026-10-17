@@ -45,8 +45,7 @@ source, with links between files (D46), and processes: `multiprocessing`
 and `subprocess`, each process a Pyodide worker (D47), and robustness:
 blocking HTTP through the fetch relay (D48), warmed-up interpreters and
 stack overflows shown as a RecursionError (D49), a memory budget for
-Python's heaps and the console kept when iOS ends the engine (D50; not
-tried on a device yet). Everything before D48 works on the iPhone 14 Pro (2026-10-17). Next: the rest of D34's list (write
+Python's heaps and the console kept when iOS ends the engine (D50). All of it works on the iPhone 14 Pro (2026-10-17). Next: the rest of D34's list (write
 conflicts, per-turn undo, teaching mode, iPad panel), then the gaps in
 `app/README.md` (Q16-Q18). `app/scripts/build-ty.sh` needs Rust + wasm-pack.
 Bundled Python versions and docs archives are pinned in `app/runtimes.json`

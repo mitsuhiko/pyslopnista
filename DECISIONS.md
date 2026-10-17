@@ -1777,8 +1777,9 @@ worker stacks in WebKit.
 Evidence: `spikes/native-stack/` (simulator; its worker has the device's
 512 KB stack). The `crash_recovery` self-test check runs a deep `repr` and
 `@lru_cache` recursion 5000 deep: both show a RecursionError at the right
-line (the recursion got 288 deep), and the next run works. All 79 checks
-pass in the iPhone 18 Pro simulator (2026-10-17). Not tried on a device.
+line (the recursion got 288 deep, in the simulator and on the iPhone 14
+Pro), and the next run works. All 79 checks pass in the iPhone 18 Pro
+simulator and on the iPhone 14 Pro (2026-10-17).
 
 ## D50: Python's heaps share a memory budget, and the console survives iOS ending the engine
 
@@ -1788,8 +1789,11 @@ iOS ends the web content process at about 1.9 GB on the iPhone 14 Pro
 (`spikes/device-perf/`) without a `MemoryError`, and all Python workers
 live in the engine page's process.
 - **The budget:** the host sets one for all Python heaps together:
-  0.22 times the device's memory, 512 MB to 3 GB (1.3 GB on a 6 GB
-  iPhone), leaving room for the rest of the page. Each worker wraps
+  0.12 times the device's memory, 512 MB to 3 GB (680 MB on the 6 GB
+  iPhone 14 Pro). There iOS ended the process with the heaps at 925 MB
+  (and 1000 MB) but not at 850 MB, with every page written; the spike's
+  1.9 GB was a much lighter page. The rest leaves room for the agent and
+  bigger analysis. Each worker wraps
   `WebAssembly.Memory.prototype.grow`, and the workers count their pages
   in a SharedArrayBuffer (`python.ts`). A heap that would grow past the
   budget doesn't: Emscripten's `malloc` returns NULL and Python raises
@@ -1810,8 +1814,11 @@ program fills it in 16 MB pieces, gets `MemoryError` at 256 MB, frees it
 and goes on) and `engine_recovery` (the self-test ends the engine's process
 through WKWebView's `_killWebContentProcess` while a program runs; the new
 page shows the old console and the crashed run, and runs programs). All 79
-checks pass in the iPhone 18 Pro simulator (2026-10-17). The budget
-hasn't been tried on a device, where it matters.
+checks pass in the iPhone 18 Pro simulator and on the iPhone 14 Pro
+(2026-10-17). On the phone, the opt-in `memory_full` check (a program
+fills the budget, writing every page) got `MemoryError` at 624 MB and
+survived with the 680 MB budget; with budgets of 925 MB and more, iOS
+ended the process first.
 
 ## Proposed (not yet decided)
 
